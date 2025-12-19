@@ -771,7 +771,7 @@ async function handleYouTubeSearch(interaction: ChatInputCommandInteraction): Pr
   const results = await new Promise<YouTubeSearchResult[]>((resolve) => {
     const ytdlp = spawn('yt-dlp', [
       '--dump-json',
-      '--no-playlist',
+      '--flat-playlist',
       '--no-warnings',
       '-I', '1:10',
       `ytsearch10:${query}`
@@ -848,8 +848,11 @@ async function handleYouTubeSearch(interaction: ChatInputCommandInteraction): Pr
 async function displayYouTubeSearchPage(interaction: ChatInputCommandInteraction | ButtonInteraction, page: number): Promise<void> {
   const session = youtubeSearchSessions.get(interaction.user.id);
   if (!session || Date.now() - session.timestamp > SESSION_TIMEOUT) {
-    const reply = interaction.replied || interaction.deferred ? 'editReply' : 'reply';
-    await interaction[reply]({ content: '❌ Search expired. Use /yts to search first.', ephemeral: true });
+    if (interaction.replied || interaction.deferred) {
+      await interaction.editReply({ content: '❌ Search expired. Use /yts to search first.', embeds: [], components: [] });
+    } else {
+      await interaction.reply({ content: '❌ Search expired. Use /yts to search first.', ephemeral: true });
+    }
     return;
   }
 
@@ -875,6 +878,11 @@ async function displayYouTubeSearchPage(interaction: ChatInputCommandInteraction
       inline: false
     });
   });
+
+  // Set thumbnail to first result's thumbnail
+  if (pageResults.length > 0 && pageResults[0].thumbnail) {
+    embed.setThumbnail(pageResults[0].thumbnail);
+  }
 
   // Create action rows with play buttons and pagination
   const playButtons = [];
@@ -935,8 +943,11 @@ async function displayYouTubeSearchPage(interaction: ChatInputCommandInteraction
   youtubeSearchPages.set(interaction.user.id, { page });
 
   // Send response
-  const reply = interaction.replied || interaction.deferred ? 'editReply' : 'reply';
-  await interaction[reply]({ embeds: [embed], components: buttonRows });
+  if (interaction.replied || interaction.deferred) {
+    await interaction.editReply({ embeds: [embed], components: buttonRows });
+  } else {
+    await interaction.reply({ embeds: [embed], components: buttonRows });
+  }
 }
 
 async function handleYouTubePlay(interaction: ChatInputCommandInteraction): Promise<void> {
