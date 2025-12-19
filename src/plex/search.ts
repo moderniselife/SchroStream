@@ -42,11 +42,20 @@ export function formatSearchResults(items: PlexMediaItem[]): string {
     return 'No results found.';
   }
 
-  const lines = items.slice(0, 10).map((item, index) => {
-    const num = `**${index + 1}.**`;
+  // Separate by type
+  const movies = items.filter(item => item.type === 'movie');
+  const shows = items.filter(item => item.type === 'show');
+  const episodes = items.filter(item => item.type === 'episode');
+
+  const sections: string[] = [];
+  let globalIndex = 0;
+
+  // Format a single item
+  const formatItem = (item: PlexMediaItem): string => {
+    globalIndex++;
+    const num = `**${globalIndex}.**`;
     const title = item.title;
     const year = item.year ? ` (${item.year})` : '';
-    const type = item.type.charAt(0).toUpperCase() + item.type.slice(1);
 
     let extra = '';
     if (item.type === 'episode') {
@@ -56,14 +65,28 @@ export function formatSearchResults(items: PlexMediaItem[]): string {
       extra = ` - ${show} ${season}${episode}`;
     }
 
-    return `${num} [${type}] ${title}${year}${extra}`;
-  });
+    return `${num} ${title}${year}${extra}`;
+  };
 
-  if (items.length > 10) {
-    lines.push(`\n*...and ${items.length - 10} more results*`);
+  // Movies section
+  if (movies.length > 0) {
+    const movieLines = movies.map(formatItem);
+    sections.push(`**🎬 Movies (${movies.length})**\n${movieLines.join('\n')}`);
   }
 
-  return lines.join('\n');
+  // TV Shows section
+  if (shows.length > 0) {
+    const showLines = shows.map(formatItem);
+    sections.push(`**📺 TV Shows (${shows.length})**\n${showLines.join('\n')}`);
+  }
+
+  // Episodes section (if any direct episode matches)
+  if (episodes.length > 0) {
+    const episodeLines = episodes.map(formatItem);
+    sections.push(`**📼 Episodes (${episodes.length})**\n${episodeLines.join('\n')}`);
+  }
+
+  return sections.join('\n\n');
 }
 
 export default {
