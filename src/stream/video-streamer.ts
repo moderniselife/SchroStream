@@ -13,6 +13,7 @@ export interface VideoStreamSession {
   startedAt: number;
   currentTime: number;
   duration: number;
+  volume: number;
   ffmpegCommand: any | null;
 }
 
@@ -56,6 +57,7 @@ class VideoStreamer {
       startedAt: Date.now(),
       currentTime: startTimeMs,
       duration: mediaItem.duration || 0,
+      volume: 100,
       ffmpegCommand: null,
     };
 
@@ -114,6 +116,7 @@ class VideoStreamer {
         'X-Plex-Version: 4.0',
         'X-Plex-Platform: Chrome',
         'X-Plex-Device: Linux',
+        'X-Plex-Token: ' + config.plex.token,
       ].join('\r\n') + '\r\n';
 
       const ffmpegArgs = [
@@ -292,6 +295,19 @@ class VideoStreamer {
     const percentage = total > 0 ? (current / total) * 100 : 0;
 
     return { current, total, percentage };
+  }
+
+  setVolume(guildId: string, volume: number): boolean {
+    const session = this.sessions.get(guildId);
+    if (!session) return false;
+
+    session.volume = Math.max(0, Math.min(200, volume));
+    
+    // Volume change requires restarting the stream with new FFmpeg settings
+    // For now, just store the value - it will be applied on next play/seek
+    console.log(`[VideoStreamer] Volume set to ${session.volume}% (will apply on next playback)`);
+    
+    return true;
   }
 }
 

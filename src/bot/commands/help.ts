@@ -17,6 +17,7 @@ export async function helpCommand(message: Message, _args: string[]): Promise<vo
 \`${prefix}seek <time>\` - Seek to time (e.g., \`1:30:00\` or \`45:00\`)
 \`${prefix}skip\` - Skip to next episode (TV shows only)
 \`${prefix}np\` - Show what's currently playing
+\`${prefix}volume <0-200>\` - Set volume (default: 100%)
 
 **Example:**
 1. \`${prefix}search breaking bad\`

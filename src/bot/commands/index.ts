@@ -7,6 +7,7 @@ import { seekCommand } from './seek.js';
 import { skipCommand } from './skip.js';
 import { nowPlayingCommand } from './nowplaying.js';
 import { helpCommand } from './help.js';
+import { volumeCommand } from './volume.js';
 
 export type CommandHandler = (message: Message, args: string[]) => Promise<void>;
 
@@ -27,6 +28,9 @@ const commands: Record<string, CommandHandler> = {
   np: nowPlayingCommand,
   nowplaying: nowPlayingCommand,
   playing: nowPlayingCommand,
+  volume: volumeCommand,
+  vol: volumeCommand,
+  v: volumeCommand,
 };
 
 export async function handleCommand(
