@@ -60,7 +60,12 @@ async function getYouTubeInfo(url: string): Promise<YouTubeInfo | null> {
   });
 }
 
-async function getStreamUrl(url: string): Promise<string | null> {
+interface StreamUrls {
+  video: string;
+  audio: string | null;
+}
+
+async function getStreamUrls(url: string): Promise<StreamUrls | null> {
   return new Promise((resolve) => {
     const ytdlp = spawn('yt-dlp', [
       '-g',
@@ -87,7 +92,11 @@ async function getStreamUrl(url: string): Promise<string | null> {
         resolve(null);
         return;
       }
-      resolve(output.trim().split('\n')[0]);
+      const urls = output.trim().split('\n');
+      resolve({
+        video: urls[0],
+        audio: urls[1] || null, // YouTube returns video first, then audio
+      });
     });
 
     ytdlp.on('error', (err) => {
@@ -131,8 +140,8 @@ export async function youtubeCommand(message: Message, args: string[]): Promise<
 
     await statusMsg.edit(`📺 Loading: **${info.title}**\n⏳ Getting stream URL...`);
 
-    const streamUrl = await getStreamUrl(url);
-    if (!streamUrl) {
+    const streamUrls = await getStreamUrls(url);
+    if (!streamUrls) {
       await statusMsg.edit('❌ Failed to get stream URL');
       return;
     }
@@ -162,8 +171,9 @@ export async function youtubeCommand(message: Message, args: string[]): Promise<
       message.guild.id,
       voiceChannel.id,
       mediaItem,
-      streamUrl,
-      message.author.id
+      streamUrls.video,
+      message.author.id,
+      streamUrls.audio
     );
 
     await new Promise((resolve) => setTimeout(resolve, 2000));
