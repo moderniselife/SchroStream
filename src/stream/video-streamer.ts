@@ -74,9 +74,21 @@ class VideoStreamer {
       console.log('[VideoStreamer] Stream URL:', session.streamUrl.substring(0, 100) + '...');
 
       // Spawn FFmpeg manually to handle HLS input properly
+      // Build headers string for FFmpeg (must be before -i)
+      const headers = [
+        'Accept: application/json',
+        'X-Plex-Client-Identifier: SchroStream',
+        'X-Plex-Product: Plex Web',
+        'X-Plex-Version: 4.0',
+        'X-Plex-Platform: Chrome',
+        'X-Plex-Device: Linux',
+      ].join('\r\n') + '\r\n';
+
       const ffmpegArgs = [
         '-hide_banner',
         '-loglevel', 'error',
+        // HTTP headers for Plex
+        '-headers', headers,
         // HLS input options
         '-reconnect', '1',
         '-reconnect_streamed', '1', 
