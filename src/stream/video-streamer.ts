@@ -6,6 +6,7 @@ import { join } from 'path';
 import type { PlexMediaItem } from '../types/index.js';
 import config from '../config.js';
 import plexClient from '../plex/client.js';
+import { updateWatchDeck } from '../data/watch-deck.js';
 
 // Playback history file path
 const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
@@ -23,6 +24,8 @@ export interface VideoStreamSession {
   duration: number;
   volume: number;
   ffmpegCommand: any | null;
+  userId?: string;
+  isExternal?: boolean; // Flag for external streams (YouTube, URLs)
 }
 
 // Store playback positions for resume functionality (ratingKey -> position in ms)
@@ -123,7 +126,8 @@ class VideoStreamer {
     channelId: string,
     mediaItem: PlexMediaItem,
     streamUrl: string,
-    startTimeMs = 0
+    startTimeMs = 0,
+    userId?: string
   ): Promise<void> {
     await this.stopStream(guildId);
 
@@ -142,11 +146,130 @@ class VideoStreamer {
       duration: mediaItem.duration || 0,
       volume: 100,
       ffmpegCommand: null,
+      userId,
     };
 
     this.sessions.set(guildId, session);
 
     this.playVideoStream(session, startTimeMs);
+  }
+
+  async startExternalStream(
+    guildId: string,
+    channelId: string,
+    mediaItem: PlexMediaItem,
+    streamUrl: string,
+    userId?: string
+  ): Promise<void> {
+    await this.stopStream(guildId);
+
+    await this.streamer.joinVoice(guildId, channelId);
+
+    const session: VideoStreamSession = {
+      guildId,
+      channelId,
+      mediaItem,
+      streamUrl,
+      isPaused: false,
+      isStopping: false,
+      isPlaying: false,
+      startedAt: Date.now(),
+      currentTime: 0,
+      duration: mediaItem.duration || 0,
+      volume: 100,
+      ffmpegCommand: null,
+      userId,
+      isExternal: true,
+    };
+
+    this.sessions.set(guildId, session);
+
+    this.playExternalStream(session);
+  }
+
+  private async playExternalStream(session: VideoStreamSession): Promise<void> {
+    const height = config.stream.defaultQuality;
+    const width = Math.round(height * (16 / 9));
+
+    try {
+      console.log('[VideoStreamer] External stream URL:', session.streamUrl.substring(0, 100) + '...');
+
+      const volumeMultiplier = (session.volume / 100).toFixed(2);
+
+      const ffmpegArgs = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-reconnect', '1',
+        '-reconnect_streamed', '1',
+        '-reconnect_delay_max', '5',
+        '-i', session.streamUrl,
+        '-map', '0:v:0?',
+        '-map', '0:a:0?',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-tune', 'zerolatency',
+        '-pix_fmt', 'yuv420p',
+        '-r', String(config.stream.frameRate),
+        '-g', String(config.stream.frameRate * 2),
+        '-b:v', `${config.stream.maxBitrate}k`,
+        '-maxrate', `${config.stream.maxBitrate * 1.5}k`,
+        '-bufsize', `${config.stream.maxBitrate * 2}k`,
+        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+        '-c:a', 'libopus',
+        '-b:a', `${config.stream.audioBitrate}k`,
+        '-ar', '48000',
+        '-ac', '2',
+        '-af', `volume=${volumeMultiplier}`,
+        '-f', 'matroska',
+        '-'
+      ];
+
+      console.log('[VideoStreamer] Starting FFmpeg for external stream...');
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+      session.ffmpegCommand = ffmpeg;
+
+      ffmpeg.stderr.on('data', (data) => {
+        const msg = data.toString();
+        if (!msg.includes('frame=') && !msg.includes('size=')) {
+          console.error('[FFmpeg]', msg);
+        }
+      });
+
+      ffmpeg.on('error', (err) => {
+        console.error('[VideoStreamer] FFmpeg spawn error:', err.message);
+      });
+
+      ffmpeg.on('exit', (code) => {
+        if (code !== 0 && code !== null) {
+          console.log('[VideoStreamer] FFmpeg exited with code:', code);
+        }
+      });
+
+      console.log('[VideoStreamer] Starting Go Live stream (external)...');
+      
+      session.isPlaying = true;
+      session.startedAt = Date.now();
+      
+      if (session.userId) {
+        updateWatchDeck(session.mediaItem, 0, session.userId);
+      }
+
+      await playStream(ffmpeg.stdout, this.streamer, {
+        type: 'go-live',
+      });
+
+      console.log('[VideoStreamer] External playback finished');
+      if (!session.isStopping) {
+        this.sessions.delete(session.guildId);
+      }
+    } catch (error) {
+      if (!session.isStopping && error instanceof Error && !error.message.includes('abort')) {
+        console.error('[VideoStreamer] External stream error:', error);
+      }
+      if (!session.isStopping) {
+        this.sessions.delete(session.guildId);
+      }
+    }
   }
 
   private async playVideoStream(session: VideoStreamSession, startTimeMs = 0): Promise<void> {
@@ -278,6 +401,11 @@ class VideoStreamer {
       // Mark as actually playing now
       session.isPlaying = true;
       session.startedAt = Date.now(); // Reset start time to when stream actually begins
+      
+      // Update watch deck
+      if (session.userId) {
+        updateWatchDeck(session.mediaItem, startTimeMs, session.userId);
+      }
 
       // Pass the FFmpeg stdout stream to playStream
       await playStream(ffmpeg.stdout, this.streamer, {
@@ -317,8 +445,10 @@ class VideoStreamer {
       const currentPosition = session.isPlaying ? this.getCurrentTime(guildId) : 0;
       console.log(`[VideoStreamer] Stopping stream, position: ${currentPosition}ms, isPlaying: ${session.isPlaying}`);
       
-      // Stop Plex transcode FIRST (before killing FFmpeg)
-      await plexClient.stopTranscodeSession();
+      // Stop Plex transcode FIRST (before killing FFmpeg) - only for Plex streams
+      if (!session.isExternal) {
+        await plexClient.stopTranscodeSession();
+      }
       
       if (session.ffmpegCommand) {
         try {
