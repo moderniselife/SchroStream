@@ -335,6 +335,13 @@ export class PlexClient {
 
   async stopTranscodeSession(sessionId?: string): Promise<boolean> {
     try {
+      // Get the target Plex username from environment
+      const targetUsername = process.env.PLEX_USERNAME;
+      if (!targetUsername) {
+        console.warn('[Plex] PLEX_USERNAME not set, skipping transcode cleanup');
+        return false;
+      }
+      
       // First, get active sessions to find the Plex session ID
       const sessionsUrl = `${this.baseUrl}/status/sessions?X-Plex-Token=${this.token}`;
       const sessionsResponse = await fetch(sessionsUrl, {
@@ -345,10 +352,13 @@ export class PlexClient {
         const data = await sessionsResponse.json() as any;
         const sessions = data?.MediaContainer?.Metadata || [];
         
-        // Find sessions from SchroStream
+        // Find sessions from the specific user
         for (const session of sessions) {
           const plexSessionId = session.Session?.id;
-          if (plexSessionId) {
+          const sessionUser = session.User?.title;
+          
+          // Only stop sessions for the target user
+          if (plexSessionId && sessionUser === targetUsername) {
             const params = new URLSearchParams({
               'sessionId': plexSessionId,
               'reason': 'SchroStream cleanup',
@@ -357,7 +367,7 @@ export class PlexClient {
             
             const terminateUrl = `${this.baseUrl}/status/sessions/terminate?${params.toString()}`;
             const response = await fetch(terminateUrl);
-            console.log('[Plex] Terminated Plex session', plexSessionId, response.ok ? '✓' : `(${response.status})`);
+            console.log(`[Plex] Terminated Plex session for ${sessionUser}`, plexSessionId, response.ok ? '✓' : `(${response.status})`);
           }
         }
       }

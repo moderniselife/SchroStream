@@ -1141,11 +1141,6 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
         await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
         return;
       }
-      // Check if the session belongs to the user
-      if (session.userId && session.userId !== interaction.user.id) {
-        await interaction.reply({ content: '❌ You can only control your own streams', ephemeral: true });
-        return;
-      }
       if (session.isPaused) {
         await videoStreamer.resumeStream(guildId);
         await interaction.reply({ content: '▶️ Resumed', ephemeral: true });
@@ -1155,30 +1150,14 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       }
       break;
     }
-    case 'ctrl_stop': {
-      const session = videoStreamer.getSession(guildId);
-      if (!session) {
-        await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
-        return;
-      }
-      // Check if the session belongs to the user
-      if (session.userId && session.userId !== interaction.user.id) {
-        await interaction.reply({ content: '❌ You can only stop your own streams', ephemeral: true });
-        return;
-      }
+    case 'ctrl_stop':
       await videoStreamer.stopStream(guildId);
       await interaction.reply({ content: '⏹️ Stopped', ephemeral: true });
       break;
-    }
     case 'ctrl_ff': {
       const session = videoStreamer.getSession(guildId);
       if (!session) {
         await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
-        return;
-      }
-      // Check if the session belongs to the user
-      if (session.userId && session.userId !== interaction.user.id) {
-        await interaction.reply({ content: '❌ You can only control your own streams', ephemeral: true });
         return;
       }
       const currentTime = videoStreamer.getCurrentTime(guildId);
@@ -1188,16 +1167,6 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       break;
     }
     case 'ctrl_rw': {
-      const session = videoStreamer.getSession(guildId);
-      if (!session) {
-        await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
-        return;
-      }
-      // Check if the session belongs to the user
-      if (session.userId && session.userId !== interaction.user.id) {
-        await interaction.reply({ content: '❌ You can only control your own streams', ephemeral: true });
-        return;
-      }
       const currentTime = videoStreamer.getCurrentTime(guildId);
       const newTime = Math.max(currentTime - 30000, 0);
       await videoStreamer.seekStream(guildId, newTime);
