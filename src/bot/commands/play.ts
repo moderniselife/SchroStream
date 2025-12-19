@@ -29,7 +29,7 @@ export async function playCommand(message: Message, args: string[]): Promise<voi
     if (pending) {
       pendingResume.delete(pending.mediaItem.ratingKey);
       const statusMsg = await message.channel.send(`▶️ Resuming from ${formatDuration(pending.position)}...`);
-      await startVideoStream(statusMsg, pending.guildId, pending.channelId, pending.mediaItem, pending.position);
+      await startVideoStream(statusMsg, pending.guildId, pending.channelId, pending.mediaItem, pending.position, pending.userId);
       return;
     }
   }
@@ -40,7 +40,7 @@ export async function playCommand(message: Message, args: string[]): Promise<voi
       pendingResume.delete(pending.mediaItem.ratingKey);
       clearPlaybackPosition(pending.mediaItem.ratingKey);
       const statusMsg = await message.channel.send(`🎬 Starting from beginning...`);
-      await startVideoStream(statusMsg, pending.guildId, pending.channelId, pending.mediaItem, 0);
+      await startVideoStream(statusMsg, pending.guildId, pending.channelId, pending.mediaItem, 0, pending.userId);
       return;
     }
   }
@@ -158,7 +158,7 @@ export async function playCommand(message: Message, args: string[]): Promise<voi
     }
 
     const statusMsg = await message.channel.send(`🎬 Loading "${mediaItem.title}"...`);
-    await startVideoStream(statusMsg, message.guild!.id, voiceChannel.id, itemToPlay, 0);
+    await startVideoStream(statusMsg, message.guild!.id, voiceChannel.id, itemToPlay, 0, message.author.id);
     // Don't clear search session - keep it until user searches again
   } catch (error) {
     console.error('[Play] Error:', error);
@@ -171,7 +171,8 @@ async function startVideoStream(
   guildId: string,
   channelId: string,
   mediaItem: PlexMediaItem,
-  startTimeMs = 0
+  startTimeMs = 0,
+  userId?: string
 ): Promise<void> {
   const videoStreamer = getVideoStreamer();
 
@@ -196,7 +197,8 @@ async function startVideoStream(
     channelId,
     mediaItem,
     streamInfo.url,
-    startTimeMs
+    startTimeMs,
+    userId
   ).catch((err) => {
     console.error('[Play] Stream error:', err);
   });

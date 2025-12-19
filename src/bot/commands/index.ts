@@ -10,6 +10,11 @@ import { helpCommand } from './help.js';
 import { volumeCommand } from './volume.js';
 import { episodesCommand } from './episodes.js';
 import { randomCommand } from './random.js';
+import { onDeckCommand } from './ondeck.js';
+import { queueCommand } from './queue.js';
+import { ffwdCommand, rewindCommand } from './ffwd.js';
+import { youtubeCommand } from './youtube.js';
+import { urlCommand } from './url.js';
 
 export type CommandHandler = (message: Message, args: string[]) => Promise<void>;
 
@@ -38,7 +43,22 @@ const commands: Record<string, CommandHandler> = {
   seasons: episodesCommand,
   random: randomCommand,
   rand: randomCommand,
-  r: randomCommand,
+  ondeck: onDeckCommand,
+  deck: onDeckCommand,
+  continue: onDeckCommand,
+  queue: queueCommand,
+  q: queueCommand,
+  ff: ffwdCommand,
+  ffwd: ffwdCommand,
+  forward: ffwdCommand,
+  rw: rewindCommand,
+  rewind: rewindCommand,
+  back: rewindCommand,
+  yt: youtubeCommand,
+  youtube: youtubeCommand,
+  url: urlCommand,
+  stream: urlCommand,
+  m3u8: urlCommand,
 };
 
 export async function handleCommand(
