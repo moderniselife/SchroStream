@@ -258,7 +258,10 @@ class VideoStreamer {
 
       ffmpeg.stderr.on('data', (data) => {
         const msg = data.toString();
-        if (!msg.includes('frame=') && !msg.includes('size=')) {
+        // Always show errors, but only show other logs if enabled
+        if (msg.includes('Error') || msg.includes('error') || msg.includes('Fatal')) {
+          console.error('[FFmpeg]', msg);
+        } else if (config.stream.showFFmpegLogs && !msg.includes('frame=') && !msg.includes('size=')) {
           console.error('[FFmpeg]', msg);
         }
       });

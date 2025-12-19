@@ -40,6 +40,7 @@ export const config: Config = {
     maxBitrate: parseInt(getEnvOrDefault('MAX_BITRATE', '10000'), 10),
     audioBitrate: parseInt(getEnvOrDefault('AUDIO_BITRATE', '256'), 10),
     frameRate: parseInt(getEnvOrDefault('FRAME_RATE', '30'), 10),
+    showFFmpegLogs: getEnvOrDefault('SHOW_FFMPEG_LOGS', 'false').toLowerCase() === 'true',
   },
 };
 

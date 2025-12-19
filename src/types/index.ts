@@ -91,6 +91,7 @@ export interface Config {
     maxBitrate: number;
     audioBitrate: number;
     frameRate: number;
+    showFFmpegLogs: boolean;
   };
 }
 
