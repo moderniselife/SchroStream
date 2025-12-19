@@ -23,7 +23,16 @@ import { client as selfbotClient } from '../bot/client.js';
 
 // Store search results per user
 const searchSessions = new Map<string, { results: PlexMediaItem[], timestamp: number }>();
+const youtubeSearchSessions = new Map<string, { results: any[], timestamp: number }>();
 const SESSION_TIMEOUT = 10 * 60 * 1000; // 10 minutes
+
+interface YouTubeSearchResult {
+  id: string;
+  title: string;
+  duration: string;
+  channel: string;
+  url: string;
+}
 
 // Discord bot client
 let controllerBot: Client | null = null;
@@ -108,11 +117,29 @@ const commands = [
         .setRequired(true)
     ),
   new SlashCommandBuilder()
+    .setName('yts')
+    .setDescription('Search YouTube')
+    .addStringOption(option =>
+      option.setName('query')
+        .setDescription('Search query')
+        .setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('ytp')
+    .setDescription('Play a YouTube search result')
+    .addIntegerOption(option =>
+      option.setName('number')
+        .setDescription('Result number to play')
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(20)
+    ),
+  new SlashCommandBuilder()
     .setName('url')
-    .setDescription('Play a stream URL directly')
+    .setDescription('Play a direct stream URL')
     .addStringOption(option =>
       option.setName('url')
-        .setDescription('Stream URL (m3u8, mp4, etc.)')
+        .setDescription('Stream URL (M3U8, MP4, etc.)')
         .setRequired(true)
     )
     .addStringOption(option =>
@@ -221,6 +248,12 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'yt':
       await handleYouTube(interaction);
+      break;
+    case 'yts':
+      await handleYouTubeSearch(interaction);
+      break;
+    case 'ytp':
+      await handleYouTubePlay(interaction);
       break;
     case 'url':
       await handleUrl(interaction);
@@ -663,7 +696,7 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
 
   const videoStreamer = getVideoStreamer();
   videoStreamer.startExternalStream(
-    interaction.guild!.id,
+    guildId,
     voiceChannel.id,
     mediaItem,
     urls.video,
@@ -721,6 +754,129 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
     url,
     interaction.user.id
   ).catch(err => console.error('[Controller] URL stream error:', err));
+}
+
+async function handleYouTubeSearch(interaction: ChatInputCommandInteraction): Promise<void> {
+  const query = interaction.options.getString('query', true);
+  await interaction.deferReply();
+
+  const { spawn } = await import('child_process');
+  
+  const results = await new Promise<YouTubeSearchResult[]>((resolve) => {
+    const ytdlp = spawn('yt-dlp', [
+      '--dump-json',
+      '--flat-playlist',
+      '--no-warnings',
+      '-I', '1:10',
+      `ytsearch10:${query}`
+    ]);
+
+    let output = '';
+    let error = '';
+
+    ytdlp.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+
+    ytdlp.stderr.on('data', (data) => {
+      error += data.toString();
+    });
+
+    ytdlp.on('close', (code) => {
+      if (code !== 0 || !output) {
+        console.error('[YouTubeSearch] yt-dlp error:', error);
+        resolve([]);
+        return;
+      }
+
+      try {
+        const results: YouTubeSearchResult[] = [];
+        const lines = output.trim().split('\n');
+        
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const info = JSON.parse(line);
+          results.push({
+            id: info.id,
+            title: info.title || 'Unknown',
+            duration: formatDuration(info.duration),
+            channel: info.channel || info.uploader || 'Unknown',
+            url: info.url || `https://www.youtube.com/watch?v=${info.id}`,
+          });
+        }
+        
+        resolve(results);
+      } catch (e) {
+        console.error('[YouTubeSearch] Failed to parse results:', e);
+        resolve([]);
+      }
+    });
+
+    ytdlp.on('error', (err) => {
+      console.error('[YouTubeSearch] yt-dlp spawn error:', err);
+      resolve([]);
+    });
+  });
+
+  if (results.length === 0) {
+    await interaction.editReply('❌ No results found. Try a different search query.');
+    return;
+  }
+
+  // Cache results
+  youtubeSearchSessions.set(interaction.user.id, {
+    results,
+    timestamp: Date.now(),
+  });
+
+  const resultLines = results.map((r, i) => 
+    `**${i + 1}.** ${r.title}\n   └ ${r.channel} • ${r.duration}`
+  );
+
+  const embed = new EmbedBuilder()
+    .setTitle('🎬 YouTube Search Results')
+    .setDescription(resultLines.join('\n\n'))
+    .setColor(0xff0000)
+    .setFooter({ text: 'Use /ytp <number> to play a result' });
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
+async function handleYouTubePlay(interaction: ChatInputCommandInteraction): Promise<void> {
+  const number = interaction.options.getInteger('number', true);
+  
+  const session = youtubeSearchSessions.get(interaction.user.id);
+  if (!session || Date.now() - session.timestamp > SESSION_TIMEOUT) {
+    await interaction.reply({ content: '❌ Search expired. Use /yts to search first.', ephemeral: true });
+    return;
+  }
+
+  const result = session.results[number - 1];
+  if (!result) {
+    await interaction.reply({ content: '❌ Invalid selection', ephemeral: true });
+    return;
+  }
+
+  // Create a new interaction with the URL
+  const mockInteraction = {
+    ...interaction,
+    options: {
+      getString: () => result.url
+    }
+  } as ChatInputCommandInteraction;
+
+  await handleYouTube(mockInteraction);
+}
+
+function formatDuration(seconds: number | null): string {
+  if (!seconds) return 'Live/Unknown';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 async function handleButton(interaction: ButtonInteraction): Promise<void> {
