@@ -31,6 +31,7 @@ export const config: Config = {
   plex: {
     url: getEnvOrThrow('PLEX_URL').replace(/\/$/, ''),
     token: getEnvOrThrow('PLEX_TOKEN'),
+    clientIdentifier: getEnvOrDefault('PLEX_CLIENT_IDENTIFIER', 'SchroStream'),
   },
   stream: {
     defaultQuality: parseInt(getEnvOrDefault('DEFAULT_QUALITY', '1080'), 10),

@@ -77,11 +77,12 @@ class VideoStreamer {
       // Build headers string for FFmpeg (must be before -i)
       const headers = [
         'Accept: application/json',
-        'X-Plex-Client-Identifier: SchroStream',
+        'X-Plex-Client-Identifier: ' + config.plex.clientIdentifier,
         'X-Plex-Product: Plex Web',
         'X-Plex-Version: 4.0',
         'X-Plex-Platform: Chrome',
         'X-Plex-Device: Linux',
+        'X-Plex-Token: ' + config.plex.token,
       ].join('\r\n') + '\r\n';
 
       const ffmpegArgs = [

@@ -75,6 +75,7 @@ export interface Config {
   plex: {
     url: string;
     token: string;
+    clientIdentifier: string;
   };
   stream: {
     defaultQuality: number;
