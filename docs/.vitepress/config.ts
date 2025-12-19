@@ -3,9 +3,10 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: 'SchroStream',
   description: 'Discord Plex Streaming Self-Bot Documentation',
+  base: '/SchroStream/',
   
   head: [
-    ['link', { rel: 'icon', href: '/favicon.ico' }]
+    ['link', { rel: 'icon', href: '/SchroStream/favicon.ico' }]
   ],
 
   themeConfig: {

@@ -17,6 +17,7 @@ export interface VideoStreamSession {
   streamUrl: string;
   isPaused: boolean;
   isStopping: boolean; // Flag to track intentional stop (pause/seek)
+  isPlaying: boolean; // Flag to track if stream actually started playing
   startedAt: number;
   currentTime: number;
   duration: number;
@@ -129,6 +130,7 @@ class VideoStreamer {
       streamUrl,
       isPaused: false,
       isStopping: false,
+      isPlaying: false,
       startedAt: Date.now(),
       currentTime: startTimeMs,
       duration: mediaItem.duration || 0,
@@ -263,6 +265,10 @@ class VideoStreamer {
       });
 
       console.log('[VideoStreamer] Starting Go Live stream...');
+      
+      // Mark as actually playing now
+      session.isPlaying = true;
+      session.startedAt = Date.now(); // Reset start time to when stream actually begins
 
       // Pass the FFmpeg stdout stream to playStream
       await playStream(ffmpeg.stdout, this.streamer, {
@@ -272,8 +278,10 @@ class VideoStreamer {
       console.log('[VideoStreamer] Playback finished');
       // Only delete session if not intentionally stopped (pause/seek)
       if (!session.isStopping) {
-        // Save position for resume later
-        savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(session.guildId));
+        // Save position for resume later (only if actually played)
+        if (session.isPlaying) {
+          savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(session.guildId));
+        }
         this.sessions.delete(session.guildId);
       }
     } catch (error) {
@@ -283,7 +291,10 @@ class VideoStreamer {
       }
       // Only delete session if not intentionally stopped
       if (!session.isStopping) {
-        savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(session.guildId));
+        // Only save position if stream actually played
+        if (session.isPlaying) {
+          savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(session.guildId));
+        }
         this.sessions.delete(session.guildId);
       }
     }
@@ -293,8 +304,10 @@ class VideoStreamer {
     const session = this.sessions.get(guildId);
 
     if (session) {
-      // Save position before stopping
-      savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(guildId));
+      // Save position before stopping (only if actually played)
+      if (session.isPlaying) {
+        savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(guildId));
+      }
       
       if (session.ffmpegCommand) {
         try {
