@@ -11,6 +11,8 @@ export interface PlexMediaItem {
   addedAt?: number;
   parentTitle?: string;
   grandparentTitle?: string;
+  parentRatingKey?: string;
+  grandparentRatingKey?: string;
   index?: number;
   parentIndex?: number;
 }

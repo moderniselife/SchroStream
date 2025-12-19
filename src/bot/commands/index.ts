@@ -9,6 +9,7 @@ import { nowPlayingCommand } from './nowplaying.js';
 import { helpCommand } from './help.js';
 import { volumeCommand } from './volume.js';
 import { episodesCommand } from './episodes.js';
+import { randomCommand } from './random.js';
 
 export type CommandHandler = (message: Message, args: string[]) => Promise<void>;
 
@@ -35,6 +36,9 @@ const commands: Record<string, CommandHandler> = {
   episodes: episodesCommand,
   eps: episodesCommand,
   seasons: episodesCommand,
+  random: randomCommand,
+  rand: randomCommand,
+  r: randomCommand,
 };
 
 export async function handleCommand(

@@ -13,6 +13,7 @@ export async function helpCommand(message: Message, _args: string[]): Promise<vo
 \`${prefix}play <number>\` - Play a result (S01E01 for shows)
 \`${prefix}play <number> S02E05\` - Play specific episode
 \`${prefix}play resume\` - Continue where you left off
+\`${prefix}random [movie|show]\` - Play random media
 \`${prefix}stop\` - Stop the current stream
 
 **Playback Controls:**
