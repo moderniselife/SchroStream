@@ -150,6 +150,224 @@ async function main() {
     }
   }
   
+  // Test 6: Get stream URL for Breaking Bad
+  console.log('\n' + '='.repeat(60));
+  console.log('Testing: Get Stream URL for a show');
+  console.log('='.repeat(60));
+  
+  // Find Breaking Bad first
+  const showSearch = await testEndpoint(
+    'Find Breaking Bad',
+    `/library/sections/5/search?type=2&query=breaking%20bad`
+  );
+  
+  if (showSearch?.MediaContainer?.Metadata) {
+    const show = Array.isArray(showSearch.MediaContainer.Metadata)
+      ? showSearch.MediaContainer.Metadata[0]
+      : showSearch.MediaContainer.Metadata;
+    
+    console.log(`\nFound show: ${show.title} (ratingKey: ${show.ratingKey})`);
+    
+    // Get episodes
+    const episodes = await testEndpoint(
+      'Get Episodes',
+      `/library/metadata/${show.ratingKey}/allLeaves`
+    );
+    
+    if (episodes?.MediaContainer?.Metadata) {
+      const ep = Array.isArray(episodes.MediaContainer.Metadata)
+        ? episodes.MediaContainer.Metadata[0]
+        : episodes.MediaContainer.Metadata;
+      
+      console.log(`\nFirst episode: ${ep.title} (ratingKey: ${ep.ratingKey})`);
+      
+      // Get episode metadata with Media info
+      const epMeta = await testEndpoint(
+        'Get Episode Metadata',
+        `/library/metadata/${ep.ratingKey}`
+      );
+      
+      if (epMeta?.MediaContainer?.Metadata) {
+        const epData = Array.isArray(epMeta.MediaContainer.Metadata)
+          ? epMeta.MediaContainer.Metadata[0]
+          : epMeta.MediaContainer.Metadata;
+        
+        console.log('\nMedia info:');
+        console.log(JSON.stringify(epData.Media, null, 2));
+        
+        if (epData.Media) {
+          const media = Array.isArray(epData.Media) ? epData.Media[0] : epData.Media;
+          const part = Array.isArray(media.Part) ? media.Part[0] : media.Part;
+          
+          console.log('\nPart info:');
+          console.log(`  key: ${part.key}`);
+          console.log(`  file: ${part.file}`);
+          console.log(`  container: ${part.container}`);
+          
+          // Test direct file URL (often fails with remote mounts)
+          const directUrl = `${PLEX_URL}${part.key}?X-Plex-Token=${PLEX_TOKEN}`;
+          console.log(`\nDirect URL: ${directUrl}`);
+          
+          console.log('\nTesting direct URL...');
+          try {
+            const directResponse = await fetch(directUrl, { method: 'HEAD' });
+            console.log(`  Status: ${directResponse.status} ${directResponse.statusText}`);
+          } catch (err) {
+            console.log(`  Error: ${err}`);
+          }
+          
+          // Test download URL (should always work)
+          const downloadUrl = `${PLEX_URL}/library/metadata/${ep.ratingKey}/file?X-Plex-Token=${PLEX_TOKEN}`;
+          console.log(`\nDownload URL: ${downloadUrl}`);
+          
+          console.log('\nTesting download URL...');
+          try {
+            const downloadResponse = await fetch(downloadUrl, { method: 'HEAD' });
+            console.log(`  Status: ${downloadResponse.status} ${downloadResponse.statusText}`);
+            console.log(`  Content-Type: ${downloadResponse.headers.get('content-type')}`);
+          } catch (err) {
+            console.log(`  Error: ${err}`);
+          }
+          
+          // Test with proper Plex client headers (like a real player)
+          console.log('\n--- Testing with Plex Client Headers ---');
+          
+          const plexHeaders = {
+            'Accept': 'application/json',
+            'X-Plex-Token': PLEX_TOKEN,
+            'X-Plex-Client-Identifier': 'SchroStream-' + Date.now(),
+            'X-Plex-Product': 'Plex Web',
+            'X-Plex-Version': '4.0',
+            'X-Plex-Platform': 'Chrome',
+            'X-Plex-Platform-Version': '120.0',
+            'X-Plex-Device': 'Linux',
+            'X-Plex-Device-Name': 'SchroStream',
+          };
+          
+          // Test playback decision endpoint (what real clients use)
+          const decisionParams = new URLSearchParams({
+            path: `/library/metadata/${ep.ratingKey}`,
+            mediaIndex: '0',
+            partIndex: '0',
+            protocol: 'http',
+            directPlay: '1',
+            directStream: '1',
+            directStreamAudio: '1',
+            hasMDE: '1',
+          });
+          
+          const decisionUrl = `${PLEX_URL}/video/:/transcode/universal/decision?${decisionParams.toString()}&X-Plex-Token=${PLEX_TOKEN}`;
+          console.log(`Decision URL (proper): ${decisionUrl.substring(0, 120)}...`);
+          
+          try {
+            const decisionResp = await fetch(decisionUrl, { headers: plexHeaders });
+            console.log(`  Status: ${decisionResp.status} ${decisionResp.statusText}`);
+            if (decisionResp.ok) {
+              const data = await decisionResp.json();
+              console.log('  mdeDecisionText:', data.MediaContainer?.mdeDecisionText);
+              
+              // Get the Media/Part from decision response
+              const decMeta = data.MediaContainer?.Metadata?.[0];
+              if (decMeta?.Media) {
+                const decMedia = Array.isArray(decMeta.Media) ? decMeta.Media[0] : decMeta.Media;
+                const decPart = Array.isArray(decMedia.Part) ? decMedia.Part[0] : decMedia.Part;
+                
+                console.log('\n  Decision Media info:');
+                console.log('    selected:', decMedia.selected);
+                console.log('    protocol:', decMedia.protocol);
+                console.log('    Part key:', decPart?.key);
+                console.log('    Part decision:', decPart?.decision);
+                console.log('    Part stream:', decPart?.Stream);
+                
+                if (decPart?.key) {
+                  // This is the actual streamable URL!
+                  const actualStreamUrl = `${PLEX_URL}${decPart.key}?X-Plex-Token=${PLEX_TOKEN}`;
+                  console.log(`\n  ACTUAL STREAM URL: ${actualStreamUrl}`);
+                  
+                  console.log('\n  Testing actual stream URL...');
+                  try {
+                    const streamResp = await fetch(actualStreamUrl, { 
+                      method: 'HEAD',
+                      headers: plexHeaders 
+                    });
+                    console.log(`    Status: ${streamResp.status} ${streamResp.statusText}`);
+                    console.log(`    Content-Type: ${streamResp.headers.get('content-type')}`);
+                    console.log(`    Content-Length: ${streamResp.headers.get('content-length')}`);
+                  } catch (err) {
+                    console.log(`    Error: ${err}`);
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            console.log(`  Error: ${err}`);
+          }
+          
+          // Try HLS streaming (what Plex web uses)
+          const sessionId = `schrostream-${Date.now()}`;
+          const hlsParams = new URLSearchParams({
+            path: `/library/metadata/${ep.ratingKey}`,
+            mediaIndex: '0',
+            partIndex: '0',
+            protocol: 'hls',
+            session: sessionId,
+            fastSeek: '1',
+            directPlay: '0',
+            directStream: '1',
+            subtitleSize: '100',
+            audioBoost: '100',
+            location: 'lan',
+            addDebugOverlay: '0',
+            autoAdjustQuality: '0',
+            directStreamAudio: '1',
+            mediaBufferSize: '102400',
+            subtitles: 'burn',
+            'Accept-Language': 'en',
+            'X-Plex-Session-Identifier': sessionId,
+            'X-Plex-Client-Profile-Extra': 'add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac,ac3)',
+          });
+          
+          const hlsUrl = `${PLEX_URL}/video/:/transcode/universal/start.m3u8?${hlsParams.toString()}&X-Plex-Token=${PLEX_TOKEN}`;
+          console.log(`\nHLS URL: ${hlsUrl.substring(0, 120)}...`);
+          
+          try {
+            const hlsResp = await fetch(hlsUrl, { headers: plexHeaders });
+            console.log(`  Status: ${hlsResp.status} ${hlsResp.statusText}`);
+            console.log(`  Content-Type: ${hlsResp.headers.get('content-type')}`);
+            if (hlsResp.ok) {
+              const m3u8 = await hlsResp.text();
+              console.log(`  M3U8 content (first 500 chars):\n${m3u8.substring(0, 500)}`);
+            }
+          } catch (err) {
+            console.log(`  Error: ${err}`);
+          }
+          
+          // Try DASH streaming
+          const dashParams = new URLSearchParams({
+            path: `/library/metadata/${ep.ratingKey}`,
+            mediaIndex: '0',
+            partIndex: '0', 
+            protocol: 'dash',
+            session: sessionId,
+            fastSeek: '1',
+            directPlay: '0',
+            directStream: '1',
+          });
+          
+          const dashUrl = `${PLEX_URL}/video/:/transcode/universal/start.mpd?${dashParams.toString()}&X-Plex-Token=${PLEX_TOKEN}`;
+          console.log(`\nDASH URL: ${dashUrl.substring(0, 120)}...`);
+          
+          try {
+            const dashResp = await fetch(dashUrl, { headers: plexHeaders });
+            console.log(`  Status: ${dashResp.status} ${dashResp.statusText}`);
+          } catch (err) {
+            console.log(`  Error: ${err}`);
+          }
+        }
+      }
+    }
+  }
+
   console.log('\n' + '='.repeat(60));
   console.log('Test complete!');
 }

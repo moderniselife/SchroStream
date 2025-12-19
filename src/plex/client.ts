@@ -193,9 +193,34 @@ export class PlexClient {
 
       const partInfo = Array.isArray(part) ? part[0] : part;
 
+      // Use HLS streaming - works with cloud mounts (zurg, rclone, etc.)
+      const sessionId = `schrostream-${Date.now()}`;
+      const params = new URLSearchParams({
+        path: `/library/metadata/${ratingKey}`,
+        mediaIndex: '0',
+        partIndex: '0',
+        protocol: 'hls',
+        session: sessionId,
+        fastSeek: '1',
+        directPlay: '0',
+        directStream: '1',
+        subtitleSize: '100',
+        audioBoost: '100',
+        location: 'lan',
+        autoAdjustQuality: '0',
+        directStreamAudio: '1',
+        mediaBufferSize: '102400',
+        'X-Plex-Session-Identifier': sessionId,
+        'X-Plex-Token': this.token,
+        'X-Plex-Client-Identifier': 'SchroStream',
+        'X-Plex-Product': 'SchroStream',
+        'X-Plex-Device': 'Node',
+        'X-Plex-Platform': 'Node',
+      });
+
       return {
-        url: `${this.baseUrl}${partInfo.key}?X-Plex-Token=${this.token}`,
-        container: partInfo.container || 'mkv',
+        url: `${this.baseUrl}/video/:/transcode/universal/start.m3u8?${params.toString()}`,
+        container: 'm3u8',
         videoCodec: mediaInfo.videoCodec,
         audioCodec: mediaInfo.audioCodec,
         bitrate: parseInt(mediaInfo.bitrate || '0', 10),
