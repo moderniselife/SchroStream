@@ -69,21 +69,28 @@ PREFIX=!
 7. In the **Headers** tab, scroll down to find `authorization`
 8. Copy the token value (it looks like `mfa.xxxxx` or `NzkyNTg...`)
 
-#### Method 2: Console Command
+#### Method 2: Local Storage (Browser)
 
-1. Open Discord in browser and press `F12`
-2. Go to the **Console** tab
-3. Paste and run:
-   ```js
-   (webpackChunkdiscord_app.push([[''],{},e=>{m=[];for(let c in e.c)m.push(e.c[c])}]),m).find(m=>m?.exports?.default?.getToken).exports.default.getToken()
-   ```
-4. Copy the returned token string
+1. Open [Discord Web](https://discord.com/app) in your browser
+2. Press `F12` to open Developer Tools
+3. Go to **Application** tab (Chrome) or **Storage** tab (Firefox)
+4. Expand **Local Storage** → click `https://discord.com`
+5. Look for a key containing `token` - the value is your token
+6. If not found, use Method 1 (Network tab) instead
 
 #### Method 3: Discord Desktop App
 
-1. Open Discord desktop app
-2. Press `Ctrl+Shift+I` (or `Cmd+Option+I` on Mac)
-3. Go to **Console** tab and run the same script as Method 2
+1. Close Discord completely
+2. Navigate to Discord's storage folder:
+   - **Windows:** `%appdata%\discord\Local Storage\leveldb\`
+   - **macOS:** `~/Library/Application Support/discord/Local Storage/leveldb/`
+   - **Linux:** `~/.config/discord/Local Storage/leveldb/`
+3. Open `.ldb` files in a text editor and search for `oken` (token without the 't')
+4. The token is the string that looks like `NzkyNTg...` or `mfa.xxxxx`
+
+#### Method 4: Network Tab (Most Reliable)
+
+Same as Method 1 - the Network tab approach works in both browser and desktop app (with DevTools enabled).
 
 ### Getting Your Plex Token
 
