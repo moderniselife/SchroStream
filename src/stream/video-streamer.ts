@@ -83,6 +83,12 @@ export function getPlaybackPosition(ratingKey: string): number | null {
 }
 
 export function savePlaybackPosition(ratingKey: string, position: number, title?: string): void {
+  // Don't save if position is less than 30 seconds (likely a failed/aborted stream)
+  if (position < 30000) {
+    console.log(`[PlaybackHistory] Skipping save for ${ratingKey} - position too small: ${position}ms`);
+    return;
+  }
+  console.log(`[PlaybackHistory] Saving ${ratingKey} at position ${position}ms`);
   playbackHistory.set(ratingKey, { position, updatedAt: Date.now(), title });
   persistPlaybackHistory();
 }
@@ -218,6 +224,9 @@ class VideoStreamer {
       // Calculate volume filter (100% = 1.0, 50% = 0.5, 200% = 2.0)
       const volumeMultiplier = (session.volume / 100).toFixed(2);
 
+      const frameRate = config.stream.frameRate;
+      const gopSize = frameRate * 2; // 2 seconds of keyframes
+      
       ffmpegArgs.push(
         '-i', actualStreamUrl,
         // Video output
@@ -228,8 +237,8 @@ class VideoStreamer {
         '-maxrate', `${Math.round(config.stream.maxBitrate * 1.5)}k`,
         '-bufsize', `${config.stream.maxBitrate * 2}k`,
         '-vf', `scale=${width}:${height}`,
-        '-r', '30',
-        '-g', '60',
+        '-r', frameRate.toString(),
+        '-g', gopSize.toString(),
         '-pix_fmt', 'yuv420p',
         // Audio output with volume filter
         '-af', `volume=${volumeMultiplier}`,
@@ -304,10 +313,12 @@ class VideoStreamer {
     const session = this.sessions.get(guildId);
 
     if (session) {
-      // Save position before stopping (only if actually played)
-      if (session.isPlaying) {
-        savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(guildId));
-      }
+      // Get current position BEFORE stopping anything
+      const currentPosition = session.isPlaying ? this.getCurrentTime(guildId) : 0;
+      console.log(`[VideoStreamer] Stopping stream, position: ${currentPosition}ms, isPlaying: ${session.isPlaying}`);
+      
+      // Stop Plex transcode FIRST (before killing FFmpeg)
+      await plexClient.stopTranscodeSession();
       
       if (session.ffmpegCommand) {
         try {
@@ -315,6 +326,11 @@ class VideoStreamer {
         } catch {
           // Ignore kill errors
         }
+      }
+
+      // Save position AFTER stopping (only if actually played)
+      if (session.isPlaying && currentPosition > 0) {
+        savePlaybackPosition(session.mediaItem.ratingKey, currentPosition);
       }
 
       this.sessions.delete(guildId);

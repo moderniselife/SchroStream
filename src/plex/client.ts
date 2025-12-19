@@ -308,21 +308,27 @@ export class PlexClient {
     return `${this.baseUrl}${thumb}?X-Plex-Token=${this.token}`;
   }
 
-  async stopTranscodeSession(sessionId?: string): Promise<void> {
+  async stopTranscodeSession(sessionId?: string): Promise<boolean> {
     try {
       const params = new URLSearchParams({
         'X-Plex-Token': this.token,
       });
       if (sessionId) {
         params.set('session', sessionId);
-        untrackSession(sessionId);
       }
       
       const url = `${this.baseUrl}/video/:/transcode/universal/stop?${params.toString()}`;
-      await fetch(url, { method: 'GET' });
-      console.log('[Plex] Stopped transcode session', sessionId || '(all)');
+      const response = await fetch(url, { method: 'GET' });
+      console.log('[Plex] Stopped transcode session', sessionId || '(all)', response.ok ? '✓' : `(${response.status})`);
+      
+      // Only untrack AFTER successful stop
+      if (sessionId && response.ok) {
+        untrackSession(sessionId);
+      }
+      return response.ok;
     } catch (error) {
-      // Ignore errors - session might not exist
+      console.error('[Plex] Failed to stop transcode session:', sessionId, error);
+      return false;
     }
   }
 
@@ -333,11 +339,12 @@ export class PlexClient {
     
     console.log(`[Plex] Cleaning up ${sessions.length} stale session(s)...`);
     for (const sessionId of sessions) {
-      await this.stopTranscodeSession(sessionId);
+      const stopped = await this.stopTranscodeSession(sessionId);
+      if (!stopped) {
+        // If stop failed, still untrack to prevent infinite retries on non-existent sessions
+        untrackSession(sessionId);
+      }
     }
-    // Clear all after cleanup
-    activeSessions.clear();
-    saveSessions();
     console.log('[Plex] Cleanup complete');
   }
 

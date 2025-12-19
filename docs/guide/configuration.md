@@ -38,14 +38,19 @@ ALLOWED_GUILDS=123456789012345678
 
 ```env
 # Default video quality (height in pixels)
-# Options: 480, 720, 1080 (default: 1080)
+# Options: 480, 720, 1080, 1440 (default: 1080)
+# Discord Nitro max: 1440p
 DEFAULT_QUALITY=1080
 
-# Maximum video bitrate in kbps (default: 8000)
-MAX_BITRATE=8000
+# Maximum video bitrate in kbps
+# Recommended: 8000 (1080p30), 10000 (1080p60), 15000 (1440p60)
+MAX_BITRATE=10000
 
-# Audio bitrate in kbps (default: 192)
-AUDIO_BITRATE=192
+# Audio bitrate in kbps (default: 256)
+AUDIO_BITRATE=256
+
+# Frame rate (30 or 60 - 60 requires Discord Nitro)
+FRAME_RATE=30
 ```
 
 ### Plex Settings
@@ -72,10 +77,11 @@ PLEX_URL=http://192.168.1.100:32400
 PLEX_TOKEN=abc123xyz789
 PLEX_CLIENT_IDENTIFIER=SchroStream
 
-# Stream Quality
+# Stream Quality (Discord Nitro: up to 1440p 60fps)
 DEFAULT_QUALITY=1080
-MAX_BITRATE=8000
-AUDIO_BITRATE=192
+MAX_BITRATE=10000
+AUDIO_BITRATE=256
+FRAME_RATE=30
 ```
 
 ## Environment Variables Reference
@@ -89,7 +95,8 @@ AUDIO_BITRATE=192
 | `ALLOWED_USERS` | No | Bot owner | Comma-separated user IDs |
 | `ALLOWED_ROLES` | No | - | Comma-separated role IDs |
 | `ALLOWED_GUILDS` | No | All | Comma-separated guild IDs |
-| `DEFAULT_QUALITY` | No | `1080` | Video height in pixels |
-| `MAX_BITRATE` | No | `8000` | Max video bitrate (kbps) |
-| `AUDIO_BITRATE` | No | `192` | Audio bitrate (kbps) |
+| `DEFAULT_QUALITY` | No | `1080` | Video height (480, 720, 1080, 1440) |
+| `MAX_BITRATE` | No | `10000` | Max video bitrate (kbps) |
+| `AUDIO_BITRATE` | No | `256` | Audio bitrate (kbps) |
+| `FRAME_RATE` | No | `30` | Frame rate (30 or 60) |
 | `PLEX_CLIENT_IDENTIFIER` | No | `SchroStream` | Plex client ID |

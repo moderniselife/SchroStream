@@ -35,8 +35,9 @@ export const config: Config = {
   },
   stream: {
     defaultQuality: parseInt(getEnvOrDefault('DEFAULT_QUALITY', '1080'), 10),
-    maxBitrate: parseInt(getEnvOrDefault('MAX_BITRATE', '8000'), 10),
-    audioBitrate: parseInt(getEnvOrDefault('AUDIO_BITRATE', '192'), 10),
+    maxBitrate: parseInt(getEnvOrDefault('MAX_BITRATE', '10000'), 10),
+    audioBitrate: parseInt(getEnvOrDefault('AUDIO_BITRATE', '256'), 10),
+    frameRate: parseInt(getEnvOrDefault('FRAME_RATE', '30'), 10),
   },
 };
 
