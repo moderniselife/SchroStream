@@ -229,6 +229,16 @@ export class PlexClient {
     return items.map((item: any) => this.parseMediaItem(item));
   }
 
+  async getEpisode(showKey: string, seasonNum: number, episodeNum: number): Promise<PlexMediaItem | null> {
+    const seasons = await this.getSeasons(showKey);
+    const targetSeason = seasons.find(s => s.index === seasonNum);
+    
+    if (!targetSeason) return null;
+    
+    const episodes = await this.getSeasonEpisodes(targetSeason.ratingKey);
+    return episodes.find(e => e.index === episodeNum) || null;
+  }
+
   getStreamUrl(ratingKey: string): string {
     return `${this.baseUrl}/library/metadata/${ratingKey}?X-Plex-Token=${this.token}`;
   }

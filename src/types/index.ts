@@ -75,6 +75,8 @@ export interface Config {
     allowedUsers: string[];
     allowedRoles: string[];
     allowedGuilds: string[];
+    botToken?: string;
+    clientId?: string;
   };
   plex: {
     url: string;

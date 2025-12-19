@@ -27,6 +27,8 @@ export const config: Config = {
     allowedUsers: parseCommaSeparated(process.env.ALLOWED_USERS),
     allowedRoles: parseCommaSeparated(process.env.ALLOWED_ROLES),
     allowedGuilds: parseCommaSeparated(process.env.ALLOWED_GUILDS),
+    botToken: process.env.BOT_TOKEN,
+    clientId: process.env.BOT_CLIENT_ID,
   },
   plex: {
     url: getEnvOrThrow('PLEX_URL').replace(/\/$/, ''),
