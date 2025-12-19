@@ -132,7 +132,6 @@ export async function initControllerBot(): Promise<Client | null> {
   controllerBot = new Client({
     intents: [
       GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMembers,
       GatewayIntentBits.GuildVoiceStates,
     ],
   });
@@ -301,9 +300,9 @@ async function startPlayback(
   mediaItem: PlexMediaItem,
   episodeStr?: string | null
 ): Promise<void> {
-  // Get voice channel of user - fetch to ensure we have current voice state
-  const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
-  const voiceChannel = member?.voice.channel;
+  // Get voice channel from interaction member (provided by Discord)
+  const member = interaction.member as any;
+  const voiceChannel = member?.voice?.channel;
 
   if (!voiceChannel) {
     await interaction.editReply('❌ You must be in a voice channel');
@@ -563,8 +562,8 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
   const url = interaction.options.getString('url', true);
   await interaction.deferReply();
 
-  const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
-  const voiceChannel = member?.voice.channel;
+  const member = interaction.member as any;
+  const voiceChannel = member?.voice?.channel;
 
   if (!voiceChannel) {
     await interaction.editReply('❌ You must be in a voice channel');
@@ -652,7 +651,7 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
   const url = interaction.options.getString('url', true);
   const title = interaction.options.getString('title') || 'External Stream';
 
-  const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+  const member = interaction.member as any;
   const voiceChannel = member?.voice.channel;
 
   if (!voiceChannel) {
