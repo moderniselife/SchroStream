@@ -414,6 +414,10 @@ class VideoStreamer {
     return { current, total, percentage };
   }
 
+  getAllSessions(): string[] {
+    return [...this.sessions.keys()];
+  }
+
   async setVolume(guildId: string, volume: number): Promise<boolean> {
     const session = this.sessions.get(guildId);
     if (!session) return false;

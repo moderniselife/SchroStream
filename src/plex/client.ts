@@ -1,5 +1,49 @@
 import config from '../config.js';
 import type { PlexMediaItem, PlexStreamInfo } from '../types/index.js';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { join } from 'path';
+
+// Track active Plex sessions for cleanup
+const SESSIONS_FILE = join(process.cwd(), 'data', 'plex-sessions.json');
+let activeSessions: Set<string> = new Set();
+
+function loadSessions(): void {
+  try {
+    if (existsSync(SESSIONS_FILE)) {
+      const data = readFileSync(SESSIONS_FILE, 'utf-8');
+      activeSessions = new Set(JSON.parse(data));
+      console.log(`[Plex] Loaded ${activeSessions.size} session(s) to cleanup`);
+    }
+  } catch {
+    activeSessions = new Set();
+  }
+}
+
+function saveSessions(): void {
+  try {
+    const dataDir = join(process.cwd(), 'data');
+    if (!existsSync(dataDir)) {
+      mkdirSync(dataDir, { recursive: true });
+    }
+    writeFileSync(SESSIONS_FILE, JSON.stringify([...activeSessions]));
+  } catch (error) {
+    console.error('[Plex] Failed to save sessions:', error);
+  }
+}
+
+export function trackSession(sessionId: string): void {
+  activeSessions.add(sessionId);
+  saveSessions();
+}
+
+export function untrackSession(sessionId: string): void {
+  activeSessions.delete(sessionId);
+  saveSessions();
+}
+
+export function getActiveSessions(): string[] {
+  return [...activeSessions];
+}
 
 export class PlexClient {
   private baseUrl: string;
@@ -195,6 +239,8 @@ export class PlexClient {
 
       // Use HLS streaming - works with cloud mounts (zurg, rclone, etc.)
       const sessionId = `schrostream-${Date.now()}`;
+      trackSession(sessionId); // Track for cleanup on restart
+      
       const params = new URLSearchParams({
         path: `/library/metadata/${ratingKey}`,
         mediaIndex: '0',
@@ -269,14 +315,30 @@ export class PlexClient {
       });
       if (sessionId) {
         params.set('session', sessionId);
+        untrackSession(sessionId);
       }
       
       const url = `${this.baseUrl}/video/:/transcode/universal/stop?${params.toString()}`;
       await fetch(url, { method: 'GET' });
-      console.log('[Plex] Stopped transcode session');
+      console.log('[Plex] Stopped transcode session', sessionId || '(all)');
     } catch (error) {
       // Ignore errors - session might not exist
     }
+  }
+
+  async cleanupOldSessions(): Promise<void> {
+    loadSessions();
+    const sessions = getActiveSessions();
+    if (sessions.length === 0) return;
+    
+    console.log(`[Plex] Cleaning up ${sessions.length} stale session(s)...`);
+    for (const sessionId of sessions) {
+      await this.stopTranscodeSession(sessionId);
+    }
+    // Clear all after cleanup
+    activeSessions.clear();
+    saveSessions();
+    console.log('[Plex] Cleanup complete');
   }
 
   private parseMediaItem(item: any): PlexMediaItem {
