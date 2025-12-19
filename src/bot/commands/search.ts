@@ -5,19 +5,19 @@ export async function searchCommand(message: Message, args: string[]): Promise<v
   const query = args.join(' ');
 
   if (!query) {
-    await message.edit('❌ Usage: `!search <query>`');
+    await message.channel.send('❌ Usage: `!search <query>`');
     return;
   }
 
-  await message.edit(`🔍 Searching for "${query}"...`);
+  const statusMsg = await message.channel.send(`🔍 Searching for "${query}"...`);
 
   const results = await searchMedia(query, message.author.id);
 
   if (results.length === 0) {
-    await message.edit(`❌ No results found for "${query}"`);
+    await statusMsg.edit(`❌ No results found for "${query}"`);
     return;
   }
 
   const formatted = formatSearchResults(results);
-  await message.edit(`🎬 **Search Results for "${query}":**\n\n${formatted}\n\n*Use \`!play <number>\` to start streaming*`);
+  await statusMsg.edit(`🎬 **Search Results for "${query}":**\n\n${formatted}\n\n*Use \`!play <number>\` to start streaming*`);
 }

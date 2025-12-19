@@ -4,7 +4,7 @@ import { formatDuration } from '../../plex/library.js';
 
 export async function nowPlayingCommand(message: Message, _args: string[]): Promise<void> {
   if (!message.guild) {
-    await message.edit('❌ This command can only be used in a server');
+    await message.channel.send('❌ This command can only be used in a server');
     return;
   }
 
@@ -13,7 +13,7 @@ export async function nowPlayingCommand(message: Message, _args: string[]): Prom
   const session = videoStreamer.getSession(guildId);
 
   if (!session) {
-    await message.edit('❌ Nothing is currently playing');
+    await message.channel.send('❌ Nothing is currently playing');
     return;
   }
 
@@ -46,7 +46,7 @@ export async function nowPlayingCommand(message: Message, _args: string[]): Prom
     info.push(`📅 ${session.mediaItem.year}`);
   }
 
-  await message.edit(info.join('\n'));
+  await message.channel.send(info.join('\n'));
 }
 
 function createProgressBar(percentage: number): string {

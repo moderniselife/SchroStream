@@ -3,7 +3,7 @@ import { getVideoStreamer } from '../../stream/video-streamer.js';
 
 export async function stopCommand(message: Message, _args: string[]): Promise<void> {
   if (!message.guild) {
-    await message.edit('❌ This command can only be used in a server');
+    await message.channel.send('❌ This command can only be used in a server');
     return;
   }
 
@@ -12,10 +12,10 @@ export async function stopCommand(message: Message, _args: string[]): Promise<vo
   const session = videoStreamer.getSession(guildId);
 
   if (!session) {
-    await message.edit('❌ Nothing is currently playing');
+    await message.channel.send('❌ Nothing is currently playing');
     return;
   }
 
   await videoStreamer.stopStream(guildId);
-  await message.edit('⏹️ Playback stopped');
+  await message.channel.send('⏹️ Playback stopped');
 }

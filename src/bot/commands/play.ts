@@ -7,7 +7,7 @@ import type { PlexMediaItem } from '../../types/index.js';
 
 export async function playCommand(message: Message, args: string[]): Promise<void> {
   if (!message.guild) {
-    await message.edit('❌ This command can only be used in a server');
+    await message.channel.send('❌ This command can only be used in a server');
     return;
   }
 
@@ -15,53 +15,53 @@ export async function playCommand(message: Message, args: string[]): Promise<voi
   const voiceChannel = member?.voice.channel;
 
   if (!voiceChannel) {
-    await message.edit('❌ You must be in a voice channel to use this command');
+    await message.channel.send('❌ You must be in a voice channel to use this command');
     return;
   }
 
   const selection = parseInt(args[0], 10);
 
   if (isNaN(selection) || selection < 1) {
-    await message.edit('❌ Usage: `!play <number>` (use `!search` first)');
+    await message.channel.send('❌ Usage: `!play <number>` (use `!search` first)');
     return;
   }
 
   const mediaItem = getSearchResult(message.author.id, selection);
 
   if (!mediaItem) {
-    await message.edit('❌ Invalid selection. Use `!search` to find media first');
+    await message.channel.send('❌ Invalid selection. Use `!search` to find media first');
     return;
   }
 
-  await message.edit(`🎬 Loading "${mediaItem.title}"...`);
+  const statusMsg = await message.channel.send(`🎬 Loading "${mediaItem.title}"...`);
 
   try {
     if (mediaItem.type === 'show') {
       const episodes = await plexClient.getEpisodes(mediaItem.ratingKey);
       if (episodes.length === 0) {
-        await message.edit('❌ No episodes found for this show');
+        await statusMsg.edit('❌ No episodes found for this show');
         return;
       }
 
       const firstEpisode = episodes[0];
-      await startVideoStream(message, voiceChannel.id, firstEpisode);
+      await startVideoStream(statusMsg, message.guild!.id, voiceChannel.id, firstEpisode);
     } else {
-      await startVideoStream(message, voiceChannel.id, mediaItem);
+      await startVideoStream(statusMsg, message.guild!.id, voiceChannel.id, mediaItem);
     }
 
     clearSearchSession(message.author.id);
   } catch (error) {
     console.error('[Play] Error:', error);
-    await message.edit(`❌ Failed to start stream: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    await statusMsg.edit(`❌ Failed to start stream: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
 async function startVideoStream(
-  message: Message,
+  statusMsg: Message,
+  guildId: string,
   channelId: string,
   mediaItem: PlexMediaItem
 ): Promise<void> {
-  const guildId = message.guild!.id;
   const videoStreamer = getVideoStreamer();
 
   const streamInfo = await plexClient.getDirectStreamUrl(mediaItem.ratingKey);
@@ -78,7 +78,7 @@ async function startVideoStream(
 
   const duration = mediaItem.duration ? formatDuration(mediaItem.duration) : 'Unknown';
   
-  await message.edit(`📺 **Starting Go Live:** ${title}\n⏱️ Duration: ${duration}\n\n*Connecting to voice channel...*`);
+  await statusMsg.edit(`📺 **Starting Go Live:** ${title}\n⏱️ Duration: ${duration}\n\n*Connecting to voice channel...*`);
 
   videoStreamer.startStream(
     guildId,
@@ -92,7 +92,7 @@ async function startVideoStream(
 
   await new Promise((resolve) => setTimeout(resolve, 2000));
   
-  await message.edit(`📺 **Now Streaming (Go Live):** ${title}\n⏱️ Duration: ${duration}`);
+  await statusMsg.edit(`📺 **Now Streaming (Go Live):** ${title}\n⏱️ Duration: ${duration}`);
 }
 
 export { startVideoStream };
