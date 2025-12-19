@@ -1,4 +1,3 @@
-import { parseStringPromise } from 'xml2js';
 import config from '../config.js';
 import type { PlexMediaItem, PlexStreamInfo } from '../types/index.js';
 
@@ -11,14 +10,14 @@ export class PlexClient {
     this.token = config.plex.token;
   }
 
-  private async request<T>(endpoint: string, parseXml = true): Promise<T> {
+  private async request<T>(endpoint: string): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
     const separator = endpoint.includes('?') ? '&' : '?';
     const fullUrl = `${url}${separator}X-Plex-Token=${this.token}`;
 
     const response = await fetch(fullUrl, {
       headers: {
-        Accept: 'application/xml',
+        Accept: 'application/json',
       },
     });
 
@@ -26,13 +25,7 @@ export class PlexClient {
       throw new Error(`Plex API error: ${response.status} ${response.statusText}`);
     }
 
-    const text = await response.text();
-
-    if (parseXml) {
-      return parseStringPromise(text, { explicitArray: false }) as Promise<T>;
-    }
-
-    return text as unknown as T;
+    return response.json() as Promise<T>;
   }
 
   async testConnection(): Promise<boolean> {
@@ -46,15 +39,15 @@ export class PlexClient {
 
   async getLibraries(): Promise<Array<{ key: string; title: string; type: string }>> {
     const response = await this.request<any>('/library/sections');
-    const directories = response.MediaContainer.Directory;
+    const directories = response.MediaContainer?.Directory;
 
     if (!directories) return [];
 
     const libs = Array.isArray(directories) ? directories : [directories];
     return libs.map((dir: any) => ({
-      key: dir.$.key,
-      title: dir.$.title,
-      type: dir.$.type,
+      key: String(dir.key),
+      title: dir.title,
+      type: dir.type,
     }));
   }
 
@@ -72,7 +65,7 @@ export class PlexClient {
           : [container.Metadata];
 
         results = items
-          .filter((item: any) => ['movie', 'show', 'episode'].includes(item.$?.type))
+          .filter((item: any) => ['movie', 'show', 'episode'].includes(item.type))
           .map((item: any) => this.parseMediaItem(item));
       }
     } catch (err) {
@@ -201,13 +194,13 @@ export class PlexClient {
       const partInfo = Array.isArray(part) ? part[0] : part;
 
       return {
-        url: `${this.baseUrl}${partInfo.$.key}?X-Plex-Token=${this.token}`,
-        container: partInfo.$.container || 'mkv',
-        videoCodec: mediaInfo.$.videoCodec,
-        audioCodec: mediaInfo.$.audioCodec,
-        bitrate: parseInt(mediaInfo.$.bitrate || '0', 10),
-        width: parseInt(mediaInfo.$.width || '0', 10),
-        height: parseInt(mediaInfo.$.height || '0', 10),
+        url: `${this.baseUrl}${partInfo.key}?X-Plex-Token=${this.token}`,
+        container: partInfo.container || 'mkv',
+        videoCodec: mediaInfo.videoCodec,
+        audioCodec: mediaInfo.audioCodec,
+        bitrate: parseInt(mediaInfo.bitrate || '0', 10),
+        width: parseInt(mediaInfo.width || '0', 10),
+        height: parseInt(mediaInfo.height || '0', 10),
       };
     } catch (error) {
       console.error('Error getting stream URL:', error);
@@ -245,23 +238,21 @@ export class PlexClient {
   }
 
   private parseMediaItem(item: any): PlexMediaItem {
-    const attrs = item.$ || item;
-
     return {
-      ratingKey: attrs.ratingKey,
-      key: attrs.key,
-      type: attrs.type,
-      title: attrs.title,
-      year: attrs.year ? parseInt(attrs.year, 10) : undefined,
-      summary: attrs.summary,
-      thumb: attrs.thumb,
-      art: attrs.art,
-      duration: attrs.duration ? parseInt(attrs.duration, 10) : undefined,
-      addedAt: attrs.addedAt ? parseInt(attrs.addedAt, 10) : undefined,
-      parentTitle: attrs.parentTitle,
-      grandparentTitle: attrs.grandparentTitle,
-      index: attrs.index ? parseInt(attrs.index, 10) : undefined,
-      parentIndex: attrs.parentIndex ? parseInt(attrs.parentIndex, 10) : undefined,
+      ratingKey: String(item.ratingKey),
+      key: item.key,
+      type: item.type,
+      title: item.title,
+      year: item.year ? parseInt(String(item.year), 10) : undefined,
+      summary: item.summary,
+      thumb: item.thumb,
+      art: item.art,
+      duration: item.duration ? parseInt(String(item.duration), 10) : undefined,
+      addedAt: item.addedAt ? parseInt(String(item.addedAt), 10) : undefined,
+      parentTitle: item.parentTitle,
+      grandparentTitle: item.grandparentTitle,
+      index: item.index ? parseInt(String(item.index), 10) : undefined,
+      parentIndex: item.parentIndex ? parseInt(String(item.parentIndex), 10) : undefined,
     };
   }
 }
