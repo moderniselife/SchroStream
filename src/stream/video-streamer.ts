@@ -208,6 +208,9 @@ class VideoStreamer {
         ffmpegArgs.push('-ss', startTimeSec.toString());
       }
 
+      // Calculate volume filter (100% = 1.0, 50% = 0.5, 200% = 2.0)
+      const volumeMultiplier = (session.volume / 100).toFixed(2);
+
       ffmpegArgs.push(
         '-i', actualStreamUrl,
         // Video output
@@ -221,7 +224,8 @@ class VideoStreamer {
         '-r', '30',
         '-g', '60',
         '-pix_fmt', 'yuv420p',
-        // Audio output
+        // Audio output with volume filter
+        '-af', `volume=${volumeMultiplier}`,
         '-c:a', 'libopus',
         '-b:a', `${config.stream.audioBitrate}k`,
         '-ar', '48000',
@@ -393,15 +397,36 @@ class VideoStreamer {
     return { current, total, percentage };
   }
 
-  setVolume(guildId: string, volume: number): boolean {
+  async setVolume(guildId: string, volume: number): Promise<boolean> {
     const session = this.sessions.get(guildId);
     if (!session) return false;
 
+    const oldVolume = session.volume;
     session.volume = Math.max(0, Math.min(200, volume));
     
-    // Volume change requires restarting the stream with new FFmpeg settings
-    // For now, just store the value - it will be applied on next play/seek
-    console.log(`[VideoStreamer] Volume set to ${session.volume}% (will apply on next playback)`);
+    // If currently playing (not paused), restart stream at current position with new volume
+    if (!session.isPaused && session.ffmpegCommand) {
+      const currentTime = this.getCurrentTime(guildId);
+      console.log(`[VideoStreamer] Volume changing from ${oldVolume}% to ${session.volume}%, restarting at ${Math.floor(currentTime / 1000)}s...`);
+      
+      session.currentTime = currentTime;
+      session.isStopping = true;
+      
+      try {
+        session.ffmpegCommand.kill('SIGKILL');
+      } catch {
+        // Ignore
+      }
+      
+      // Wait for FFmpeg to stop
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      session.isStopping = false;
+      session.startedAt = Date.now();
+      await this.playVideoStream(session, currentTime);
+    } else {
+      console.log(`[VideoStreamer] Volume set to ${session.volume}% (will apply on resume)`);
+    }
     
     return true;
   }

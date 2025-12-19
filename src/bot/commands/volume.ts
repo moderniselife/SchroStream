@@ -31,12 +31,14 @@ export async function volumeCommand(message: Message, args: string[]): Promise<v
     return;
   }
 
-  const success = videoStreamer.setVolume(guildId, volume);
+  const statusMsg = await message.channel.send(`🔊 Changing volume to **${volume}%**...`);
+  
+  const success = await videoStreamer.setVolume(guildId, volume);
 
   if (success) {
     const icon = volume === 0 ? '🔇' : volume < 50 ? '🔈' : volume < 100 ? '🔉' : '🔊';
-    await message.channel.send(`${icon} Volume set to **${volume}%**`);
+    await statusMsg.edit(`${icon} Volume set to **${volume}%**`);
   } else {
-    await message.channel.send('❌ Failed to set volume');
+    await statusMsg.edit('❌ Failed to set volume');
   }
 }
