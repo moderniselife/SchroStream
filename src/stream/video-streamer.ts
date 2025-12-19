@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { PlexMediaItem } from '../types/index.js';
 import config from '../config.js';
+import plexClient from '../plex/client.js';
 
 // Playback history file path
 const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
@@ -330,6 +331,12 @@ class VideoStreamer {
     // Wait a bit for FFmpeg to fully stop
     await new Promise(resolve => setTimeout(resolve, 500));
     
+    // Get fresh stream URL (new Plex session)
+    const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+    if (freshStreamInfo) {
+      session.streamUrl = freshStreamInfo.url;
+    }
+    
     session.isStopping = false;
     await this.playVideoStream(session, timeMs);
     return true;
@@ -364,6 +371,12 @@ class VideoStreamer {
   async resumeStream(guildId: string): Promise<boolean> {
     const session = this.sessions.get(guildId);
     if (!session || !session.isPaused) return false;
+
+    // Get fresh stream URL (new Plex session)
+    const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+    if (freshStreamInfo) {
+      session.streamUrl = freshStreamInfo.url;
+    }
 
     session.isPaused = false;
     session.isStopping = false;
@@ -421,6 +434,12 @@ class VideoStreamer {
       
       // Wait for FFmpeg to stop
       await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Get fresh stream URL (new Plex session)
+      const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+      if (freshStreamInfo) {
+        session.streamUrl = freshStreamInfo.url;
+      }
       
       session.isStopping = false;
       session.startedAt = Date.now();
