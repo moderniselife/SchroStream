@@ -839,8 +839,8 @@ async function handleYouTubeSearch(interaction: ChatInputCommandInteraction): Pr
     timestamp: Date.now(),
   });
 
-  // Create embeds for each result to show thumbnails and details
-  const embeds = results.map((r, i) => {
+  // Create embeds with play buttons for each result
+  const messageComponents = results.map((r, i) => {
     const embed = new EmbedBuilder()
       .setTitle(`${i + 1}. ${r.title}`)
       .setDescription(r.description)
@@ -855,18 +855,27 @@ async function handleYouTubeSearch(interaction: ChatInputCommandInteraction): Pr
       )
       .setURL(r.url);
     
-    return embed;
+    // Create action row with play button
+    const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`yt_play_${i}`)
+        .setLabel('▶️ Play')
+        .setStyle(ButtonStyle.Success)
+    );
+    
+    return { embed, components: [actionRow] };
   });
 
-  // Add a header embed
-  const headerEmbed = new EmbedBuilder()
-    .setTitle('🎬 YouTube Search Results')
-    .setDescription(`Found ${results.length} results for "${query}"`)
-    .setColor(0xff0000)
-    .setFooter({ text: 'Use /ytp <number> to play a result' });
-
-  // Send all embeds (header + results)
-  await interaction.editReply({ embeds: [headerEmbed, ...embeds] });
+  // Send each result as a separate message with its play button
+  for (const { embed, components } of messageComponents) {
+    if (messageComponents.indexOf({ embed, components }) === 0) {
+      // First message - edit the deferred reply
+      await interaction.editReply({ embeds: [embed], components });
+    } else {
+      // Subsequent messages - send as followups
+      await interaction.followUp({ embeds: [embed], components });
+    }
+  }
 }
 
 async function handleYouTubePlay(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -1078,11 +1087,127 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
         await interaction.editReply('❌ Could not get stream URL');
         return;
       }
-      await videoStreamer.startStream(guildId, session.channelId, nextEpisode, streamInfo.url, 0, interaction.user.id);
-      const s = nextEpisode.parentIndex ? `S${String(nextEpisode.parentIndex).padStart(2, '0')}` : '';
-      const e = nextEpisode.index ? `E${String(nextEpisode.index).padStart(2, '0')}` : '';
-      await interaction.editReply(`⏭️ Now: ${nextEpisode.grandparentTitle} ${s}${e}`);
+      await videoStreamer.startStream(
+        guildId,
+        session.channelId,
+        nextEpisode,
+        streamInfo.url,
+        0,
+        interaction.user.id
+      );
+      await interaction.editReply(`⏭️ Skipped to: ${nextEpisode.title}`);
       break;
+    }
+    default: {
+      // Handle YouTube play buttons
+      if (interaction.customId.startsWith('yt_play_')) {
+        const index = parseInt(interaction.customId.replace('yt_play_', ''), 10);
+        const session = youtubeSearchSessions.get(interaction.user.id);
+        
+        if (!session || Date.now() - session.timestamp > SESSION_TIMEOUT) {
+          await interaction.reply({ content: '❌ Search expired. Use /yts to search first.', ephemeral: true });
+          return;
+        }
+
+        const result = session.results[index];
+        if (!result) {
+          await interaction.reply({ content: '❌ Invalid selection', ephemeral: true });
+          return;
+        }
+
+        // Get voice channel
+        const guild = selfbotClient.guilds.cache.get(guildId);
+        const member = guild?.members.cache.get(interaction.user.id);
+        const voiceChannel = member?.voice?.channel;
+
+        if (!voiceChannel) {
+          await interaction.reply({ content: '❌ You must be in a voice channel', ephemeral: true });
+          return;
+        }
+
+        await interaction.deferReply();
+
+        // Get video info and stream
+        const { spawn } = await import('child_process');
+        
+        const info = await new Promise<any>((resolve) => {
+          const ytdlp = spawn('yt-dlp', ['--dump-json', '--no-playlist', '--no-warnings', result.url]);
+          let output = '';
+          ytdlp.stdout.on('data', (data) => output += data.toString());
+          ytdlp.on('close', (code) => {
+            if (code !== 0 || !output) { resolve(null); return; }
+            try { resolve(JSON.parse(output)); } catch { resolve(null); }
+          });
+          ytdlp.on('error', () => resolve(null));
+        });
+
+        if (!info) {
+          await interaction.editReply('❌ Failed to get video info');
+          return;
+        }
+
+        const urls = await new Promise<{ video: string; audio: string | null } | null>((resolve) => {
+          const ytdlp = spawn('yt-dlp', [
+            '-g',
+            '-f', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
+            '--no-playlist',
+            '--no-warnings',
+            result.url
+          ]);
+
+          let output = '';
+          ytdlp.stdout.on('data', (data) => output += data.toString());
+          ytdlp.on('close', (code) => {
+            if (code !== 0 || !output.trim()) { resolve(null); return; }
+            const urls = output.trim().split('\n');
+            resolve({
+              video: urls[0],
+              audio: urls[1] || null,
+            });
+          });
+          ytdlp.on('error', () => resolve(null));
+        });
+
+        if (!urls) {
+          await interaction.editReply('❌ Failed to get stream URL');
+          return;
+        }
+
+        const mediaItem = {
+          ratingKey: `yt-${Date.now()}`,
+          key: result.url,
+          title: info.title,
+          type: 'movie' as const,
+          duration: info.duration,
+          thumb: info.thumbnail,
+          summary: info.uploader ? `By ${info.uploader}` : undefined,
+        };
+
+        const embed = new EmbedBuilder()
+          .setTitle('📺 Now Playing')
+          .setDescription(`**${info.title}**\n${info.uploader ? `👤 ${info.uploader}\n` : ''}⏱️ ${formatDuration(info.duration)}`)
+          .setColor(0xff0000)
+          .setThumbnail(info.thumbnail || null);
+
+        const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
+        );
+
+        await interaction.editReply({ embeds: [embed], components: [controlRow] });
+
+        const videoStreamer = getVideoStreamer();
+        videoStreamer.startExternalStream(
+          guildId,
+          voiceChannel.id,
+          mediaItem,
+          urls.video,
+          interaction.user.id,
+          urls.audio
+        ).catch(err => console.error('[Controller] YouTube stream error:', err));
+      }
     }
   }
 }
