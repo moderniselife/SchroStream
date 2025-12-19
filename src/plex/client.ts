@@ -426,12 +426,12 @@ export class PlexClient {
         stopParams.set('session', sessionId);
       }
       
-      try {
-        const response = await fetch(`${this.baseUrl}/video/:/transcode/universal/stop?${stopParams.toString()}`);
-        console.log(`[Plex] Universal stop response:`, response.status);
-      } catch (e) {
-        console.log(`[Plex] Universal stop failed:`, e);
-      }
+      // try {
+      //   const response = await fetch(`${this.baseUrl}/video/:/transcode/universal/stop?${stopParams.toString()}`);
+      //   console.log(`[Plex] Universal stop response:`, response.status);
+      // } catch (e) {
+      //   console.log(`[Plex] Universal stop failed:`, e);
+      // }
       
       // If we have a specific session ID, try the DELETE endpoint
       if (sessionId) {

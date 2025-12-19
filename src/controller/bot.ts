@@ -458,14 +458,33 @@ async function startPlayback(
 
   // Start stream
   const videoStreamer = getVideoStreamer();
-  videoStreamer.startStream(
-    guildId,
-    voiceChannel.id,
-    itemToPlay,
-    streamInfo.url,
-    0,
-    interaction.user.id
-  ).catch(err => console.error('[Controller] Stream error:', err));
+  try {
+    await videoStreamer.startStream(
+      guildId,
+      voiceChannel.id,
+      itemToPlay,
+      streamInfo.url,
+      0,
+      interaction.user.id
+    );
+  } catch (err: any) {
+    console.error('[Controller] Stream error:', err);
+    
+    // Check if it's a 400 Bad Request error
+    if (err.message && err.message.includes('400 Bad Request')) {
+      const errorEmbed = new EmbedBuilder()
+        .setTitle('❌ Stream Failed to Start')
+        .setDescription('Sorry, Plex is having trouble starting the stream. This usually happens when too many transcode sessions are active.')
+        .addFields(
+          { name: 'What to try:', value: '• Wait a minute or two and try again\n• Try a different episode, show, or movie\n• Try playing a YouTube video or external stream' }
+        )
+        .setColor(0xff0000);
+      
+      await interaction.editReply({ embeds: [errorEmbed], components: [] });
+    } else {
+      await interaction.editReply({ content: `❌ Stream error: ${err.message}`, components: [] });
+    }
+  }
 }
 
 async function handleStop(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -1220,14 +1239,31 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       }
       const currentTime = videoStreamer.getCurrentTime(guildId);
       const newTime = Math.min(currentTime + 30000, session.duration);
-      await videoStreamer.seekStream(guildId, newTime);
-      await interaction.reply({ content: `⏩ +30s → ${formatDuration(newTime)}`, ephemeral: true });
+      try {
+        await videoStreamer.seekStream(guildId, newTime);
+        await interaction.reply({ content: `⏩ +30s → ${formatDuration(newTime)}`, ephemeral: true });
+      } catch (err: any) {
+        if (err.message && err.message.includes('400 Bad Request')) {
+          await interaction.reply({ content: '❌ Seek failed - wait a moment and try again', ephemeral: true });
+        } else {
+          await interaction.reply({ content: `❌ Seek error: ${err.message}`, ephemeral: true });
+        }
+      }
       break;
     }
     case 'ctrl_rw': {
       const currentTime = videoStreamer.getCurrentTime(guildId);
       const newTime = Math.max(currentTime - 30000, 0);
-      await videoStreamer.seekStream(guildId, newTime);
+      try {
+        await videoStreamer.seekStream(guildId, newTime);
+      } catch (err: any) {
+        if (err.message && err.message.includes('400 Bad Request')) {
+          await interaction.reply({ content: '❌ Seek failed - wait a moment and try again', ephemeral: true });
+        } else {
+          await interaction.reply({ content: `❌ Seek error: ${err.message}`, ephemeral: true });
+        }
+        return;
+      }
       await interaction.reply({ content: `⏪ -30s → ${formatDuration(newTime)}`, ephemeral: true });
       break;
     }
