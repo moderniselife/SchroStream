@@ -173,7 +173,43 @@ export class PlexClient {
       }
     }
 
+    // If still no results, try the comprehensive search endpoint
+    if (results.length === 0) {
+      console.log('[Plex] No results from standard search, trying comprehensive search...');
+      try {
+        results = await this.comprehensiveSearch(query);
+      } catch (err) {
+        console.log('[Plex] Comprehensive search failed:', err);
+      }
+    }
+
     return results;
+  }
+
+  async comprehensiveSearch(query: string): Promise<PlexMediaItem[]> {
+    const searchUrl = `${this.baseUrl}/library/search?query=${encodeURIComponent(query)}&limit=100&searchTypes=movies,tv&includeCollections=1&includeExternalMedia=1&X-Plex-Token=${this.token}`;
+    
+    const response = await fetch(searchUrl, {
+      headers: {
+        'Accept': 'application/json',
+        'X-Plex-Product': 'SchroStream',
+        'X-Plex-Version': '1.0.0',
+        'X-Plex-Client-Identifier': 'schrostream-controller',
+        'X-Plex-Platform': 'Node',
+        'X-Plex-Device': 'SchroStream',
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Comprehensive search error: ${response.status}`);
+    }
+
+    const data = await response.json() as any;
+    const items = data?.MediaContainer?.Metadata || [];
+
+    return items
+      .filter((item: any) => ['movie', 'show', 'episode'].includes(item.type))
+      .map((item: any) => this.parseMediaItem(item));
   }
 
   async getMetadata(ratingKey: string): Promise<PlexMediaItem | null> {
