@@ -51,6 +51,7 @@ export interface StreamState {
   startedAt: number;
   duration: number;
   userId?: string;
+  sessionId?: string;
 }
 
 export interface PlaybackControls {

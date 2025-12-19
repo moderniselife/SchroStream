@@ -282,7 +282,7 @@ export class PlexClient {
     return `${this.baseUrl}/library/metadata/${ratingKey}?X-Plex-Token=${this.token}`;
   }
 
-  async getDirectStreamUrl(ratingKey: string): Promise<PlexStreamInfo | null> {
+  async getDirectStreamUrl(ratingKey: string, sessionId?: string): Promise<PlexStreamInfo | null> {
     try {
       const response = await this.request<any>(`/library/metadata/${ratingKey}`);
       const metadata = response.MediaContainer?.Metadata;
@@ -302,15 +302,17 @@ export class PlexClient {
       const partInfo = Array.isArray(part) ? part[0] : part;
 
       // Use HLS streaming - works with cloud mounts (zurg, rclone, etc.)
-      const sessionId = `schrostream-${Date.now()}`;
-      trackSession(sessionId); // Track for cleanup on restart
+      const finalSessionId = sessionId || `schrostream-${Date.now()}`;
+      if (!sessionId) {
+        trackSession(finalSessionId); // Track for cleanup on restart
+      }
       
       const params = new URLSearchParams({
         path: `/library/metadata/${ratingKey}`,
         mediaIndex: '0',
         partIndex: '0',
         protocol: 'hls',
-        session: sessionId,
+        session: finalSessionId,
         fastSeek: '1',
         directPlay: '0',
         directStream: '1',
@@ -320,7 +322,7 @@ export class PlexClient {
         autoAdjustQuality: '0',
         directStreamAudio: '1',
         mediaBufferSize: '102400',
-        'X-Plex-Session-Identifier': sessionId,
+        'X-Plex-Session-Identifier': finalSessionId,
         'X-Plex-Token': this.token,
         'X-Plex-Client-Identifier': 'SchroStream',
         'X-Plex-Product': 'SchroStream',

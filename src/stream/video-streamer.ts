@@ -27,6 +27,7 @@ export interface VideoStreamSession {
   userId?: string;
   isExternal?: boolean; // Flag for external streams (YouTube, URLs)
   audioUrl?: string; // Separate audio URL for YouTube streams
+  sessionId?: string; // Plex transcode session ID for reuse
 }
 
 // Store playback positions for resume functionality (ratingKey -> position in ms)
@@ -167,6 +168,11 @@ class VideoStreamer {
 
     await this.streamer.joinVoice(guildId, channelId);
 
+    // Extract session ID from stream URL
+    const urlObj = new URL(streamUrl);
+    const sessionId = urlObj.searchParams.get('X-Plex-Session-Identifier') || 
+                    urlObj.searchParams.get('session') || undefined;
+
     const session: VideoStreamSession = {
       guildId,
       channelId,
@@ -183,6 +189,7 @@ class VideoStreamer {
       userId,
       isExternal: true,
       audioUrl: audioUrl || undefined,
+      sessionId,
     };
 
     this.sessions.set(guildId, session);
@@ -514,10 +521,24 @@ class VideoStreamer {
     // Wait a bit for FFmpeg to fully stop
     await new Promise(resolve => setTimeout(resolve, 500));
     
-    // Get fresh stream URL (new Plex session)
-    const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
-    if (freshStreamInfo) {
-      session.streamUrl = freshStreamInfo.url;
+    // Reuse existing session ID if available
+    if (session.sessionId) {
+      console.log('[VideoStreamer] Reusing existing session ID:', session.sessionId);
+      const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey, session.sessionId);
+      if (freshStreamInfo) {
+        session.streamUrl = freshStreamInfo.url;
+      }
+    } else {
+      // Fallback: create new session if no session ID stored
+      console.log('[VideoStreamer] No session ID stored, creating new session');
+      const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+      if (freshStreamInfo) {
+        session.streamUrl = freshStreamInfo.url;
+        // Extract new session ID
+        const urlObj = new URL(freshStreamInfo.url);
+        session.sessionId = urlObj.searchParams.get('X-Plex-Session-Identifier') || 
+                          urlObj.searchParams.get('session') || undefined;
+      }
     }
     
     session.isStopping = false;
