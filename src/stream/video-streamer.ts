@@ -10,11 +10,34 @@ export interface VideoStreamSession {
   mediaItem: PlexMediaItem;
   streamUrl: string;
   isPaused: boolean;
+  isStopping: boolean; // Flag to track intentional stop (pause/seek)
   startedAt: number;
   currentTime: number;
   duration: number;
   volume: number;
   ffmpegCommand: any | null;
+}
+
+// Store playback positions for resume functionality (ratingKey -> position in ms)
+const playbackHistory = new Map<string, { position: number; updatedAt: number }>();
+
+export function getPlaybackPosition(ratingKey: string): number | null {
+  const history = playbackHistory.get(ratingKey);
+  if (!history) return null;
+  // Expire after 7 days
+  if (Date.now() - history.updatedAt > 7 * 24 * 60 * 60 * 1000) {
+    playbackHistory.delete(ratingKey);
+    return null;
+  }
+  return history.position;
+}
+
+export function savePlaybackPosition(ratingKey: string, position: number): void {
+  playbackHistory.set(ratingKey, { position, updatedAt: Date.now() });
+}
+
+export function clearPlaybackPosition(ratingKey: string): void {
+  playbackHistory.delete(ratingKey);
 }
 
 class VideoStreamer {
@@ -54,6 +77,7 @@ class VideoStreamer {
       mediaItem,
       streamUrl,
       isPaused: false,
+      isStopping: false,
       startedAt: Date.now(),
       currentTime: startTimeMs,
       duration: mediaItem.duration || 0,
@@ -188,12 +212,22 @@ class VideoStreamer {
       });
 
       console.log('[VideoStreamer] Playback finished');
-      this.sessions.delete(session.guildId);
+      // Only delete session if not intentionally stopped (pause/seek)
+      if (!session.isStopping) {
+        // Save position for resume later
+        savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(session.guildId));
+        this.sessions.delete(session.guildId);
+      }
     } catch (error) {
-      if (error instanceof Error && !error.message.includes('abort')) {
+      // Only log error if not intentionally stopped
+      if (!session.isStopping && error instanceof Error && !error.message.includes('abort')) {
         console.error('[VideoStreamer] Stream error:', error);
       }
-      this.sessions.delete(session.guildId);
+      // Only delete session if not intentionally stopped
+      if (!session.isStopping) {
+        savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(session.guildId));
+        this.sessions.delete(session.guildId);
+      }
     }
   }
 
@@ -201,6 +235,9 @@ class VideoStreamer {
     const session = this.sessions.get(guildId);
 
     if (session) {
+      // Save position before stopping
+      savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(guildId));
+      
       if (session.ffmpegCommand) {
         try {
           session.ffmpegCommand.kill('SIGKILL');
@@ -226,6 +263,7 @@ class VideoStreamer {
 
     session.currentTime = timeMs;
     session.startedAt = Date.now();
+    session.isStopping = true; // Mark as intentional stop
 
     if (session.ffmpegCommand) {
       try {
@@ -235,6 +273,10 @@ class VideoStreamer {
       }
     }
 
+    // Wait a bit for FFmpeg to fully stop
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    session.isStopping = false;
     await this.playVideoStream(session, timeMs);
     return true;
   }
@@ -246,6 +288,7 @@ class VideoStreamer {
     if (!session.isPaused) {
       session.currentTime = this.getCurrentTime(guildId);
       session.isPaused = true;
+      session.isStopping = true; // Mark as intentional stop
 
       if (session.ffmpegCommand) {
         try {
@@ -256,6 +299,9 @@ class VideoStreamer {
       }
 
       this.streamer.stopStream();
+      
+      // Save position for later resume
+      savePlaybackPosition(session.mediaItem.ratingKey, session.currentTime);
     }
 
     return true;
@@ -266,6 +312,7 @@ class VideoStreamer {
     if (!session || !session.isPaused) return false;
 
     session.isPaused = false;
+    session.isStopping = false;
     session.startedAt = Date.now();
 
     await this.playVideoStream(session, session.currentTime);
