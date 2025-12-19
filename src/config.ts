@@ -15,18 +15,18 @@ function getEnvOrDefault(key: string, defaultValue: string): string {
   return process.env[key] || defaultValue;
 }
 
-function parseAllowedGuilds(): string[] {
-  const guilds = process.env.ALLOWED_GUILDS;
-  if (!guilds || guilds.trim() === '') return [];
-  return guilds.split(',').map((g) => g.trim()).filter(Boolean);
+function parseCommaSeparated(value: string | undefined): string[] {
+  if (!value || value.trim() === '') return [];
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
 export const config: Config = {
   discord: {
     token: getEnvOrThrow('DISCORD_TOKEN'),
     prefix: getEnvOrDefault('PREFIX', '!'),
-    ownerId: process.env.OWNER_ID || null,
-    allowedGuilds: parseAllowedGuilds(),
+    allowedUsers: parseCommaSeparated(process.env.ALLOWED_USERS),
+    allowedRoles: parseCommaSeparated(process.env.ALLOWED_ROLES),
+    allowedGuilds: parseCommaSeparated(process.env.ALLOWED_GUILDS),
   },
   plex: {
     url: getEnvOrThrow('PLEX_URL').replace(/\/$/, ''),
