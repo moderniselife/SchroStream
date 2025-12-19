@@ -1,8 +1,13 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
 import { Client } from 'discord.js-selfbot-v13';
 import { spawn } from 'child_process';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { join } from 'path';
 import type { PlexMediaItem } from '../types/index.js';
 import config from '../config.js';
+
+// Playback history file path
+const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
 
 export interface VideoStreamSession {
   guildId: string;
@@ -19,7 +24,48 @@ export interface VideoStreamSession {
 }
 
 // Store playback positions for resume functionality (ratingKey -> position in ms)
-const playbackHistory = new Map<string, { position: number; updatedAt: number }>();
+interface PlaybackHistoryEntry {
+  position: number;
+  updatedAt: number;
+  title?: string;
+}
+
+let playbackHistory: Map<string, PlaybackHistoryEntry> = new Map();
+
+// Load playback history from disk
+function loadPlaybackHistory(): void {
+  try {
+    if (existsSync(HISTORY_FILE)) {
+      const data = readFileSync(HISTORY_FILE, 'utf-8');
+      const parsed = JSON.parse(data);
+      playbackHistory = new Map(Object.entries(parsed));
+      console.log(`[PlaybackHistory] Loaded ${playbackHistory.size} entries from disk`);
+    }
+  } catch (error) {
+    console.error('[PlaybackHistory] Failed to load:', error);
+    playbackHistory = new Map();
+  }
+}
+
+// Save playback history to disk
+function persistPlaybackHistory(): void {
+  try {
+    // Ensure data directory exists
+    const dataDir = join(process.cwd(), 'data');
+    if (!existsSync(dataDir)) {
+      const { mkdirSync } = require('fs');
+      mkdirSync(dataDir, { recursive: true });
+    }
+    
+    const obj = Object.fromEntries(playbackHistory);
+    writeFileSync(HISTORY_FILE, JSON.stringify(obj, null, 2));
+  } catch (error) {
+    console.error('[PlaybackHistory] Failed to save:', error);
+  }
+}
+
+// Initialize on module load
+loadPlaybackHistory();
 
 export function getPlaybackPosition(ratingKey: string): number | null {
   const history = playbackHistory.get(ratingKey);
@@ -27,17 +73,20 @@ export function getPlaybackPosition(ratingKey: string): number | null {
   // Expire after 7 days
   if (Date.now() - history.updatedAt > 7 * 24 * 60 * 60 * 1000) {
     playbackHistory.delete(ratingKey);
+    persistPlaybackHistory();
     return null;
   }
   return history.position;
 }
 
-export function savePlaybackPosition(ratingKey: string, position: number): void {
-  playbackHistory.set(ratingKey, { position, updatedAt: Date.now() });
+export function savePlaybackPosition(ratingKey: string, position: number, title?: string): void {
+  playbackHistory.set(ratingKey, { position, updatedAt: Date.now(), title });
+  persistPlaybackHistory();
 }
 
 export function clearPlaybackPosition(ratingKey: string): void {
   playbackHistory.delete(ratingKey);
+  persistPlaybackHistory();
 }
 
 class VideoStreamer {
