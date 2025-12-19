@@ -19,6 +19,7 @@ export const config: Config = {
   discord: {
     token: getEnvOrThrow('DISCORD_TOKEN'),
     prefix: getEnvOrDefault('PREFIX', '!'),
+    ownerId: process.env.OWNER_ID || null,
   },
   plex: {
     url: getEnvOrThrow('PLEX_URL').replace(/\/$/, ''),

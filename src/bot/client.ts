@@ -10,13 +10,18 @@ export const client = new Client({
 client.on('ready', async () => {
   console.log(`[SchroStream] Logged in as ${client.user?.tag}`);
   console.log(`[SchroStream] Prefix: ${config.discord.prefix}`);
+  console.log(`[SchroStream] Owner: ${config.discord.ownerId || client.user?.id} (${config.discord.ownerId ? 'external' : 'self'})`);
   console.log(`[SchroStream] Video streaming enabled (Go Live)`);
   
   initVideoStreamer(client);
 });
 
 client.on('messageCreate', async (message) => {
-  if (message.author.id !== client.user?.id) return;
+  const isOwner = config.discord.ownerId 
+    ? message.author.id === config.discord.ownerId
+    : message.author.id === client.user?.id;
+
+  if (!isOwner) return;
 
   if (!message.content.startsWith(config.discord.prefix)) return;
 

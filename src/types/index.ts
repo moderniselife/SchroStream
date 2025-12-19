@@ -69,6 +69,7 @@ export interface Config {
   discord: {
     token: string;
     prefix: string;
+    ownerId: string | null;
   };
   plex: {
     url: string;
