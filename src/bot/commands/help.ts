@@ -9,9 +9,10 @@ export async function helpCommand(message: Message, _args: string[]): Promise<vo
 
 **Media Search & Playback:**
 \`${prefix}search <query>\` - Search for movies or TV shows
-\`${prefix}play <number>\` - Play a result from your search
+\`${prefix}episodes <number>\` - List seasons/episodes for a show
+\`${prefix}play <number>\` - Play a result (S01E01 for shows)
+\`${prefix}play <number> S02E05\` - Play specific episode
 \`${prefix}play resume\` - Continue where you left off
-\`${prefix}play start\` - Start from beginning (ignore saved position)
 \`${prefix}stop\` - Stop the current stream
 
 **Playback Controls:**

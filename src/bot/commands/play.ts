@@ -63,12 +63,44 @@ export async function playCommand(message: Message, args: string[]): Promise<voi
     let itemToPlay = mediaItem;
     
     if (mediaItem.type === 'show') {
+      // Check for episode selection: !play 1 S02E05 or !play 1 2 5
+      let targetSeason = 1;
+      let targetEpisode = 1;
+      
+      if (args.length >= 2) {
+        // Try parsing S01E01 format
+        const episodeMatch = args[1].toUpperCase().match(/S(\d+)E(\d+)/);
+        if (episodeMatch) {
+          targetSeason = parseInt(episodeMatch[1], 10);
+          targetEpisode = parseInt(episodeMatch[2], 10);
+        } else if (args.length >= 3) {
+          // Try parsing separate numbers: !play 1 2 5 (show, season, episode)
+          targetSeason = parseInt(args[1], 10) || 1;
+          targetEpisode = parseInt(args[2], 10) || 1;
+        }
+      }
+      
       const episodes = await plexClient.getEpisodes(mediaItem.ratingKey);
       if (episodes.length === 0) {
         await message.channel.send('❌ No episodes found for this show');
         return;
       }
-      itemToPlay = episodes[0];
+      
+      // Find the specific episode
+      const foundEpisode = episodes.find(ep => 
+        ep.parentIndex === targetSeason && ep.index === targetEpisode
+      );
+      
+      if (foundEpisode) {
+        itemToPlay = foundEpisode;
+      } else if (args.length >= 2) {
+        // User specified an episode but it wasn't found
+        await message.channel.send(`❌ Episode S${String(targetSeason).padStart(2, '0')}E${String(targetEpisode).padStart(2, '0')} not found\n\nUse \`!play ${selection}\` to start from S01E01`);
+        return;
+      } else {
+        // Default to first episode
+        itemToPlay = episodes[0];
+      }
     }
     
     // Check for saved position

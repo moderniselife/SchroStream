@@ -150,6 +150,9 @@ class VideoStreamer {
     try {
       console.log('[VideoStreamer] Stream URL:', session.streamUrl.substring(0, 100) + '...');
 
+      // Stop any existing transcode sessions first to avoid 400 errors
+      await plexClient.stopTranscodeSession();
+      
       // Initialize Plex session by fetching the m3u8 first
       // This tells Plex to start the transcode session
       console.log('[VideoStreamer] Initializing Plex transcode session...');

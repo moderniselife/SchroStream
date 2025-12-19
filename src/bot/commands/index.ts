@@ -8,6 +8,7 @@ import { skipCommand } from './skip.js';
 import { nowPlayingCommand } from './nowplaying.js';
 import { helpCommand } from './help.js';
 import { volumeCommand } from './volume.js';
+import { episodesCommand } from './episodes.js';
 
 export type CommandHandler = (message: Message, args: string[]) => Promise<void>;
 
@@ -31,6 +32,9 @@ const commands: Record<string, CommandHandler> = {
   volume: volumeCommand,
   vol: volumeCommand,
   v: volumeCommand,
+  episodes: episodesCommand,
+  eps: episodesCommand,
+  seasons: episodesCommand,
 };
 
 export async function handleCommand(
