@@ -69,12 +69,14 @@ export interface Config {
   discord: {
     token: string;
     prefix: string;
-    ownerId: string | null;
+    allowedUsers: string[];
+    allowedRoles: string[];
     allowedGuilds: string[];
   };
   plex: {
     url: string;
     token: string;
+    clientIdentifier: string;
   };
   stream: {
     defaultQuality: number;

@@ -1,9 +1,12 @@
 import type { Message } from 'discord.js-selfbot-v13';
 import { getSearchResult, clearSearchSession } from '../../plex/search.js';
-import { getVideoStreamer } from '../../stream/video-streamer.js';
+import { getVideoStreamer, getPlaybackPosition, clearPlaybackPosition } from '../../stream/video-streamer.js';
 import { formatDuration } from '../../plex/library.js';
 import plexClient from '../../plex/client.js';
 import type { PlexMediaItem } from '../../types/index.js';
+
+// Store pending resume prompts (mediaItem ratingKey -> { message, mediaItem, guildId, channelId })
+const pendingResume = new Map<string, { userId: string; mediaItem: PlexMediaItem; guildId: string; channelId: string; position: number }>();
 
 export async function playCommand(message: Message, args: string[]): Promise<void> {
   if (!message.guild) {
@@ -17,6 +20,29 @@ export async function playCommand(message: Message, args: string[]): Promise<voi
   if (!voiceChannel) {
     await message.channel.send('❌ You must be in a voice channel to use this command');
     return;
+  }
+
+  // Check for resume confirmation
+  const firstArg = args[0]?.toLowerCase();
+  if (firstArg === 'resume' || firstArg === 'r') {
+    const pending = [...pendingResume.values()].find(p => p.userId === message.author.id);
+    if (pending) {
+      pendingResume.delete(pending.mediaItem.ratingKey);
+      const statusMsg = await message.channel.send(`▶️ Resuming from ${formatDuration(pending.position)}...`);
+      await startVideoStream(statusMsg, pending.guildId, pending.channelId, pending.mediaItem, pending.position);
+      return;
+    }
+  }
+  
+  if (firstArg === 'start' || firstArg === 'new' || firstArg === 'beginning') {
+    const pending = [...pendingResume.values()].find(p => p.userId === message.author.id);
+    if (pending) {
+      pendingResume.delete(pending.mediaItem.ratingKey);
+      clearPlaybackPosition(pending.mediaItem.ratingKey);
+      const statusMsg = await message.channel.send(`🎬 Starting from beginning...`);
+      await startVideoStream(statusMsg, pending.guildId, pending.channelId, pending.mediaItem, 0);
+      return;
+    }
   }
 
   const selection = parseInt(args[0], 10);
@@ -33,26 +59,92 @@ export async function playCommand(message: Message, args: string[]): Promise<voi
     return;
   }
 
-  const statusMsg = await message.channel.send(`🎬 Loading "${mediaItem.title}"...`);
-
   try {
+    let itemToPlay = mediaItem;
+    
     if (mediaItem.type === 'show') {
+      // Check for episode selection: !play 1 S02E05 or !play 1 2 5
+      let targetSeason = 1;
+      let targetEpisode = 1;
+      
+      if (args.length >= 2) {
+        // Try parsing S01E01 format
+        const episodeMatch = args[1].toUpperCase().match(/S(\d+)E(\d+)/);
+        if (episodeMatch) {
+          targetSeason = parseInt(episodeMatch[1], 10);
+          targetEpisode = parseInt(episodeMatch[2], 10);
+        } else if (args.length >= 3) {
+          // Try parsing separate numbers: !play 1 2 5 (show, season, episode)
+          targetSeason = parseInt(args[1], 10) || 1;
+          targetEpisode = parseInt(args[2], 10) || 1;
+        }
+      }
+      
       const episodes = await plexClient.getEpisodes(mediaItem.ratingKey);
       if (episodes.length === 0) {
-        await statusMsg.edit('❌ No episodes found for this show');
+        await message.channel.send('❌ No episodes found for this show');
         return;
       }
-
-      const firstEpisode = episodes[0];
-      await startVideoStream(statusMsg, message.guild!.id, voiceChannel.id, firstEpisode);
-    } else {
-      await startVideoStream(statusMsg, message.guild!.id, voiceChannel.id, mediaItem);
+      
+      // Find the specific episode
+      const foundEpisode = episodes.find(ep => 
+        ep.parentIndex === targetSeason && ep.index === targetEpisode
+      );
+      
+      if (foundEpisode) {
+        itemToPlay = foundEpisode;
+      } else if (args.length >= 2) {
+        // User specified an episode but it wasn't found
+        await message.channel.send(`❌ Episode S${String(targetSeason).padStart(2, '0')}E${String(targetEpisode).padStart(2, '0')} not found\n\nUse \`!play ${selection}\` to start from S01E01`);
+        return;
+      } else {
+        // Default to first episode
+        itemToPlay = episodes[0];
+      }
     }
+    
+    // Check for saved position
+    const savedPosition = getPlaybackPosition(itemToPlay.ratingKey);
+    
+    if (savedPosition && savedPosition > 60000) { // More than 1 minute
+      const duration = itemToPlay.duration || 0;
+      const percentWatched = duration > 0 ? Math.round((savedPosition / duration) * 100) : 0;
+      
+      // Store pending resume
+      pendingResume.set(itemToPlay.ratingKey, {
+        userId: message.author.id,
+        mediaItem: itemToPlay,
+        guildId: message.guild!.id,
+        channelId: voiceChannel.id,
+        position: savedPosition,
+      });
+      
+      // Clear after 30 seconds
+      setTimeout(() => pendingResume.delete(itemToPlay.ratingKey), 30000);
+      
+      let title = itemToPlay.title;
+      if (itemToPlay.type === 'episode' && itemToPlay.grandparentTitle) {
+        const season = itemToPlay.parentIndex ? `S${String(itemToPlay.parentIndex).padStart(2, '0')}` : '';
+        const episode = itemToPlay.index ? `E${String(itemToPlay.index).padStart(2, '0')}` : '';
+        title = `${itemToPlay.grandparentTitle} ${season}${episode}`;
+      }
+      
+      await message.channel.send(
+        `⏸️ **Resume Playback?**\n` +
+        `You were watching **${title}** at ${formatDuration(savedPosition)} (${percentWatched}%)\n\n` +
+        `\`!play resume\` - Continue where you left off\n` +
+        `\`!play start\` - Start from beginning`
+      );
+      return;
+    }
+
+    const statusMsg = await message.channel.send(`🎬 Loading "${mediaItem.title}"...`);
+    await startVideoStream(statusMsg, message.guild!.id, voiceChannel.id, itemToPlay, 0);
 
     clearSearchSession(message.author.id);
   } catch (error) {
     console.error('[Play] Error:', error);
-    await statusMsg.edit(`❌ Failed to start stream: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    await message.channel.send(`❌ Failed to start stream: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
@@ -60,7 +152,8 @@ async function startVideoStream(
   statusMsg: Message,
   guildId: string,
   channelId: string,
-  mediaItem: PlexMediaItem
+  mediaItem: PlexMediaItem,
+  startTimeMs = 0
 ): Promise<void> {
   const videoStreamer = getVideoStreamer();
 
@@ -85,7 +178,7 @@ async function startVideoStream(
     channelId,
     mediaItem,
     streamInfo.url,
-    0
+    startTimeMs
   ).catch((err) => {
     console.error('[Play] Stream error:', err);
   });

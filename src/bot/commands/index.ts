@@ -6,10 +6,16 @@ import { pauseCommand } from './pause.js';
 import { seekCommand } from './seek.js';
 import { skipCommand } from './skip.js';
 import { nowPlayingCommand } from './nowplaying.js';
+import { helpCommand } from './help.js';
+import { volumeCommand } from './volume.js';
+import { episodesCommand } from './episodes.js';
 
 export type CommandHandler = (message: Message, args: string[]) => Promise<void>;
 
 const commands: Record<string, CommandHandler> = {
+  help: helpCommand,
+  h: helpCommand,
+  commands: helpCommand,
   search: searchCommand,
   s: searchCommand,
   play: playCommand,
@@ -23,6 +29,12 @@ const commands: Record<string, CommandHandler> = {
   np: nowPlayingCommand,
   nowplaying: nowPlayingCommand,
   playing: nowPlayingCommand,
+  volume: volumeCommand,
+  vol: volumeCommand,
+  v: volumeCommand,
+  episodes: episodesCommand,
+  eps: episodesCommand,
+  seasons: episodesCommand,
 };
 
 export async function handleCommand(
