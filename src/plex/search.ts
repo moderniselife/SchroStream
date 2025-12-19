@@ -16,14 +16,8 @@ export async function searchMedia(query: string, userId: string): Promise<PlexMe
 }
 
 export function getSearchSession(userId: string): SearchSession | undefined {
-  const session = searchSessions.get(userId);
-
-  if (session && Date.now() - session.timestamp > 5 * 60 * 1000) {
-    searchSessions.delete(userId);
-    return undefined;
-  }
-
-  return session;
+  // Search results persist until a new search is performed (no timeout)
+  return searchSessions.get(userId);
 }
 
 export function getSearchResult(userId: string, index: number): PlexMediaItem | undefined {
@@ -86,7 +80,14 @@ export function formatSearchResults(items: PlexMediaItem[]): string {
     sections.push(`**📼 Episodes (${episodes.length})**\n${episodeLines.join('\n')}`);
   }
 
-  return sections.join('\n\n');
+  // Build footer with hints
+  const hints: string[] = ['Use `!play <number>` to start streaming'];
+  if (shows.length > 0) {
+    hints.push('Use `!episodes <number>` to view seasons & episodes');
+    hints.push('Or `!play <number> S01E01` to play a specific episode');
+  }
+
+  return sections.join('\n\n') + '\n\n' + hints.join('\n');
 }
 
 export default {

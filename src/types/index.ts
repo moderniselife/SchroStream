@@ -82,6 +82,7 @@ export interface Config {
     defaultQuality: number;
     maxBitrate: number;
     audioBitrate: number;
+    frameRate: number;
   };
 }
 

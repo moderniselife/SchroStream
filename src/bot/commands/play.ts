@@ -68,16 +68,34 @@ export async function playCommand(message: Message, args: string[]): Promise<voi
       let targetEpisode = 1;
       
       if (args.length >= 2) {
+        const arg = args[1].toUpperCase();
+        
         // Try parsing S01E01 format
-        const episodeMatch = args[1].toUpperCase().match(/S(\d+)E(\d+)/);
+        let episodeMatch = arg.match(/S(\d+)E(\d+)/);
         if (episodeMatch) {
           targetSeason = parseInt(episodeMatch[1], 10);
           targetEpisode = parseInt(episodeMatch[2], 10);
-        } else if (args.length >= 3) {
-          // Try parsing separate numbers: !play 1 2 5 (show, season, episode)
-          targetSeason = parseInt(args[1], 10) || 1;
-          targetEpisode = parseInt(args[2], 10) || 1;
+        } else {
+          // Try S0101 format (no E separator) - assume last 2 digits are episode
+          episodeMatch = arg.match(/S(\d+)/);
+          if (episodeMatch) {
+            const nums = episodeMatch[1];
+            if (nums.length >= 3) {
+              // S2801 -> season 28, episode 01
+              targetSeason = parseInt(nums.slice(0, -2), 10);
+              targetEpisode = parseInt(nums.slice(-2), 10);
+            } else {
+              // S28 -> just season, episode 1
+              targetSeason = parseInt(nums, 10);
+              targetEpisode = 1;
+            }
+          } else if (args.length >= 3) {
+            // Try parsing separate numbers: !play 1 2 5 (show, season, episode)
+            targetSeason = parseInt(args[1], 10) || 1;
+            targetEpisode = parseInt(args[2], 10) || 1;
+          }
         }
+        console.log(`[Play] Episode selection: S${targetSeason}E${targetEpisode} from "${args[1]}"`);
       }
       
       const episodes = await plexClient.getEpisodes(mediaItem.ratingKey);
@@ -105,6 +123,7 @@ export async function playCommand(message: Message, args: string[]): Promise<voi
     
     // Check for saved position
     const savedPosition = getPlaybackPosition(itemToPlay.ratingKey);
+    console.log(`[Play] Checking resume for ${itemToPlay.ratingKey}: saved=${savedPosition}ms`);
     
     if (savedPosition && savedPosition > 60000) { // More than 1 minute
       const duration = itemToPlay.duration || 0;
@@ -140,8 +159,7 @@ export async function playCommand(message: Message, args: string[]): Promise<voi
 
     const statusMsg = await message.channel.send(`🎬 Loading "${mediaItem.title}"...`);
     await startVideoStream(statusMsg, message.guild!.id, voiceChannel.id, itemToPlay, 0);
-
-    clearSearchSession(message.author.id);
+    // Don't clear search session - keep it until user searches again
   } catch (error) {
     console.error('[Play] Error:', error);
     await message.channel.send(`❌ Failed to start stream: ${error instanceof Error ? error.message : 'Unknown error'}`);
