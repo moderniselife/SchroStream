@@ -1,0 +1,219 @@
+import { parseStringPromise } from 'xml2js';
+import config from '../config.js';
+import type { PlexMediaItem, PlexStreamInfo } from '../types/index.js';
+
+export class PlexClient {
+  private baseUrl: string;
+  private token: string;
+
+  constructor() {
+    this.baseUrl = config.plex.url;
+    this.token = config.plex.token;
+  }
+
+  private async request<T>(endpoint: string, parseXml = true): Promise<T> {
+    const url = `${this.baseUrl}${endpoint}`;
+    const separator = endpoint.includes('?') ? '&' : '?';
+    const fullUrl = `${url}${separator}X-Plex-Token=${this.token}`;
+
+    const response = await fetch(fullUrl, {
+      headers: {
+        Accept: 'application/xml',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Plex API error: ${response.status} ${response.statusText}`);
+    }
+
+    const text = await response.text();
+
+    if (parseXml) {
+      return parseStringPromise(text, { explicitArray: false }) as Promise<T>;
+    }
+
+    return text as unknown as T;
+  }
+
+  async testConnection(): Promise<boolean> {
+    try {
+      await this.request('/');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async getLibraries(): Promise<Array<{ key: string; title: string; type: string }>> {
+    const response = await this.request<any>('/library/sections');
+    const directories = response.MediaContainer.Directory;
+
+    if (!directories) return [];
+
+    const libs = Array.isArray(directories) ? directories : [directories];
+    return libs.map((dir: any) => ({
+      key: dir.$.key,
+      title: dir.$.title,
+      type: dir.$.type,
+    }));
+  }
+
+  async search(query: string): Promise<PlexMediaItem[]> {
+    const response = await this.request<any>(`/search?query=${encodeURIComponent(query)}`);
+    const container = response.MediaContainer;
+
+    if (!container || !container.Metadata) return [];
+
+    const items = Array.isArray(container.Metadata)
+      ? container.Metadata
+      : [container.Metadata];
+
+    return items
+      .filter((item: any) => ['movie', 'show', 'episode'].includes(item.$.type))
+      .map((item: any) => this.parseMediaItem(item));
+  }
+
+  async getMetadata(ratingKey: string): Promise<PlexMediaItem | null> {
+    try {
+      const response = await this.request<any>(`/library/metadata/${ratingKey}`);
+      const metadata = response.MediaContainer?.Metadata;
+
+      if (!metadata) return null;
+
+      const item = Array.isArray(metadata) ? metadata[0] : metadata;
+      return this.parseMediaItem(item);
+    } catch {
+      return null;
+    }
+  }
+
+  async getEpisodes(showKey: string): Promise<PlexMediaItem[]> {
+    const response = await this.request<any>(`/library/metadata/${showKey}/allLeaves`);
+    const container = response.MediaContainer;
+
+    if (!container || !container.Metadata) return [];
+
+    const items = Array.isArray(container.Metadata)
+      ? container.Metadata
+      : [container.Metadata];
+
+    return items.map((item: any) => this.parseMediaItem(item));
+  }
+
+  async getSeasons(showKey: string): Promise<PlexMediaItem[]> {
+    const response = await this.request<any>(`/library/metadata/${showKey}/children`);
+    const container = response.MediaContainer;
+
+    if (!container || !container.Metadata) return [];
+
+    const items = Array.isArray(container.Metadata)
+      ? container.Metadata
+      : [container.Metadata];
+
+    return items.map((item: any) => this.parseMediaItem(item));
+  }
+
+  async getSeasonEpisodes(seasonKey: string): Promise<PlexMediaItem[]> {
+    const response = await this.request<any>(`/library/metadata/${seasonKey}/children`);
+    const container = response.MediaContainer;
+
+    if (!container || !container.Metadata) return [];
+
+    const items = Array.isArray(container.Metadata)
+      ? container.Metadata
+      : [container.Metadata];
+
+    return items.map((item: any) => this.parseMediaItem(item));
+  }
+
+  getStreamUrl(ratingKey: string): string {
+    return `${this.baseUrl}/library/metadata/${ratingKey}?X-Plex-Token=${this.token}`;
+  }
+
+  async getDirectStreamUrl(ratingKey: string): Promise<PlexStreamInfo | null> {
+    try {
+      const response = await this.request<any>(`/library/metadata/${ratingKey}`);
+      const metadata = response.MediaContainer?.Metadata;
+
+      if (!metadata) return null;
+
+      const item = Array.isArray(metadata) ? metadata[0] : metadata;
+      const media = item.Media;
+
+      if (!media) return null;
+
+      const mediaInfo = Array.isArray(media) ? media[0] : media;
+      const part = mediaInfo.Part;
+
+      if (!part) return null;
+
+      const partInfo = Array.isArray(part) ? part[0] : part;
+
+      return {
+        url: `${this.baseUrl}${partInfo.$.key}?X-Plex-Token=${this.token}`,
+        container: partInfo.$.container || 'mkv',
+        videoCodec: mediaInfo.$.videoCodec,
+        audioCodec: mediaInfo.$.audioCodec,
+        bitrate: parseInt(mediaInfo.$.bitrate || '0', 10),
+        width: parseInt(mediaInfo.$.width || '0', 10),
+        height: parseInt(mediaInfo.$.height || '0', 10),
+      };
+    } catch (error) {
+      console.error('Error getting stream URL:', error);
+      return null;
+    }
+  }
+
+  getTranscodeUrl(ratingKey: string, options: { width?: number; height?: number } = {}): string {
+    const width = options.width || 1920;
+    const height = options.height || 1080;
+
+    const params = new URLSearchParams({
+      path: `/library/metadata/${ratingKey}`,
+      mediaIndex: '0',
+      partIndex: '0',
+      protocol: 'http',
+      fastSeek: '1',
+      directPlay: '0',
+      directStream: '1',
+      subtitleSize: '100',
+      audioBoost: '100',
+      location: 'lan',
+      maxVideoBitrate: config.stream.maxBitrate.toString(),
+      videoResolution: `${width}x${height}`,
+      videoQuality: '100',
+      'X-Plex-Token': this.token,
+    });
+
+    return `${this.baseUrl}/video/:/transcode/universal/start.m3u8?${params.toString()}`;
+  }
+
+  getThumbnailUrl(thumb: string): string {
+    if (!thumb) return '';
+    return `${this.baseUrl}${thumb}?X-Plex-Token=${this.token}`;
+  }
+
+  private parseMediaItem(item: any): PlexMediaItem {
+    const attrs = item.$ || item;
+
+    return {
+      ratingKey: attrs.ratingKey,
+      key: attrs.key,
+      type: attrs.type,
+      title: attrs.title,
+      year: attrs.year ? parseInt(attrs.year, 10) : undefined,
+      summary: attrs.summary,
+      thumb: attrs.thumb,
+      art: attrs.art,
+      duration: attrs.duration ? parseInt(attrs.duration, 10) : undefined,
+      addedAt: attrs.addedAt ? parseInt(attrs.addedAt, 10) : undefined,
+      parentTitle: attrs.parentTitle,
+      grandparentTitle: attrs.grandparentTitle,
+      index: attrs.index ? parseInt(attrs.index, 10) : undefined,
+      parentIndex: attrs.parentIndex ? parseInt(attrs.parentIndex, 10) : undefined,
+    };
+  }
+}
+
+export const plexClient = new PlexClient();
+export default plexClient;
