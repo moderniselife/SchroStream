@@ -1,3 +1,8 @@
+// Load DEBUG environment variable early to control debug logging
+if (process.env.DEBUG === undefined) {
+  process.env.DEBUG = '';
+}
+
 import { startBot } from './bot/client.js';
 import plexClient from './plex/client.js';
 import { getVideoStreamer, leaveAllVoiceChannels } from './stream/video-streamer.js';
