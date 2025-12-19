@@ -452,6 +452,11 @@ export class PlexClient {
   }
 
   private parseMediaItem(item: any): PlexMediaItem {
+    const duration = item.duration ? parseInt(String(item.duration), 10) : undefined;
+    if (duration && duration > 1000000000) {
+      console.log(`[Plex] Warning: Very large duration for "${item.title}": ${duration}ms (${Math.round(duration/3600000)} hours)`);
+    }
+    
     return {
       ratingKey: String(item.ratingKey),
       key: item.key,
@@ -461,7 +466,7 @@ export class PlexClient {
       summary: item.summary,
       thumb: item.thumb,
       art: item.art,
-      duration: item.duration ? parseInt(String(item.duration), 10) : undefined,
+      duration: duration,
       addedAt: item.addedAt ? parseInt(String(item.addedAt), 10) : undefined,
       parentTitle: item.parentTitle,
       grandparentTitle: item.grandparentTitle,
