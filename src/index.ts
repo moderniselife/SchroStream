@@ -2,6 +2,7 @@ import { startBot } from './bot/client.js';
 import plexClient from './plex/client.js';
 import { getVideoStreamer, leaveAllVoiceChannels } from './stream/video-streamer.js';
 import config from './config.js';
+import { initControllerBot } from './controller/bot.js';
 
 async function main(): Promise<void> {
   console.log('╔═══════════════════════════════════════╗');
@@ -31,8 +32,17 @@ async function main(): Promise<void> {
   });
 
   console.log('');
-  console.log('[Startup] Starting Discord bot...');
+  console.log('[Startup] Starting Discord selfbot...');
   await startBot();
+
+  // Start controller bot if configured
+  if (config.discord.botToken) {
+    console.log('[Startup] Starting controller bot...');
+    await initControllerBot();
+  } else {
+    console.log('[Startup] No BOT_TOKEN configured, skipping controller bot');
+    console.log('[Startup] Add BOT_TOKEN and BOT_CLIENT_ID to enable slash commands');
+  }
 }
 
 // Graceful shutdown handler
