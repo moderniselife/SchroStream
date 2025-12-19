@@ -285,29 +285,56 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
     timestamp: Date.now(),
   });
 
+  // Separate movies and TV shows
+  const movies = results.filter(item => item.type === 'movie').slice(0, 5);
+  const shows = results.filter(item => item.type === 'show').slice(0, 5);
+  
+  let description = '';
+  
+  if (movies.length > 0) {
+    description += '**🎬 Movies**\n';
+    description += movies.map((item, i) => {
+      const year = item.year ? ` (${item.year})` : '';
+      const rating = item.rating ? ` ⭐ ${item.rating}` : '';
+      return `**${i + 1}.** ${item.title}${year}${rating}`;
+    }).join('\n');
+  }
+  
+  if (shows.length > 0) {
+    if (description) description += '\n\n';
+    description += '**📺 TV Shows**\n';
+    description += shows.map((item, i) => {
+      const year = item.year ? ` (${item.year})` : '';
+      const seasons = item.childCount ? ` • ${item.childCount} Seasons` : '';
+      const rating = item.rating ? ` ⭐ ${item.rating}` : '';
+      return `**${movies.length + i + 1}.** ${item.title}${year}${seasons}${rating}`;
+    }).join('\n');
+  }
+  
   // Build embed
   const embed = new EmbedBuilder()
     .setTitle(`🔍 Search: "${query}"`)
     .setColor(0xe5a00d)
-    .setDescription(
-      results.slice(0, 10).map((item, i) => {
-        const type = item.type === 'show' ? '📺' : '🎬';
-        const year = item.year ? ` (${item.year})` : '';
-        return `**${i + 1}.** ${type} ${item.title}${year}`;
-      }).join('\n')
-    )
+    .setDescription(description || 'No results found')
     .setFooter({ text: 'Select a result below or use /play <number>' });
 
-  // Build select menu
+  // Build select menu with proper numbering
+  const allResults = [...movies, ...shows];
   const selectMenu = new StringSelectMenuBuilder()
     .setCustomId('search_select')
     .setPlaceholder('Select media to play...')
     .addOptions(
-      results.slice(0, 10).map((item, i) => ({
-        label: `${i + 1}. ${item.title}`.substring(0, 100),
-        description: `${item.type === 'show' ? 'TV Show' : 'Movie'}${item.year ? ` (${item.year})` : ''}`.substring(0, 100),
-        value: `${i}`,
-      }))
+      allResults.map((item, i) => {
+        const actualIndex = results.indexOf(item);
+        const description = item.type === 'show' 
+          ? `TV Show${item.year ? ` (${item.year})` : ''}${item.childCount ? ` • ${item.childCount} Seasons` : ''}`
+          : `Movie${item.year ? ` (${item.year})` : ''}`;
+        return {
+          label: `${actualIndex + 1}. ${item.title}`.substring(0, 100),
+          description: description.substring(0, 100),
+          value: `${actualIndex}`,
+        };
+      })
     );
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
@@ -1331,6 +1358,20 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promi
       await interaction.deferReply();
       await startPlayback(interaction, mediaItem);
     }
+  } else if (interaction.customId.startsWith('season_select_')) {
+    const ratingKey = interaction.customId.replace('season_select_', '');
+    const [seasonRatingKey, seasonIndex] = interaction.values[0].split('_');
+    
+    const session = searchSessions.get(interaction.user.id);
+    const show = session?.results.find(r => r.ratingKey === ratingKey);
+
+    if (!show) {
+      await interaction.reply({ content: '❌ Show not found', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply();
+    await showEpisodesForSeason(interaction, show, seasonRatingKey, parseInt(seasonIndex));
   } else if (interaction.customId.startsWith('episode_select_')) {
     const ratingKey = interaction.customId.replace('episode_select_', '');
     const [seasonNum, episodeNum] = interaction.values[0].split('_').map(Number);
@@ -1359,47 +1400,60 @@ async function showEpisodeSelector(
     return;
   }
 
-  // Get episodes for first season
-  const firstSeason = seasons[0];
-  const episodes = await plexClient.getEpisodes(firstSeason.ratingKey);
+  // Show seasons selector
+  const embed = new EmbedBuilder()
+    .setTitle(`📺 ${show.title}`)
+    .setDescription('Select a season to view episodes')
+    .setColor(0xe5a00d);
+
+  const seasonOptions = seasons.slice(0, 25).map(season => ({
+    label: `Season ${season.index || 1}`,
+    description: season.childCount ? `${season.childCount} episodes` : 'Unknown episodes',
+    value: `${season.ratingKey}_${season.index || 1}`,
+  }));
+
+  const seasonSelect = new StringSelectMenuBuilder()
+    .setCustomId(`season_select_${show.ratingKey}`)
+    .setPlaceholder('Select a season...')
+    .addOptions(seasonOptions);
+
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(seasonSelect);
+
+  await interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+async function showEpisodesForSeason(
+  interaction: StringSelectMenuInteraction,
+  show: PlexMediaItem,
+  seasonRatingKey: string,
+  seasonIndex: number
+): Promise<void> {
+  const episodes = await plexClient.getEpisodes(seasonRatingKey);
 
   if (!episodes || episodes.length === 0) {
-    await interaction.editReply('❌ No episodes found');
+    await interaction.editReply('❌ No episodes found for this season');
     return;
   }
 
   const embed = new EmbedBuilder()
     .setTitle(`📺 ${show.title}`)
-    .setDescription(`Select an episode to play\n\n**Season ${firstSeason.index || 1}**`)
+    .setDescription(`Select an episode to play\n\n**Season ${seasonIndex}**`)
     .setColor(0xe5a00d);
 
   const episodeOptions = episodes.slice(0, 25).map(ep => ({
     label: `E${String(ep.index).padStart(2, '0')}: ${ep.title}`.substring(0, 100),
-    description: ep.duration ? formatDuration(ep.duration) : undefined,
-    value: `${firstSeason.index || 1}_${ep.index}`,
+    description: ep.duration ? formatPlexDuration(ep.duration) : undefined,
+    value: `${seasonIndex}_${ep.index}`,
   }));
 
   const episodeSelect = new StringSelectMenuBuilder()
     .setCustomId(`episode_select_${show.ratingKey}`)
-    .setPlaceholder('Select episode...')
+    .setPlaceholder('Select an episode...')
     .addOptions(episodeOptions);
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(episodeSelect);
 
-  // Add season buttons if multiple seasons
-  const components: ActionRowBuilder<any>[] = [row];
-
-  if (seasons.length > 1) {
-    const seasonButtons = seasons.slice(0, 5).map((s, i) =>
-      new ButtonBuilder()
-        .setCustomId(`season_${show.ratingKey}_${s.ratingKey}`)
-        .setLabel(`S${s.index || i + 1}`)
-        .setStyle(i === 0 ? ButtonStyle.Primary : ButtonStyle.Secondary)
-    );
-    components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(seasonButtons));
-  }
-
-  await interaction.editReply({ embeds: [embed], components });
+  await interaction.editReply({ embeds: [embed], components: [row] });
 }
 
 function createProgressBar(percent: number): string {
