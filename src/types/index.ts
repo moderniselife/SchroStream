@@ -70,6 +70,7 @@ export interface Config {
     token: string;
     prefix: string;
     ownerId: string | null;
+    allowedGuilds: string[];
   };
   plex: {
     url: string;
