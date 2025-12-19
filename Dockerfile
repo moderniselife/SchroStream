@@ -1,22 +1,26 @@
-# Build stage
-FROM oven/bun:latest AS base
-WORKDIR /app
+# Ubuntu base with Bun and FFmpeg
+FROM ubuntu:24.04
 
 # Install dependencies
-FROM base AS install
-COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile --production
-
-# Release stage
-FROM base AS release
-
-# Install FFmpeg
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    unzip \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy dependencies
-COPY --from=install /app/node_modules ./node_modules
+# Install Bun
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json bun.lock ./
+
+# Install dependencies
+RUN bun install --frozen-lockfile --production
 
 # Copy source
 COPY . .
