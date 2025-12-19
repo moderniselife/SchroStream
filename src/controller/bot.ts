@@ -661,6 +661,7 @@ async function handleNowPlaying(interaction: ChatInputCommandInteraction): Promi
 
   const currentTime = videoStreamer.getCurrentTime(guildId);
   const duration = session.duration;
+  console.log(`[NowPlaying] Duration: ${duration}ms (${Math.round(duration/60000)} minutes)`);
   const progress = duration > 0 ? Math.round((currentTime / duration) * 100) : 0;
 
   let title = session.mediaItem.title;
