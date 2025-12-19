@@ -15,6 +15,8 @@ export interface PlexMediaItem {
   grandparentRatingKey?: string;
   index?: number;
   parentIndex?: number;
+  rating?: number;
+  childCount?: number;
 }
 
 export interface PlexSearchResult {
