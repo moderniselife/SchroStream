@@ -24,6 +24,7 @@ import { client as selfbotClient } from '../bot/client.js';
 // Store search results per user
 const searchSessions = new Map<string, { results: PlexMediaItem[], timestamp: number }>();
 const youtubeSearchSessions = new Map<string, { results: any[], timestamp: number }>();
+const youtubeSearchPages = new Map<string, { page: number }>();
 const SESSION_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 
 interface YouTubeSearchResult {
@@ -833,49 +834,109 @@ async function handleYouTubeSearch(interaction: ChatInputCommandInteraction): Pr
     return;
   }
 
-  // Cache results
+  // Cache results and set page to 0
   youtubeSearchSessions.set(interaction.user.id, {
     results,
     timestamp: Date.now(),
   });
+  youtubeSearchPages.set(interaction.user.id, { page: 0 });
 
-  // Create embeds with play buttons for each result
-  const messageComponents = results.map((r, i) => {
-    const embed = new EmbedBuilder()
-      .setTitle(`${i + 1}. ${r.title}`)
-      .setDescription(r.description)
-      .setColor(0xff0000)
-      .setThumbnail(r.thumbnail)
-      .addFields(
-        { name: 'Channel', value: r.channel, inline: true },
-        { name: 'Duration', value: r.duration, inline: true },
-        { name: 'Views', value: r.views, inline: true },
-        { name: 'Likes', value: r.likes, inline: true },
-        { name: 'Uploaded', value: r.uploadDate, inline: true }
-      )
-      .setURL(r.url);
-    
-    // Create action row with play button
-    const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`yt_play_${i}`)
-        .setLabel('▶️ Play')
-        .setStyle(ButtonStyle.Success)
-    );
-    
-    return { embed, components: [actionRow] };
+  // Display first page
+  await displayYouTubeSearchPage(interaction, 0);
+}
+
+async function displayYouTubeSearchPage(interaction: ChatInputCommandInteraction | ButtonInteraction, page: number): Promise<void> {
+  const session = youtubeSearchSessions.get(interaction.user.id);
+  if (!session || Date.now() - session.timestamp > SESSION_TIMEOUT) {
+    const reply = interaction.replied || interaction.deferred ? 'editReply' : 'reply';
+    await interaction[reply]({ content: '❌ Search expired. Use /yts to search first.', ephemeral: true });
+    return;
+  }
+
+  const results = session.results;
+  const resultsPerPage = 5;
+  const totalPages = Math.ceil(results.length / resultsPerPage);
+  const startIndex = page * resultsPerPage;
+  const endIndex = Math.min(startIndex + resultsPerPage, results.length);
+  const pageResults = results.slice(startIndex, endIndex);
+
+  // Create embed with multiple results
+  const embed = new EmbedBuilder()
+    .setTitle('🎬 YouTube Search Results')
+    .setDescription(`Found ${results.length} results (Page ${page + 1}/${totalPages})`)
+    .setColor(0xff0000);
+
+  // Add each result as a field
+  pageResults.forEach((r, i) => {
+    const actualIndex = startIndex + i;
+    embed.addFields({
+      name: `${actualIndex + 1}. ${r.title}`,
+      value: `👤 ${r.channel} • ⏱️ ${r.duration} • 👁️ ${r.views} • 👍 ${r.likes}\n${r.description.substring(0, 150)}${r.description.length > 150 ? '...' : ''}`,
+      inline: false
+    });
   });
 
-  // Send each result as a separate message with its play button
-  for (const { embed, components } of messageComponents) {
-    if (messageComponents.indexOf({ embed, components }) === 0) {
-      // First message - edit the deferred reply
-      await interaction.editReply({ embeds: [embed], components });
-    } else {
-      // Subsequent messages - send as followups
-      await interaction.followUp({ embeds: [embed], components });
-    }
+  // Create action rows with play buttons and pagination
+  const playButtons = [];
+  for (let i = 0; i < pageResults.length; i++) {
+    const actualIndex = startIndex + i;
+    playButtons.push(
+      new ButtonBuilder()
+        .setCustomId(`yt_play_${actualIndex}`)
+        .setLabel(`${actualIndex + 1}. ▶️ Play`)
+        .setStyle(ButtonStyle.Success)
+    );
   }
+
+  // Group play buttons in rows of 5
+  const buttonRows: ActionRowBuilder<ButtonBuilder>[] = [];
+  for (let i = 0; i < playButtons.length; i += 5) {
+    buttonRows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        ...playButtons.slice(i, i + 5)
+      )
+    );
+  }
+
+  // Add pagination row if needed
+  if (totalPages > 1) {
+    const paginationRow = new ActionRowBuilder<ButtonBuilder>();
+    
+    if (page > 0) {
+      paginationRow.addComponents(
+        new ButtonBuilder()
+          .setCustomId('yt_page_prev')
+          .setLabel('◀️ Previous')
+          .setStyle(ButtonStyle.Secondary)
+      );
+    }
+    
+    paginationRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId('yt_page_info')
+        .setLabel(`Page ${page + 1}/${totalPages}`)
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true)
+    );
+    
+    if (page < totalPages - 1) {
+      paginationRow.addComponents(
+        new ButtonBuilder()
+          .setCustomId('yt_page_next')
+          .setLabel('Next ▶️')
+          .setStyle(ButtonStyle.Secondary)
+      );
+    }
+    
+    buttonRows.push(paginationRow);
+  }
+
+  // Update page tracking
+  youtubeSearchPages.set(interaction.user.id, { page });
+
+  // Send response
+  const reply = interaction.replied || interaction.deferred ? 'editReply' : 'reply';
+  await interaction[reply]({ embeds: [embed], components: buttonRows });
 }
 
 async function handleYouTubePlay(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -1207,6 +1268,25 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
           interaction.user.id,
           urls.audio
         ).catch(err => console.error('[Controller] YouTube stream error:', err));
+      }
+      // Handle YouTube pagination buttons
+      else if (interaction.customId === 'yt_page_prev') {
+        const currentPage = youtubeSearchPages.get(interaction.user.id)?.page || 0;
+        if (currentPage > 0) {
+          await displayYouTubeSearchPage(interaction, currentPage - 1);
+        }
+      }
+      else if (interaction.customId === 'yt_page_next') {
+        const session = youtubeSearchSessions.get(interaction.user.id);
+        if (!session || Date.now() - session.timestamp > SESSION_TIMEOUT) {
+          await interaction.reply({ content: '❌ Search expired', ephemeral: true });
+          return;
+        }
+        const currentPage = youtubeSearchPages.get(interaction.user.id)?.page || 0;
+        const totalPages = Math.ceil(session.results.length / 5);
+        if (currentPage < totalPages - 1) {
+          await displayYouTubeSearchPage(interaction, currentPage + 1);
+        }
       }
     }
   }
