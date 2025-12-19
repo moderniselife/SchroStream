@@ -300,8 +300,8 @@ async function startPlayback(
   mediaItem: PlexMediaItem,
   episodeStr?: string | null
 ): Promise<void> {
-  // Get voice channel of user
-  const member = interaction.guild?.members.cache.get(interaction.user.id);
+  // Get voice channel of user - fetch to ensure we have current voice state
+  const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   const voiceChannel = member?.voice.channel;
 
   if (!voiceChannel) {
@@ -562,7 +562,7 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
   const url = interaction.options.getString('url', true);
   await interaction.deferReply();
 
-  const member = interaction.guild?.members.cache.get(interaction.user.id);
+  const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   const voiceChannel = member?.voice.channel;
 
   if (!voiceChannel) {
@@ -651,7 +651,7 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
   const url = interaction.options.getString('url', true);
   const title = interaction.options.getString('title') || 'External Stream';
 
-  const member = interaction.guild?.members.cache.get(interaction.user.id);
+  const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
   const voiceChannel = member?.voice.channel;
 
   if (!voiceChannel) {
