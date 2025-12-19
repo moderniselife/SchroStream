@@ -802,14 +802,18 @@ async function handleYouTubeSearch(interaction: ChatInputCommandInteraction): Pr
         for (const line of lines) {
           if (!line.trim()) continue;
           const info = JSON.parse(line);
+          
+          // Generate thumbnail URL from video ID if not provided
+          const thumbnailUrl = info.thumbnail || `https://i.ytimg.com/vi/${info.id}/hqdefault.jpg`;
+          
           results.push({
             id: info.id,
             title: info.title || 'Unknown',
-            duration: formatDuration(info.duration),
-            channel: info.channel || info.uploader || 'Unknown',
+            duration: info.duration ? formatDuration(info.duration) : 'Unknown',
+            channel: info.channel || info.uploader || info.uploader_id || 'Unknown',
             url: info.url || `https://www.youtube.com/watch?v=${info.id}`,
-            thumbnail: info.thumbnail || '',
-            description: info.description ? info.description.substring(0, 200) + (info.description.length > 200 ? '...' : '') : 'No description',
+            thumbnail: thumbnailUrl,
+            description: 'Click play for details',
             views: info.view_count ? formatNumber(info.view_count) : 'Unknown',
             likes: info.like_count ? formatNumber(info.like_count) : 'Unknown',
             uploadDate: info.upload_date ? formatDate(info.upload_date) : 'Unknown',
