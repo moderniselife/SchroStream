@@ -17,7 +17,7 @@ import {
 import config from '../config.js';
 import plexClient from '../plex/client.js';
 import { getVideoStreamer } from '../stream/video-streamer.js';
-import { formatDuration, parseTimeString, getNextEpisode } from '../plex/library.js';
+import { formatDuration as formatPlexDuration, parseTimeString, getNextEpisode } from '../plex/library.js';
 import type { PlexMediaItem } from '../types/index.js';
 import { client as selfbotClient } from '../bot/client.js';
 
@@ -32,6 +32,11 @@ interface YouTubeSearchResult {
   duration: string;
   channel: string;
   url: string;
+  thumbnail: string;
+  description: string;
+  views: string;
+  likes: string;
+  uploadDate: string;
 }
 
 // Discord bot client
@@ -589,7 +594,7 @@ async function handleNowPlaying(interaction: ChatInputCommandInteraction): Promi
     .setTitle(session.isPaused ? '⏸️ Paused' : '▶️ Now Playing')
     .setDescription(`**${title}**`)
     .addFields(
-      { name: 'Progress', value: `${progressBar}\n${formatDuration(currentTime)} / ${formatDuration(duration)} (${progress}%)` }
+      { name: 'Progress', value: `${progressBar}\n${formatPlexDuration(currentTime)} / ${formatPlexDuration(duration)} (${progress}%)` }
     )
     .setColor(session.isPaused ? 0xffaa00 : 0x00ff00);
 
@@ -748,7 +753,7 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
 
   const videoStreamer = getVideoStreamer();
   videoStreamer.startExternalStream(
-    interaction.guild!.id,
+    guildId,
     voiceChannel.id,
     mediaItem,
     url,
@@ -765,7 +770,7 @@ async function handleYouTubeSearch(interaction: ChatInputCommandInteraction): Pr
   const results = await new Promise<YouTubeSearchResult[]>((resolve) => {
     const ytdlp = spawn('yt-dlp', [
       '--dump-json',
-      '--flat-playlist',
+      '--no-playlist',
       '--no-warnings',
       '-I', '1:10',
       `ytsearch10:${query}`
@@ -802,6 +807,11 @@ async function handleYouTubeSearch(interaction: ChatInputCommandInteraction): Pr
             duration: formatDuration(info.duration),
             channel: info.channel || info.uploader || 'Unknown',
             url: info.url || `https://www.youtube.com/watch?v=${info.id}`,
+            thumbnail: info.thumbnail || '',
+            description: info.description ? info.description.substring(0, 200) + (info.description.length > 200 ? '...' : '') : 'No description',
+            views: info.view_count ? formatNumber(info.view_count) : 'Unknown',
+            likes: info.like_count ? formatNumber(info.like_count) : 'Unknown',
+            uploadDate: info.upload_date ? formatDate(info.upload_date) : 'Unknown',
           });
         }
         
@@ -829,17 +839,34 @@ async function handleYouTubeSearch(interaction: ChatInputCommandInteraction): Pr
     timestamp: Date.now(),
   });
 
-  const resultLines = results.map((r, i) => 
-    `**${i + 1}.** ${r.title}\n   └ ${r.channel} • ${r.duration}`
-  );
+  // Create embeds for each result to show thumbnails and details
+  const embeds = results.map((r, i) => {
+    const embed = new EmbedBuilder()
+      .setTitle(`${i + 1}. ${r.title}`)
+      .setDescription(r.description)
+      .setColor(0xff0000)
+      .setThumbnail(r.thumbnail)
+      .addFields(
+        { name: 'Channel', value: r.channel, inline: true },
+        { name: 'Duration', value: r.duration, inline: true },
+        { name: 'Views', value: r.views, inline: true },
+        { name: 'Likes', value: r.likes, inline: true },
+        { name: 'Uploaded', value: r.uploadDate, inline: true }
+      )
+      .setURL(r.url);
+    
+    return embed;
+  });
 
-  const embed = new EmbedBuilder()
+  // Add a header embed
+  const headerEmbed = new EmbedBuilder()
     .setTitle('🎬 YouTube Search Results')
-    .setDescription(resultLines.join('\n\n'))
+    .setDescription(`Found ${results.length} results for "${query}"`)
     .setColor(0xff0000)
     .setFooter({ text: 'Use /ytp <number> to play a result' });
 
-  await interaction.editReply({ embeds: [embed] });
+  // Send all embeds (header + results)
+  await interaction.editReply({ embeds: [headerEmbed, ...embeds] });
 }
 
 async function handleYouTubePlay(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -857,15 +884,104 @@ async function handleYouTubePlay(interaction: ChatInputCommandInteraction): Prom
     return;
   }
 
-  // Create a new interaction with the URL
-  const mockInteraction = {
-    ...interaction,
-    options: {
-      getString: () => result.url
-    }
-  } as ChatInputCommandInteraction;
+  await interaction.deferReply();
 
-  await handleYouTube(mockInteraction);
+  // Get voice channel
+  const guildId = interaction.guildId;
+  if (!guildId) {
+    await interaction.editReply('❌ Guild not found');
+    return;
+  }
+
+  const guild = selfbotClient.guilds.cache.get(guildId);
+  const member = guild?.members.cache.get(interaction.user.id);
+  const voiceChannel = member?.voice?.channel;
+
+  if (!voiceChannel) {
+    await interaction.editReply('❌ You must be in a voice channel');
+    return;
+  }
+
+  // Get video info and stream
+  const { spawn } = await import('child_process');
+  
+  const info = await new Promise<any>((resolve) => {
+    const ytdlp = spawn('yt-dlp', ['--dump-json', '--no-playlist', '--no-warnings', result.url]);
+    let output = '';
+    ytdlp.stdout.on('data', (data) => output += data.toString());
+    ytdlp.on('close', (code) => {
+      if (code !== 0 || !output) { resolve(null); return; }
+      try { resolve(JSON.parse(output)); } catch { resolve(null); }
+    });
+    ytdlp.on('error', () => resolve(null));
+  });
+
+  if (!info) {
+    await interaction.editReply('❌ Failed to get video info');
+    return;
+  }
+
+  const urls = await new Promise<{ video: string; audio: string | null } | null>((resolve) => {
+    const ytdlp = spawn('yt-dlp', [
+      '-g',
+      '-f', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
+      '--no-playlist',
+      '--no-warnings',
+      result.url
+    ]);
+
+    let output = '';
+    ytdlp.stdout.on('data', (data) => output += data.toString());
+    ytdlp.on('close', (code) => {
+      if (code !== 0 || !output.trim()) { resolve(null); return; }
+      const urls = output.trim().split('\n');
+      resolve({
+        video: urls[0],
+        audio: urls[1] || null,
+      });
+    });
+    ytdlp.on('error', () => resolve(null));
+  });
+
+  if (!urls) {
+    await interaction.editReply('❌ Failed to get stream URL');
+    return;
+  }
+
+  const mediaItem = {
+    ratingKey: `yt-${Date.now()}`,
+    key: result.url,
+    title: info.title,
+    type: 'movie' as const,
+    duration: info.duration,
+    thumb: info.thumbnail,
+    summary: info.uploader ? `By ${info.uploader}` : undefined,
+  };
+
+  const embed = new EmbedBuilder()
+    .setTitle('📺 Now Playing')
+    .setDescription(`**${info.title}**\n${info.uploader ? `👤 ${info.uploader}\n` : ''}⏱️ ${formatDuration(info.duration)}`)
+    .setColor(0xff0000)
+    .setThumbnail(info.thumbnail || null);
+
+  const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
+  );
+
+  await interaction.editReply({ embeds: [embed], components: [controlRow] });
+
+  const videoStreamer = getVideoStreamer();
+  videoStreamer.startExternalStream(
+    guildId,
+    voiceChannel.id,
+    mediaItem,
+    urls.video,
+    interaction.user.id,
+    urls.audio
+  ).catch(err => console.error('[Controller] YouTube stream error:', err));
 }
 
 function formatDuration(seconds: number | null): string {
@@ -877,6 +993,24 @@ function formatDuration(seconds: number | null): string {
     return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formatNumber(num: number): string {
+  if (num >= 1000000) {
+    return (num / 1000000).toFixed(1) + 'M';
+  } else if (num >= 1000) {
+    return (num / 1000).toFixed(1) + 'K';
+  }
+  return num.toString();
+}
+
+function formatDate(dateStr: string): string {
+  // yt-dlp returns YYYYMMDD format
+  if (dateStr.length !== 8) return dateStr;
+  const year = dateStr.substring(0, 4);
+  const month = dateStr.substring(4, 6);
+  const day = dateStr.substring(6, 8);
+  return `${day}/${month}/${year}`;
 }
 
 async function handleButton(interaction: ButtonInteraction): Promise<void> {
