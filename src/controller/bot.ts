@@ -1490,7 +1490,9 @@ async function showEpisodesForSeason(
   seasonRatingKey: string,
   seasonIndex: number
 ): Promise<void> {
-  const episodes = await plexClient.getEpisodes(seasonRatingKey);
+  // Get all episodes for the show, then filter by season
+  const allEpisodes = await plexClient.getEpisodes(show.ratingKey);
+  const episodes = allEpisodes.filter(ep => (ep.parentIndex || 0) === seasonIndex);
 
   if (!episodes || episodes.length === 0) {
     await interaction.editReply('❌ No episodes found for this season');
