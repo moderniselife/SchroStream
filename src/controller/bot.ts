@@ -725,7 +725,12 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
 
 async function handleButton(interaction: ButtonInteraction): Promise<void> {
   const videoStreamer = getVideoStreamer();
-  const guildId = interaction.guild!.id;
+  const guildId = interaction.guildId || (interaction as any).message?.guildId;
+  
+  if (!guildId) {
+    await interaction.reply({ content: '❌ Guild not found', ephemeral: true });
+    return;
+  }
 
   switch (interaction.customId) {
     case 'ctrl_pause': {
