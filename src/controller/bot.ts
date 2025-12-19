@@ -132,6 +132,7 @@ export async function initControllerBot(): Promise<Client | null> {
   controllerBot = new Client({
     intents: [
       GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMembers,
       GatewayIntentBits.GuildVoiceStates,
     ],
   });
