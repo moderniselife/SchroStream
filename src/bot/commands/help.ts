@@ -10,10 +10,13 @@ export async function helpCommand(message: Message, _args: string[]): Promise<vo
 **Media Search & Playback:**
 \`${prefix}search <query>\` - Search for movies or TV shows
 \`${prefix}play <number>\` - Play a result from your search
+\`${prefix}play resume\` - Continue where you left off
+\`${prefix}play start\` - Start from beginning (ignore saved position)
 \`${prefix}stop\` - Stop the current stream
 
 **Playback Controls:**
-\`${prefix}pause\` - Pause/resume playback
+\`${prefix}pause\` - Pause playback (remembers position)
+\`${prefix}resume\` - Resume paused playback
 \`${prefix}seek <time>\` - Seek to time (e.g., \`1:30:00\` or \`45:00\`)
 \`${prefix}skip\` - Skip to next episode (TV shows only)
 \`${prefix}np\` - Show what's currently playing
@@ -24,7 +27,7 @@ export async function helpCommand(message: Message, _args: string[]): Promise<vo
 2. \`${prefix}play 1\`
 3. Enjoy the stream! 🎬
 
-*Note: You must be in a voice channel to start playback.*
+*Your playback position is saved automatically and persists across restarts.*
   `.trim();
 
   await message.channel.send(helpText);
