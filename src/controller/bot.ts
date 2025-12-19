@@ -419,7 +419,7 @@ async function startPlayback(
       return;
     }
     itemToPlay = episode;
-    console.log(`[Controller] Episode duration: ${episode.duration}ms (${Math.round(episode.duration/60000)} minutes)`);
+    console.log(`[Controller] Episode duration: ${episode.duration || 0}ms (${Math.round((episode.duration || 0)/60000)} minutes)`);
   }
 
   // Get stream URL
