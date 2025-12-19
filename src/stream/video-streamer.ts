@@ -73,16 +73,47 @@ class VideoStreamer {
     try {
       console.log('[VideoStreamer] Stream URL:', session.streamUrl.substring(0, 100) + '...');
 
-      // Spawn FFmpeg manually to handle HLS input properly
-      // Build headers string for FFmpeg (must be before -i)
+      // Initialize Plex session by fetching the m3u8 first
+      // This tells Plex to start the transcode session
+      console.log('[VideoStreamer] Initializing Plex transcode session...');
+      const initResponse = await fetch(session.streamUrl, {
+        headers: {
+          'Accept': '*/*',
+          'X-Plex-Client-Identifier': config.plex.clientIdentifier,
+          'X-Plex-Product': 'Plex Web',
+          'X-Plex-Version': '4.0',
+          'X-Plex-Platform': 'Chrome',
+          'X-Plex-Device': 'Linux',
+        }
+      });
+      
+      if (!initResponse.ok) {
+        throw new Error(`Failed to initialize Plex session: ${initResponse.status} ${initResponse.statusText}`);
+      }
+      
+      const m3u8Content = await initResponse.text();
+      console.log('[VideoStreamer] Session initialized, m3u8:', m3u8Content.substring(0, 200));
+      
+      // Extract the actual stream URL from m3u8 (it's relative)
+      const lines = m3u8Content.split('\n');
+      const streamPath = lines.find(l => l.endsWith('.m3u8') && !l.startsWith('#'));
+      
+      let actualStreamUrl = session.streamUrl;
+      if (streamPath) {
+        // Convert relative path to absolute URL
+        const baseUrl = session.streamUrl.split('?')[0].replace('/start.m3u8', '');
+        actualStreamUrl = `${config.plex.url}/video/:/transcode/universal/${streamPath}?X-Plex-Token=${config.plex.token}`;
+        console.log('[VideoStreamer] Using stream URL:', actualStreamUrl.substring(0, 100) + '...');
+      }
+
+      // Build headers string for FFmpeg
       const headers = [
-        'Accept: application/json',
+        'Accept: */*',
         'X-Plex-Client-Identifier: ' + config.plex.clientIdentifier,
         'X-Plex-Product: Plex Web',
         'X-Plex-Version: 4.0',
         'X-Plex-Platform: Chrome',
         'X-Plex-Device: Linux',
-        'X-Plex-Token: ' + config.plex.token,
       ].join('\r\n') + '\r\n';
 
       const ffmpegArgs = [
@@ -102,7 +133,7 @@ class VideoStreamer {
       }
 
       ffmpegArgs.push(
-        '-i', session.streamUrl,
+        '-i', actualStreamUrl,
         // Video output
         '-c:v', 'libx264',
         '-preset', 'veryfast',
