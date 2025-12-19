@@ -56,18 +56,74 @@ PREFIX=!
 
 ### Getting Your Discord Token
 
-1. Open Discord in browser
-2. Press F12 to open Developer Tools
-3. Go to Network tab
-4. Type a message in any channel
-5. Look for a request and find the `Authorization` header
+> ⚠️ **Never share your token with anyone.** It grants full access to your account.
+
+#### Method 1: Browser Developer Tools (Recommended)
+
+1. Open [Discord Web](https://discord.com/app) in your browser
+2. Press `F12` (or `Cmd+Option+I` on Mac) to open Developer Tools
+3. Go to the **Network** tab
+4. In the filter box, type `api`
+5. Send a message in any channel or perform any action
+6. Click on any request (e.g., `messages`, `science`, etc.)
+7. In the **Headers** tab, scroll down to find `authorization`
+8. Copy the token value (it looks like `mfa.xxxxx` or `NzkyNTg...`)
+
+#### Method 2: Console Command
+
+1. Open Discord in browser and press `F12`
+2. Go to the **Console** tab
+3. Paste and run:
+   ```js
+   (webpackChunkdiscord_app.push([[''],{},e=>{m=[];for(let c in e.c)m.push(e.c[c])}]),m).find(m=>m?.exports?.default?.getToken).exports.default.getToken()
+   ```
+4. Copy the returned token string
+
+#### Method 3: Discord Desktop App
+
+1. Open Discord desktop app
+2. Press `Ctrl+Shift+I` (or `Cmd+Option+I` on Mac)
+3. Go to **Console** tab and run the same script as Method 2
 
 ### Getting Your Plex Token
 
-1. Sign in to Plex Web App
-2. Browse to any media item
-3. Click the three dots → "Get Info" → "View XML"
-4. Find `X-Plex-Token=` in the URL
+#### Method 1: Via Plex Web App URL
+
+1. Sign in to [Plex Web App](https://app.plex.tv)
+2. Navigate to any media item in your library
+3. Click the **⋮** (three dots) menu → **Get Info**
+4. Click **View XML** at the bottom of the info panel
+5. A new tab opens with XML data - look at the URL
+6. Find `X-Plex-Token=YOUR_TOKEN_HERE` in the URL
+7. Copy just the token value
+
+#### Method 2: Via Plex Account Page
+
+1. Go to [plex.tv/devices.xml](https://plex.tv/devices.xml) while logged in
+2. The page will show XML with your devices
+3. Find `token="YOUR_TOKEN"` attribute
+4. Copy the token value
+
+#### Method 3: Via Browser Developer Tools
+
+1. Open [Plex Web App](https://app.plex.tv)
+2. Press `F12` to open Developer Tools
+3. Go to **Application** tab (Chrome) or **Storage** tab (Firefox)
+4. Expand **Local Storage** → click on `https://app.plex.tv`
+5. Find the key `myPlexAccessToken`
+6. Copy the token value
+
+#### Method 4: Via Command Line (macOS/Linux)
+
+If you've signed into Plex on this machine:
+
+```bash
+# macOS
+cat ~/Library/Application\ Support/Plex\ Media\ Server/Preferences.xml | grep -o 'PlexOnlineToken="[^"]*"'
+
+# Linux
+cat /var/lib/plexmediaserver/Library/Application\ Support/Plex\ Media\ Server/Preferences.xml | grep -o 'PlexOnlineToken="[^"]*"'
+```
 
 ## Usage
 
