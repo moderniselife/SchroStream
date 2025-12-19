@@ -520,6 +520,12 @@ async function handleSeek(interaction: ChatInputCommandInteraction): Promise<voi
   }
   
   const timeMs = parseTimeString(timeStr);
+  
+  if (timeMs === null) {
+    await interaction.reply({ content: '❌ Invalid time format. Use `HH:MM:SS`, `MM:SS`, or seconds', ephemeral: true });
+    return;
+  }
+  
   const success = await videoStreamer.seekStream(guildId, timeMs);
 
   if (success) {
