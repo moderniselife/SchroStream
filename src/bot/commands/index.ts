@@ -15,6 +15,7 @@ import { queueCommand } from './queue.js';
 import { ffwdCommand, rewindCommand } from './ffwd.js';
 import { youtubeCommand } from './youtube.js';
 import { urlCommand } from './url.js';
+import { ytSearchCommand, ytPlayCommand } from './ytsearch.js';
 
 export type CommandHandler = (message: Message, args: string[]) => Promise<void>;
 
@@ -59,6 +60,10 @@ const commands: Record<string, CommandHandler> = {
   url: urlCommand,
   stream: urlCommand,
   m3u8: urlCommand,
+  yts: ytSearchCommand,
+  ytsearch: ytSearchCommand,
+  ytp: ytPlayCommand,
+  ytplay: ytPlayCommand,
 };
 
 export async function handleCommand(
