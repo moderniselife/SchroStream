@@ -1,6 +1,6 @@
 import { startBot } from './bot/client.js';
 import plexClient from './plex/client.js';
-import { getVideoStreamer } from './stream/video-streamer.js';
+import { getVideoStreamer, leaveAllVoiceChannels } from './stream/video-streamer.js';
 import config from './config.js';
 
 async function main(): Promise<void> {
@@ -40,13 +40,20 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`\n[Shutdown] Received ${signal}, cleaning up...`);
   
   try {
+    // Leave all voice channels first
+    leaveAllVoiceChannels();
+    
     // Stop any active streams
-    const streamer = getVideoStreamer();
-    if (streamer) {
-      const sessions = streamer.getAllSessions();
-      for (const guildId of sessions) {
-        await streamer.stopStream(guildId);
+    try {
+      const streamer = getVideoStreamer();
+      if (streamer) {
+        const sessions = streamer.getAllSessions();
+        for (const guildId of sessions) {
+          await streamer.stopStream(guildId);
+        }
       }
+    } catch {
+      // Streamer might not be initialized
     }
     
     // Clean up Plex sessions

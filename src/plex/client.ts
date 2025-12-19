@@ -95,6 +95,21 @@ export class PlexClient {
     }));
   }
 
+  async getLibraryItems(libraryKey: string): Promise<PlexMediaItem[]> {
+    try {
+      const response = await this.request<any>(`/library/sections/${libraryKey}/all`);
+      const container = response.MediaContainer;
+      
+      if (!container?.Metadata) return [];
+      
+      const items = Array.isArray(container.Metadata) ? container.Metadata : [container.Metadata];
+      return items.map((item: any) => this.parseMediaItem(item));
+    } catch (error) {
+      console.error('[Plex] Error getting library items:', error);
+      return [];
+    }
+  }
+
   async search(query: string): Promise<PlexMediaItem[]> {
     let results: PlexMediaItem[] = [];
 
@@ -310,24 +325,51 @@ export class PlexClient {
 
   async stopTranscodeSession(sessionId?: string): Promise<boolean> {
     try {
-      const params = new URLSearchParams({
+      // First, get active sessions to find the Plex session ID
+      const sessionsUrl = `${this.baseUrl}/status/sessions?X-Plex-Token=${this.token}`;
+      const sessionsResponse = await fetch(sessionsUrl, {
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      if (sessionsResponse.ok) {
+        const data = await sessionsResponse.json() as any;
+        const sessions = data?.MediaContainer?.Metadata || [];
+        
+        // Find sessions from SchroStream
+        for (const session of sessions) {
+          const plexSessionId = session.Session?.id;
+          if (plexSessionId) {
+            const params = new URLSearchParams({
+              'sessionId': plexSessionId,
+              'reason': 'SchroStream cleanup',
+              'X-Plex-Token': this.token,
+            });
+            
+            const terminateUrl = `${this.baseUrl}/status/sessions/terminate?${params.toString()}`;
+            const response = await fetch(terminateUrl);
+            console.log('[Plex] Terminated Plex session', plexSessionId, response.ok ? '✓' : `(${response.status})`);
+          }
+        }
+      }
+      
+      // Also try the transcode stop endpoint as fallback
+      const stopParams = new URLSearchParams({
         'X-Plex-Token': this.token,
       });
       if (sessionId) {
-        params.set('session', sessionId);
+        stopParams.set('session', sessionId);
       }
+      const stopUrl = `${this.baseUrl}/video/:/transcode/universal/stop?${stopParams.toString()}`;
+      await fetch(stopUrl);
       
-      const url = `${this.baseUrl}/video/:/transcode/universal/stop?${params.toString()}`;
-      const response = await fetch(url, { method: 'GET' });
-      console.log('[Plex] Stopped transcode session', sessionId || '(all)', response.ok ? '✓' : `(${response.status})`);
-      
-      // Only untrack AFTER successful stop
-      if (sessionId && response.ok) {
+      // Untrack our session
+      if (sessionId) {
         untrackSession(sessionId);
       }
-      return response.ok;
+      
+      return true;
     } catch (error) {
-      console.error('[Plex] Failed to stop transcode session:', sessionId, error);
+      console.error('[Plex] Failed to terminate session:', sessionId, error);
       return false;
     }
   }
@@ -362,6 +404,8 @@ export class PlexClient {
       addedAt: item.addedAt ? parseInt(String(item.addedAt), 10) : undefined,
       parentTitle: item.parentTitle,
       grandparentTitle: item.grandparentTitle,
+      parentRatingKey: item.parentRatingKey ? String(item.parentRatingKey) : undefined,
+      grandparentRatingKey: item.grandparentRatingKey ? String(item.grandparentRatingKey) : undefined,
       index: item.index ? parseInt(String(item.index), 10) : undefined,
       parentIndex: item.parentIndex ? parseInt(String(item.parentIndex), 10) : undefined,
     };

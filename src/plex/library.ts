@@ -28,23 +28,40 @@ export async function getNextEpisode(
     return null;
   }
 
-  const showKey = currentEpisode.grandparentTitle
-    ? currentEpisode.key.split('/')[3]
-    : null;
+  // Use grandparentRatingKey (the show's rating key)
+  const showKey = currentEpisode.grandparentRatingKey;
+  
+  if (!showKey) {
+    console.log('[Skip] No grandparentRatingKey found for episode');
+    return null;
+  }
 
-  if (!showKey) return null;
-
+  console.log(`[Skip] Looking for next episode after S${currentEpisode.parentIndex}E${currentEpisode.index} in show ${showKey}`);
+  
   const episodes = await plexClient.getEpisodes(showKey);
+  console.log(`[Skip] Found ${episodes.length} episodes in show`);
+
+  // Sort episodes by season and episode number
+  episodes.sort((a, b) => {
+    const seasonDiff = (a.parentIndex || 0) - (b.parentIndex || 0);
+    if (seasonDiff !== 0) return seasonDiff;
+    return (a.index || 0) - (b.index || 0);
+  });
 
   const currentIndex = episodes.findIndex(
     (ep) => ep.ratingKey === currentEpisode.ratingKey
   );
 
+  console.log(`[Skip] Current episode index: ${currentIndex}, total: ${episodes.length}`);
+
   if (currentIndex === -1 || currentIndex >= episodes.length - 1) {
     return null;
   }
 
-  return episodes[currentIndex + 1];
+  const nextEp = episodes[currentIndex + 1];
+  console.log(`[Skip] Next episode: S${nextEp.parentIndex}E${nextEp.index} - ${nextEp.title}`);
+  
+  return nextEp;
 }
 
 export function formatDuration(ms: number): string {

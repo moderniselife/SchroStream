@@ -502,4 +502,16 @@ export function getVideoStreamer(): VideoStreamer {
   return videoStreamerInstance;
 }
 
+export function leaveAllVoiceChannels(): void {
+  if (videoStreamerInstance) {
+    try {
+      videoStreamerInstance.streamer.stopStream();
+      videoStreamerInstance.streamer.leaveVoice();
+      console.log('[VideoStreamer] Left all voice channels');
+    } catch {
+      // Ignore errors
+    }
+  }
+}
+
 export default VideoStreamer;
