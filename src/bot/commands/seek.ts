@@ -1,8 +1,6 @@
 import type { Message } from 'discord.js-selfbot-v13';
-import { createAudioResource } from '@discordjs/voice';
-import streamManager from '../../stream/manager.js';
+import { getVideoStreamer } from '../../stream/video-streamer.js';
 import { parseTimeString, formatDuration } from '../../plex/library.js';
-import { audioPlayers } from './play.js';
 
 export async function seekCommand(message: Message, args: string[]): Promise<void> {
   if (!message.guild) {
@@ -17,9 +15,10 @@ export async function seekCommand(message: Message, args: string[]): Promise<voi
   }
 
   const guildId = message.guild.id;
-  const state = streamManager.getState(guildId);
+  const videoStreamer = getVideoStreamer();
+  const session = videoStreamer.getSession(guildId);
 
-  if (!state) {
+  if (!session) {
     await message.edit('❌ Nothing is currently playing');
     return;
   }
@@ -31,20 +30,11 @@ export async function seekCommand(message: Message, args: string[]): Promise<voi
     return;
   }
 
-  const player = audioPlayers.get(guildId);
-
-  if (!player) {
-    await message.edit('❌ No active audio player');
-    return;
-  }
-
   await message.edit(`⏩ Seeking to ${formatDuration(timeMs)}...`);
 
-  const result = await streamManager.seek(guildId, timeMs);
+  const success = await videoStreamer.seekStream(guildId, timeMs);
 
-  if (result) {
-    const resource = createAudioResource(result.stream as any);
-    player.play(resource);
+  if (success) {
     await message.edit(`⏩ Seeked to ${formatDuration(timeMs)}`);
   } else {
     await message.edit('❌ Failed to seek');

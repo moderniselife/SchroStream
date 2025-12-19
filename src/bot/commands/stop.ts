@@ -1,6 +1,5 @@
 import type { Message } from 'discord.js-selfbot-v13';
-import { cleanup } from './play.js';
-import streamManager from '../../stream/manager.js';
+import { getVideoStreamer } from '../../stream/video-streamer.js';
 
 export async function stopCommand(message: Message, _args: string[]): Promise<void> {
   if (!message.guild) {
@@ -9,13 +8,14 @@ export async function stopCommand(message: Message, _args: string[]): Promise<vo
   }
 
   const guildId = message.guild.id;
-  const state = streamManager.getState(guildId);
+  const videoStreamer = getVideoStreamer();
+  const session = videoStreamer.getSession(guildId);
 
-  if (!state) {
+  if (!session) {
     await message.edit('❌ Nothing is currently playing');
     return;
   }
 
-  cleanup(guildId);
+  await videoStreamer.stopStream(guildId);
   await message.edit('⏹️ Playback stopped');
 }

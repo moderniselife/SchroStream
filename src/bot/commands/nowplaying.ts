@@ -1,5 +1,5 @@
 import type { Message } from 'discord.js-selfbot-v13';
-import streamManager from '../../stream/manager.js';
+import { getVideoStreamer } from '../../stream/video-streamer.js';
 import { formatDuration } from '../../plex/library.js';
 
 export async function nowPlayingCommand(message: Message, _args: string[]): Promise<void> {
@@ -9,27 +9,28 @@ export async function nowPlayingCommand(message: Message, _args: string[]): Prom
   }
 
   const guildId = message.guild.id;
-  const state = streamManager.getState(guildId);
+  const videoStreamer = getVideoStreamer();
+  const session = videoStreamer.getSession(guildId);
 
-  if (!state) {
+  if (!session) {
     await message.edit('❌ Nothing is currently playing');
     return;
   }
 
-  const { current, total, percentage } = streamManager.getProgress(guildId);
+  const { current, total, percentage } = videoStreamer.getProgress(guildId);
 
-  let title = state.mediaItem.title;
-  if (state.mediaItem.type === 'episode' && state.mediaItem.grandparentTitle) {
-    const season = state.mediaItem.parentIndex
-      ? `S${String(state.mediaItem.parentIndex).padStart(2, '0')}`
+  let title = session.mediaItem.title;
+  if (session.mediaItem.type === 'episode' && session.mediaItem.grandparentTitle) {
+    const season = session.mediaItem.parentIndex
+      ? `S${String(session.mediaItem.parentIndex).padStart(2, '0')}`
       : '';
-    const episode = state.mediaItem.index
-      ? `E${String(state.mediaItem.index).padStart(2, '0')}`
+    const episode = session.mediaItem.index
+      ? `E${String(session.mediaItem.index).padStart(2, '0')}`
       : '';
-    title = `${state.mediaItem.grandparentTitle} ${season}${episode} - ${state.mediaItem.title}`;
+    title = `${session.mediaItem.grandparentTitle} ${season}${episode} - ${session.mediaItem.title}`;
   }
 
-  const status = state.isPaused ? '⏸️ Paused' : '▶️ Playing';
+  const status = session.isPaused ? '⏸️ Paused' : '📺 Streaming (Go Live)';
   const progress = `${formatDuration(current)} / ${formatDuration(total)}`;
   const progressBar = createProgressBar(percentage);
 
@@ -41,8 +42,8 @@ export async function nowPlayingCommand(message: Message, _args: string[]): Prom
     `⏱️ ${progress} (${percentage.toFixed(1)}%)`,
   ];
 
-  if (state.mediaItem.year) {
-    info.push(`📅 ${state.mediaItem.year}`);
+  if (session.mediaItem.year) {
+    info.push(`📅 ${session.mediaItem.year}`);
   }
 
   await message.edit(info.join('\n'));

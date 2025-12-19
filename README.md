@@ -6,8 +6,8 @@ Discord self-bot for streaming Plex content to voice channels.
 
 ## Features
 
+- **Video Streaming** - Stream movies and TV shows via Discord Go Live
 - **Search** - Find movies and TV shows from your Plex library
-- **Stream** - Play media audio to Discord voice channels
 - **Playback Controls** - Pause, resume, seek, stop
 - **Episode Navigation** - Skip to next episode for TV shows
 - **Now Playing** - View current playback status with progress bar
@@ -191,11 +191,21 @@ src/
 └── stream/           # FFmpeg transcoding & playback
 ```
 
+## Technical Details
+
+### Video Streaming
+SchroStream uses `@dank074/discord-video-stream` to enable full video streaming via Discord's Go Live feature. Videos are transcoded in real-time using FFmpeg to H.264 video + Opus audio.
+
+### Stream Quality Settings
+- **DEFAULT_QUALITY** - Video height (480, 720, 1080)
+- **MAX_BITRATE** - Video bitrate in kbps (recommended: 4000-8000)
+- **AUDIO_BITRATE** - Audio bitrate in kbps (recommended: 128-192)
+
 ## Limitations
 
-- **Audio only** - Video streaming to Discord Go Live requires additional implementation
-- **Single stream per server** - One active playback per Discord guild
+- **Single stream per server** - One active Go Live per Discord guild
 - **Self-bot risks** - Account may be banned by Discord
+- **Network bandwidth** - Requires good upload speed for high quality streams
 
 ## License
 

@@ -1,6 +1,7 @@
 import { Client } from 'discord.js-selfbot-v13';
 import config from '../config.js';
 import { handleCommand } from './commands/index.js';
+import { initVideoStreamer } from '../stream/video-streamer.js';
 
 export const client = new Client({
   checkUpdate: false,
@@ -9,6 +10,9 @@ export const client = new Client({
 client.on('ready', async () => {
   console.log(`[SchroStream] Logged in as ${client.user?.tag}`);
   console.log(`[SchroStream] Prefix: ${config.discord.prefix}`);
+  console.log(`[SchroStream] Video streaming enabled (Go Live)`);
+  
+  initVideoStreamer(client);
 });
 
 client.on('messageCreate', async (message) => {

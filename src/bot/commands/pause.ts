@@ -1,9 +1,5 @@
 import type { Message } from 'discord.js-selfbot-v13';
-import {
-  createAudioResource,
-} from '@discordjs/voice';
-import streamManager from '../../stream/manager.js';
-import { audioPlayers, voiceConnections } from './play.js';
+import { getVideoStreamer } from '../../stream/video-streamer.js';
 
 export async function pauseCommand(message: Message, _args: string[]): Promise<void> {
   if (!message.guild) {
@@ -12,33 +8,27 @@ export async function pauseCommand(message: Message, _args: string[]): Promise<v
   }
 
   const guildId = message.guild.id;
-  const state = streamManager.getState(guildId);
+  const videoStreamer = getVideoStreamer();
+  const session = videoStreamer.getSession(guildId);
 
-  if (!state) {
+  if (!session) {
     await message.edit('❌ Nothing is currently playing');
     return;
   }
 
-  const player = audioPlayers.get(guildId);
-  const connection = voiceConnections.get(guildId);
-
-  if (!player || !connection) {
-    await message.edit('❌ No active audio player');
-    return;
-  }
-
-  if (state.isPaused) {
-    const result = await streamManager.resume(guildId);
-    if (result) {
-      const resource = createAudioResource(result.stream as any);
-      player.play(resource);
+  if (session.isPaused) {
+    const success = await videoStreamer.resumeStream(guildId);
+    if (success) {
       await message.edit('▶️ Playback resumed');
     } else {
       await message.edit('❌ Failed to resume playback');
     }
   } else {
-    player.pause();
-    await streamManager.pause(guildId);
-    await message.edit('⏸️ Playback paused');
+    const success = await videoStreamer.pauseStream(guildId);
+    if (success) {
+      await message.edit('⏸️ Playback paused');
+    } else {
+      await message.edit('❌ Failed to pause playback');
+    }
   }
 }

@@ -1,19 +1,9 @@
 import type { Message } from 'discord.js-selfbot-v13';
-import {
-  joinVoiceChannel,
-  createAudioPlayer,
-  createAudioResource,
-  AudioPlayerStatus,
-  VoiceConnectionStatus,
-  entersState,
-} from '@discordjs/voice';
 import { getSearchResult, clearSearchSession } from '../../plex/search.js';
-import streamManager from '../../stream/manager.js';
+import { getVideoStreamer } from '../../stream/video-streamer.js';
 import { formatDuration } from '../../plex/library.js';
 import plexClient from '../../plex/client.js';
-
-const audioPlayers = new Map<string, ReturnType<typeof createAudioPlayer>>();
-const voiceConnections = new Map<string, ReturnType<typeof joinVoiceChannel>>();
+import type { PlexMediaItem } from '../../types/index.js';
 
 export async function playCommand(message: Message, args: string[]): Promise<void> {
   if (!message.guild) {
@@ -54,9 +44,9 @@ export async function playCommand(message: Message, args: string[]): Promise<voi
       }
 
       const firstEpisode = episodes[0];
-      await startStream(message, voiceChannel.id, firstEpisode);
+      await startVideoStream(message, voiceChannel.id, firstEpisode);
     } else {
-      await startStream(message, voiceChannel.id, mediaItem);
+      await startVideoStream(message, voiceChannel.id, mediaItem);
     }
 
     clearSearchSession(message.author.id);
@@ -66,49 +56,18 @@ export async function playCommand(message: Message, args: string[]): Promise<voi
   }
 }
 
-async function startStream(
+async function startVideoStream(
   message: Message,
   channelId: string,
-  mediaItem: { ratingKey: string; title: string; duration?: number; type: string; grandparentTitle?: string; parentIndex?: number; index?: number }
+  mediaItem: PlexMediaItem
 ): Promise<void> {
   const guildId = message.guild!.id;
+  const videoStreamer = getVideoStreamer();
 
-  const connection = joinVoiceChannel({
-    channelId,
-    guildId,
-    adapterCreator: message.guild!.voiceAdapterCreator as any,
-    selfDeaf: false,
-    selfMute: false,
-  });
-
-  voiceConnections.set(guildId, connection);
-
-  try {
-    await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
-  } catch {
-    connection.destroy();
-    voiceConnections.delete(guildId);
-    throw new Error('Failed to connect to voice channel');
+  const streamInfo = await plexClient.getDirectStreamUrl(mediaItem.ratingKey);
+  if (!streamInfo) {
+    throw new Error('Could not get stream URL for media');
   }
-
-  const { stream } = await streamManager.play(guildId, channelId, mediaItem as any);
-
-  const audioPlayer = createAudioPlayer();
-  audioPlayers.set(guildId, audioPlayer);
-
-  const resource = createAudioResource(stream as any);
-  audioPlayer.play(resource);
-  connection.subscribe(audioPlayer);
-
-  audioPlayer.on(AudioPlayerStatus.Idle, () => {
-    console.log('[Player] Playback finished');
-    cleanup(guildId);
-  });
-
-  audioPlayer.on('error', (error) => {
-    console.error('[Player] Error:', error);
-    cleanup(guildId);
-  });
 
   let title = mediaItem.title;
   if (mediaItem.type === 'episode' && mediaItem.grandparentTitle) {
@@ -118,23 +77,22 @@ async function startStream(
   }
 
   const duration = mediaItem.duration ? formatDuration(mediaItem.duration) : 'Unknown';
-  await message.edit(`▶️ **Now Playing:** ${title}\n⏱️ Duration: ${duration}`);
+  
+  await message.edit(`📺 **Starting Go Live:** ${title}\n⏱️ Duration: ${duration}\n\n*Connecting to voice channel...*`);
+
+  videoStreamer.startStream(
+    guildId,
+    channelId,
+    mediaItem,
+    streamInfo.url,
+    0
+  ).catch((err) => {
+    console.error('[Play] Stream error:', err);
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  
+  await message.edit(`📺 **Now Streaming (Go Live):** ${title}\n⏱️ Duration: ${duration}`);
 }
 
-function cleanup(guildId: string): void {
-  const player = audioPlayers.get(guildId);
-  if (player) {
-    player.stop();
-    audioPlayers.delete(guildId);
-  }
-
-  const connection = voiceConnections.get(guildId);
-  if (connection) {
-    connection.destroy();
-    voiceConnections.delete(guildId);
-  }
-
-  streamManager.stop(guildId);
-}
-
-export { audioPlayers, voiceConnections, cleanup };
+export { startVideoStream };
