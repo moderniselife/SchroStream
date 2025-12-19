@@ -300,12 +300,12 @@ async function startPlayback(
   mediaItem: PlexMediaItem,
   episodeStr?: string | null
 ): Promise<void> {
-  // Get voice channel from interaction member (provided by Discord)
-  const member = interaction.member as any;
-  const voiceChannel = member?.voice?.channel;
+  // Get voice channel from guild's voice states (works with GuildVoiceStates intent)
+  const voiceState = interaction.guild?.voiceStates.cache.get(interaction.user.id);
+  const voiceChannel = voiceState?.channel;
 
   if (!voiceChannel) {
-    await interaction.editReply('❌ You must be in a voice channel');
+    await interaction.editReply('❌ You must be in a voice channel (make sure bot can see your voice state)');
     return;
   }
 
@@ -562,8 +562,8 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
   const url = interaction.options.getString('url', true);
   await interaction.deferReply();
 
-  const member = interaction.member as any;
-  const voiceChannel = member?.voice?.channel;
+  const voiceState = interaction.guild?.voiceStates.cache.get(interaction.user.id);
+  const voiceChannel = voiceState?.channel;
 
   if (!voiceChannel) {
     await interaction.editReply('❌ You must be in a voice channel');
@@ -651,8 +651,8 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
   const url = interaction.options.getString('url', true);
   const title = interaction.options.getString('title') || 'External Stream';
 
-  const member = interaction.member as any;
-  const voiceChannel = member?.voice.channel;
+  const voiceState = interaction.guild?.voiceStates.cache.get(interaction.user.id);
+  const voiceChannel = voiceState?.channel;
 
   if (!voiceChannel) {
     await interaction.reply({ content: '❌ You must be in a voice channel', ephemeral: true });
