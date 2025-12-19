@@ -1,32 +1,27 @@
-# Ubuntu base with Bun and FFmpeg
-FROM ubuntu:24.04
+# Node.js base with FFmpeg (Bun has zeromq/libuv compatibility issues)
+FROM node:20-bookworm-slim
 
-# Install dependencies
+# Install FFmpeg
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    unzip \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install Bun
-RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:${PATH}"
+# Install tsx globally for running TypeScript
+RUN npm install -g tsx
 
 WORKDIR /app
 
 # Copy package files
-COPY package.json bun.lock ./
+COPY package.json package-lock.json* ./
 
-# Install dependencies
-RUN bun install --frozen-lockfile --production
+# Install dependencies with npm
+RUN npm install --production=false
 
 # Copy source
 COPY . .
 
 # Build TypeScript
-RUN bun run build
+RUN npm run build
 
 # Create data directory
 RUN mkdir -p /app/data
@@ -38,4 +33,4 @@ ENV NODE_ENV=production
 VOLUME ["/app/data"]
 
 # Run the app
-CMD ["bun", "start"]
+CMD ["npm", "start"]
