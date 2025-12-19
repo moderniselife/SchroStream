@@ -38,7 +38,12 @@ async function main(): Promise<void> {
   // Start controller bot if configured
   if (config.discord.botToken) {
     console.log('[Startup] Starting controller bot...');
-    await initControllerBot();
+    try {
+      await initControllerBot();
+    } catch (error) {
+      console.error('[Startup] ❌ Controller bot failed to start:', error instanceof Error ? error.message : error);
+      console.log('[Startup] Selfbot will continue without controller bot');
+    }
   } else {
     console.log('[Startup] No BOT_TOKEN configured, skipping controller bot');
     console.log('[Startup] Add BOT_TOKEN and BOT_CLIENT_ID to enable slash commands');
