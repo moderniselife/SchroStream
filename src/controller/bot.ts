@@ -286,8 +286,8 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
   });
 
   // Separate movies and TV shows
-  const movies = results.filter(item => item.type === 'movie').slice(0, 5);
-  const shows = results.filter(item => item.type === 'show').slice(0, 5);
+  const movies = results.filter(item => item.type === 'movie');
+  const shows = results.filter(item => item.type === 'show');
   
   let description = '';
   
@@ -316,15 +316,19 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
     .setTitle(`🔍 Search: "${query}"`)
     .setColor(0xe5a00d)
     .setDescription(description || 'No results found')
-    .setFooter({ text: 'Select a result below or use /play <number>' });
+    .setFooter({ 
+  text: allResults.length > 25 
+    ? `Showing ${allResults.length} results (select menu limited to 25). Use /play <number> for all results.`
+    : 'Select a result below or use /play <number>'
+});
 
-  // Build select menu with proper numbering
+  // Build select menu with proper numbering (Discord limit is 25 options)
   const allResults = [...movies, ...shows];
   const selectMenu = new StringSelectMenuBuilder()
     .setCustomId('search_select')
     .setPlaceholder('Select media to play...')
     .addOptions(
-      allResults.map((item, i) => {
+      allResults.slice(0, 25).map((item, i) => {
         const actualIndex = results.indexOf(item);
         const description = item.type === 'show' 
           ? `TV Show${item.year ? ` (${item.year})` : ''}${item.childCount ? ` • ${item.childCount} Seasons` : ''}`
