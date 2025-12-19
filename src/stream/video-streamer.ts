@@ -1,7 +1,7 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
 import { Client } from 'discord.js-selfbot-v13';
 import { spawn } from 'child_process';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { PlexMediaItem } from '../types/index.js';
 import config from '../config.js';
@@ -53,12 +53,13 @@ function persistPlaybackHistory(): void {
     // Ensure data directory exists
     const dataDir = join(process.cwd(), 'data');
     if (!existsSync(dataDir)) {
-      const { mkdirSync } = require('fs');
       mkdirSync(dataDir, { recursive: true });
+      console.log('[PlaybackHistory] Created data directory');
     }
     
     const obj = Object.fromEntries(playbackHistory);
     writeFileSync(HISTORY_FILE, JSON.stringify(obj, null, 2));
+    console.log(`[PlaybackHistory] Saved ${playbackHistory.size} entries to disk`);
   } catch (error) {
     console.error('[PlaybackHistory] Failed to save:', error);
   }
