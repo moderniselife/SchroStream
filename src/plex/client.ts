@@ -205,11 +205,14 @@ export class PlexClient {
     }
 
     const data = await response.json() as any;
-    const items = data?.MediaContainer?.Metadata || [];
+    const searchResults = data?.MediaContainer?.SearchResult || [];
+    
+    // Extract metadata from SearchResult array
+    const items = searchResults
+      .map((result: any) => result.Metadata)
+      .filter((item: any) => item && ['movie', 'show', 'episode'].includes(item.type));
 
-    return items
-      .filter((item: any) => ['movie', 'show', 'episode'].includes(item.type))
-      .map((item: any) => this.parseMediaItem(item));
+    return items.map((item: any) => this.parseMediaItem(item));
   }
 
   async getMetadata(ratingKey: string): Promise<PlexMediaItem | null> {
