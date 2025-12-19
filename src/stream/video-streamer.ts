@@ -312,7 +312,20 @@ class VideoStreamer {
     const width = Math.round(height * (16 / 9));
 
     try {
-      console.log('[VideoStreamer] Stream URL:', session.streamUrl.substring(0, 100) + '...');
+      // Always get a fresh stream URL to avoid stale session IDs
+      console.log('[VideoStreamer] Getting fresh stream URL...');
+      const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+      if (!freshStreamInfo) {
+        throw new Error('Failed to get stream URL from Plex');
+      }
+      
+      // Update session with fresh URL and extract session ID
+      session.streamUrl = freshStreamInfo.url;
+      const urlObj = new URL(freshStreamInfo.url);
+      session.sessionId = urlObj.searchParams.get('X-Plex-Session-Identifier') || 
+                        urlObj.searchParams.get('session') || undefined;
+      
+      console.log('[VideoStreamer] Fresh Stream URL:', session.streamUrl.substring(0, 100) + '...');
 
       // Stop any existing transcode sessions first to avoid 400 errors
       console.log('[VideoStreamer] Stopping existing transcode sessions...');
