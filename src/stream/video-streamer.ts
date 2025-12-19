@@ -26,6 +26,7 @@ export interface VideoStreamSession {
   ffmpegCommand: any | null;
   userId?: string;
   isExternal?: boolean; // Flag for external streams (YouTube, URLs)
+  audioUrl?: string; // Separate audio URL for YouTube streams
 }
 
 // Store playback positions for resume functionality (ratingKey -> position in ms)
@@ -159,7 +160,8 @@ class VideoStreamer {
     channelId: string,
     mediaItem: PlexMediaItem,
     streamUrl: string,
-    userId?: string
+    userId?: string,
+    audioUrl?: string | null
   ): Promise<void> {
     await this.stopStream(guildId);
 
@@ -180,6 +182,7 @@ class VideoStreamer {
       ffmpegCommand: null,
       userId,
       isExternal: true,
+      audioUrl: audioUrl || undefined,
     };
 
     this.sessions.set(guildId, session);
@@ -193,18 +196,36 @@ class VideoStreamer {
 
     try {
       console.log('[VideoStreamer] External stream URL:', session.streamUrl.substring(0, 100) + '...');
+      if (session.audioUrl) {
+        console.log('[VideoStreamer] Separate audio URL:', session.audioUrl.substring(0, 100) + '...');
+      }
 
       const volumeMultiplier = (session.volume / 100).toFixed(2);
 
-      const ffmpegArgs = [
+      // Build FFmpeg args - handle separate audio stream for YouTube
+      const ffmpegArgs: string[] = [
         '-hide_banner',
         '-loglevel', 'error',
         '-reconnect', '1',
         '-reconnect_streamed', '1',
         '-reconnect_delay_max', '5',
         '-i', session.streamUrl,
+      ];
+
+      // Add separate audio input if provided (YouTube separates video/audio)
+      if (session.audioUrl) {
+        ffmpegArgs.push(
+          '-reconnect', '1',
+          '-reconnect_streamed', '1',
+          '-reconnect_delay_max', '5',
+          '-i', session.audioUrl
+        );
+      }
+
+      // Map video from first input, audio from second (or first if no separate audio)
+      ffmpegArgs.push(
         '-map', '0:v:0?',
-        '-map', '0:a:0?',
+        '-map', session.audioUrl ? '1:a:0?' : '0:a:0?',
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
@@ -222,7 +243,7 @@ class VideoStreamer {
         '-af', `volume=${volumeMultiplier}`,
         '-f', 'matroska',
         '-'
-      ];
+      );
 
       console.log('[VideoStreamer] Starting FFmpeg for external stream...');
       const ffmpeg = spawn('ffmpeg', ffmpegArgs);
