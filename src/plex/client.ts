@@ -387,54 +387,64 @@ export class PlexClient {
       
       if (!sessionsResponse.ok) {
         console.warn('[Plex] Failed to get active sessions:', sessionsResponse.status);
-        return false;
-      }
-      
-      const data = await sessionsResponse.json() as any;
-      const sessions = data?.MediaContainer?.Metadata || [];
-      console.log(`[Plex] Found ${sessions.length} active transcode sessions`);
-      
-      let stoppedAny = false;
-      
-      // Find sessions from the specific user
-      for (const session of sessions) {
-        const plexSessionId = session.Session?.id;
-        const sessionUser = session.User?.title;
+      } else {
+        const data = await sessionsResponse.json() as any;
+        const sessions = data?.MediaContainer?.Metadata || [];
+        console.log(`[Plex] Found ${sessions.length} active transcode sessions`);
         
-        console.log(`[Plex] Session user: ${sessionUser}, target: ${targetUsername}`);
-        
-        // If no target username set, stop all sessions (cleanup mode)
-        // Otherwise, only stop sessions for the target user
-        if (plexSessionId && (!targetUsername || sessionUser === targetUsername)) {
-          const params = new URLSearchParams({
-            'sessionId': plexSessionId,
-            'reason': 'SchroStream cleanup',
-            'X-Plex-Token': this.token,
-          });
+        // Find sessions from the specific user
+        for (const session of sessions) {
+          const plexSessionId = session.Session?.id;
+          const sessionUser = session.User?.title;
           
-          const terminateUrl = `${this.baseUrl}/status/sessions/terminate?${params.toString()}`;
-          const response = await fetch(terminateUrl);
-          console.log(`[Plex] Terminated Plex session for ${sessionUser}`, plexSessionId, response.ok ? '✓' : `(${response.status})`);
-          stoppedAny = true;
+          console.log(`[Plex] Session user: ${sessionUser}, target: ${targetUsername}`);
+          
+          // If no target username set, stop all sessions (cleanup mode)
+          // Otherwise, only stop sessions for the target user
+          if (plexSessionId && (!targetUsername || sessionUser === targetUsername)) {
+            const params = new URLSearchParams({
+              'sessionId': plexSessionId,
+              'reason': 'SchroStream cleanup',
+              'X-Plex-Token': this.token,
+            });
+            
+            const terminateUrl = `${this.baseUrl}/status/sessions/terminate?${params.toString()}`;
+            const response = await fetch(terminateUrl);
+            console.log(`[Plex] Terminated Plex session for ${sessionUser}`, plexSessionId, response.ok ? '✓' : `(${response.status})`);
+          }
         }
       }
       
-      // Also try the transcode stop endpoint as fallback
+      // Always try the transcode stop endpoint - this is the most important cleanup
+      console.log('[Plex] Stopping all transcode sessions...');
       const stopParams = new URLSearchParams({
         'X-Plex-Token': this.token,
       });
       if (sessionId) {
         stopParams.set('session', sessionId);
       }
-      const stopUrl = `${this.baseUrl}/video/:/transcode/universal/stop?${stopParams.toString()}`;
-      await fetch(stopUrl);
+      
+      // Try multiple stop endpoints to ensure cleanup
+      const stopUrls = [
+        `${this.baseUrl}/video/:/transcode/universal/stop?${stopParams.toString()}`,
+        `${this.baseUrl}/video/:/transcode/stop?${stopParams.toString()}`,
+      ];
+      
+      for (const url of stopUrls) {
+        try {
+          const response = await fetch(url);
+          console.log(`[Plex] Transcode stop response:`, response.status);
+        } catch (e) {
+          console.log(`[Plex] Transcode stop failed:`, e);
+        }
+      }
       
       // Untrack our session
       if (sessionId) {
         untrackSession(sessionId);
       }
       
-      return stoppedAny;
+      return true;
     } catch (error) {
       console.error('[Plex] Failed to terminate session:', sessionId, error);
       return false;

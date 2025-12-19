@@ -531,24 +531,15 @@ class VideoStreamer {
     // Wait a bit for FFmpeg to fully stop
     await new Promise(resolve => setTimeout(resolve, 500));
     
-    // Reuse existing session ID if available
-    if (session.sessionId) {
-      console.log('[VideoStreamer] Reusing existing session ID:', session.sessionId);
-      const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey, session.sessionId);
-      if (freshStreamInfo) {
-        session.streamUrl = freshStreamInfo.url;
-      }
-    } else {
-      // Fallback: create new session if no session ID stored
-      console.log('[VideoStreamer] No session ID stored, creating new session');
-      const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
-      if (freshStreamInfo) {
-        session.streamUrl = freshStreamInfo.url;
-        // Extract new session ID
-        const urlObj = new URL(freshStreamInfo.url);
-        session.sessionId = urlObj.searchParams.get('X-Plex-Session-Identifier') || 
-                          urlObj.searchParams.get('session') || undefined;
-      }
+    // Always create a new session ID for seeking to avoid 400 errors
+    console.log('[VideoStreamer] Creating new session for seek');
+    const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+    if (freshStreamInfo) {
+      session.streamUrl = freshStreamInfo.url;
+      // Extract new session ID
+      const urlObj = new URL(freshStreamInfo.url);
+      session.sessionId = urlObj.searchParams.get('X-Plex-Session-Identifier') || 
+                        urlObj.searchParams.get('session') || undefined;
     }
     
     session.isStopping = false;
