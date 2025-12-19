@@ -516,6 +516,12 @@ class VideoStreamer {
     const session = this.sessions.get(guildId);
     if (!session) return false;
 
+    // Check if stream has already ended
+    if (!session.isPlaying && !session.isPaused) {
+      console.log('[VideoStreamer] Cannot seek - stream not active');
+      return false;
+    }
+
     session.currentTime = timeMs;
     session.startedAt = Date.now();
     session.isStopping = true; // Mark as intentional stop
@@ -528,8 +534,15 @@ class VideoStreamer {
       }
     }
 
+    // Stop the current stream first
+    try {
+      this.streamer.stopStream();
+    } catch {
+      // Ignore
+    }
+
     // Wait a bit for FFmpeg to fully stop
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 1000));
     
     // Always create a new session ID for seeking to avoid 400 errors
     console.log('[VideoStreamer] Creating new session for seek');

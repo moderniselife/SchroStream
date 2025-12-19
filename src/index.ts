@@ -1,4 +1,7 @@
-// Load DEBUG environment variable early to control debug logging
+// Load dotenv config BEFORE any imports that might use debug
+import 'dotenv/config';
+
+// Set DEBUG environment variable to control debug logging
 if (process.env.DEBUG === undefined) {
   process.env.DEBUG = '';
 }
