@@ -522,9 +522,41 @@ class VideoStreamer {
       return false;
     }
 
+    // Try HLS offset seeking first (no new session needed)
+    if (session.sessionId && timeMs > 0) {
+      console.log('[VideoStreamer] Using HLS offset seeking');
+      const url = new URL(session.streamUrl);
+      url.searchParams.set('offset', String(timeMs));
+      
+      session.currentTime = timeMs;
+      session.startedAt = Date.now();
+      
+      // Update stream URL with offset
+      session.streamUrl = url.toString();
+      
+      // Restart FFmpeg with new URL offset
+      if (session.ffmpegCommand) {
+        try {
+          session.ffmpegCommand.kill('SIGKILL');
+        } catch {
+          // Ignore
+        }
+      }
+      
+      // Wait for FFmpeg to stop
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Restart with offset
+      session.isStopping = false;
+      await this.playVideoStream(session, 0); // Start from beginning since offset is in URL
+      return true;
+    }
+
+    // Fallback: create new session
+    console.log('[VideoStreamer] Creating new session for seek');
     session.currentTime = timeMs;
     session.startedAt = Date.now();
-    session.isStopping = true; // Mark as intentional stop
+    session.isStopping = true;
 
     if (session.ffmpegCommand) {
       try {
@@ -544,8 +576,6 @@ class VideoStreamer {
     // Wait a bit for FFmpeg to fully stop
     await new Promise(resolve => setTimeout(resolve, 1000));
     
-    // Always create a new session ID for seeking to avoid 400 errors
-    console.log('[VideoStreamer] Creating new session for seek');
     const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
     if (freshStreamInfo) {
       session.streamUrl = freshStreamInfo.url;
