@@ -301,8 +301,14 @@ async function startPlayback(
   mediaItem: PlexMediaItem,
   episodeStr?: string | null
 ): Promise<void> {
+  // Check if interaction is from a guild
+  if (!interaction.guild) {
+    await interaction.editReply('❌ This command can only be used in a server');
+    return;
+  }
+
   // Use selfbot client to get voice state (it has full access)
-  const guild = selfbotClient.guilds.cache.get(interaction.guild!.id);
+  const guild = selfbotClient.guilds.cache.get(interaction.guild.id);
   const member = guild?.members.cache.get(interaction.user.id);
   const voiceChannel = member?.voice?.channel;
 
@@ -564,7 +570,12 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
   const url = interaction.options.getString('url', true);
   await interaction.deferReply();
 
-  const guild = selfbotClient.guilds.cache.get(interaction.guild!.id);
+  if (!interaction.guild) {
+    await interaction.editReply('❌ This command can only be used in a server');
+    return;
+  }
+
+  const guild = selfbotClient.guilds.cache.get(interaction.guild.id);
   const member = guild?.members.cache.get(interaction.user.id);
   const voiceChannel = member?.voice?.channel;
 
@@ -654,7 +665,12 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
   const url = interaction.options.getString('url', true);
   const title = interaction.options.getString('title') || 'External Stream';
 
-  const guild = selfbotClient.guilds.cache.get(interaction.guild!.id);
+  if (!interaction.guild) {
+    await interaction.reply({ content: '❌ This command can only be used in a server', ephemeral: true });
+    return;
+  }
+
+  const guild = selfbotClient.guilds.cache.get(interaction.guild.id);
   const member = guild?.members.cache.get(interaction.user.id);
   const voiceChannel = member?.voice?.channel;
 
