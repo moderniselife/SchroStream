@@ -59,18 +59,69 @@ export class PlexClient {
   }
 
   async search(query: string): Promise<PlexMediaItem[]> {
-    const response = await this.request<any>(`/search?query=${encodeURIComponent(query)}`);
-    const container = response.MediaContainer;
+    let results: PlexMediaItem[] = [];
 
-    if (!container || !container.Metadata) return [];
+    // Try global search first
+    try {
+      const response = await this.request<any>(`/search?query=${encodeURIComponent(query)}`);
+      const container = response.MediaContainer;
 
-    const items = Array.isArray(container.Metadata)
-      ? container.Metadata
-      : [container.Metadata];
+      if (container?.Metadata) {
+        const items = Array.isArray(container.Metadata)
+          ? container.Metadata
+          : [container.Metadata];
 
-    return items
-      .filter((item: any) => ['movie', 'show', 'episode'].includes(item.$.type))
-      .map((item: any) => this.parseMediaItem(item));
+        results = items
+          .filter((item: any) => ['movie', 'show', 'episode'].includes(item.$?.type))
+          .map((item: any) => this.parseMediaItem(item));
+      }
+    } catch (err) {
+      console.log('[Plex] Global search failed, trying library search...');
+    }
+
+    // If no results, search each library
+    if (results.length === 0) {
+      const libraries = await this.getLibraries();
+      
+      for (const lib of libraries) {
+        try {
+          const response = await this.request<any>(
+            `/library/sections/${lib.key}/search?type=1&query=${encodeURIComponent(query)}`
+          );
+          const container = response.MediaContainer;
+
+          if (container?.Metadata) {
+            const items = Array.isArray(container.Metadata)
+              ? container.Metadata
+              : [container.Metadata];
+
+            const libResults = items.map((item: any) => this.parseMediaItem(item));
+            results.push(...libResults);
+          }
+        } catch {
+          // Try show search (type=2)
+          try {
+            const response = await this.request<any>(
+              `/library/sections/${lib.key}/search?type=2&query=${encodeURIComponent(query)}`
+            );
+            const container = response.MediaContainer;
+
+            if (container?.Metadata) {
+              const items = Array.isArray(container.Metadata)
+                ? container.Metadata
+                : [container.Metadata];
+
+              const libResults = items.map((item: any) => this.parseMediaItem(item));
+              results.push(...libResults);
+            }
+          } catch {
+            // Ignore library search errors
+          }
+        }
+      }
+    }
+
+    return results;
   }
 
   async getMetadata(ratingKey: string): Promise<PlexMediaItem | null> {
