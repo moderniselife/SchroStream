@@ -311,6 +311,9 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
     }).join('\n');
   }
   
+  // Build select menu with proper numbering (Discord limit is 25 options)
+  const allResults = [...movies, ...shows];
+
   // Build embed
   const embed = new EmbedBuilder()
     .setTitle(`🔍 Search: "${query}"`)
@@ -322,8 +325,6 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
     : 'Select a result below or use /play <number>'
 });
 
-  // Build select menu with proper numbering (Discord limit is 25 options)
-  const allResults = [...movies, ...shows];
   const selectMenu = new StringSelectMenuBuilder()
     .setCustomId('search_select')
     .setPlaceholder('Select media to play...')
@@ -472,13 +473,27 @@ async function startPlayback(
 
 async function handleStop(interaction: ChatInputCommandInteraction): Promise<void> {
   const videoStreamer = getVideoStreamer();
-  await videoStreamer.stopStream(interaction.guild!.id);
+  const guildId = interaction.guildId;
+  
+  if (!guildId) {
+    await interaction.reply({ content: '❌ Guild not found', ephemeral: true });
+    return;
+  }
+  
+  await videoStreamer.stopStream(guildId);
   await interaction.reply('⏹️ Stopped playback');
 }
 
 async function handlePause(interaction: ChatInputCommandInteraction): Promise<void> {
   const videoStreamer = getVideoStreamer();
-  const session = videoStreamer.getSession(interaction.guild!.id);
+  const guildId = interaction.guildId;
+  
+  if (!guildId) {
+    await interaction.reply({ content: '❌ Guild not found', ephemeral: true });
+    return;
+  }
+  
+  const session = videoStreamer.getSession(guildId);
 
   if (!session) {
     await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
@@ -486,25 +501,26 @@ async function handlePause(interaction: ChatInputCommandInteraction): Promise<vo
   }
 
   if (session.isPaused) {
-    await videoStreamer.resumeStream(interaction.guild!.id);
-    await interaction.reply('▶️ Resumed');
+    await videoStreamer.resumeStream(guildId);
+    await interaction.reply('▶️ Resumed playback');
   } else {
-    await videoStreamer.pauseStream(interaction.guild!.id);
-    await interaction.reply('⏸️ Paused');
+    await videoStreamer.pauseStream(guildId);
+    await interaction.reply('⏸️ Paused playback');
   }
 }
 
 async function handleSeek(interaction: ChatInputCommandInteraction): Promise<void> {
   const timeStr = interaction.options.getString('time', true);
-  const timeMs = parseTimeString(timeStr);
-
-  if (timeMs === null) {
-    await interaction.reply({ content: '❌ Invalid time format', ephemeral: true });
+  const videoStreamer = getVideoStreamer();
+  const guildId = interaction.guildId;
+  
+  if (!guildId) {
+    await interaction.reply({ content: '❌ Guild not found', ephemeral: true });
     return;
   }
-
-  const videoStreamer = getVideoStreamer();
-  const success = await videoStreamer.seekStream(interaction.guild!.id, timeMs);
+  
+  const timeMs = parseTimeString(timeStr);
+  const success = await videoStreamer.seekStream(guildId, timeMs);
 
   if (success) {
     await interaction.reply(`⏩ Seeked to ${formatDuration(timeMs)}`);
@@ -517,7 +533,14 @@ async function handleSkip(interaction: ChatInputCommandInteraction): Promise<voi
   await interaction.deferReply();
 
   const videoStreamer = getVideoStreamer();
-  const session = videoStreamer.getSession(interaction.guild!.id);
+  const guildId = interaction.guildId;
+  
+  if (!guildId) {
+    await interaction.editReply('❌ Guild not found');
+    return;
+  }
+  
+  const session = videoStreamer.getSession(guildId);
 
   if (!session || session.mediaItem.type !== 'episode') {
     await interaction.editReply('❌ Can only skip TV show episodes');
@@ -541,7 +564,7 @@ async function handleSkip(interaction: ChatInputCommandInteraction): Promise<voi
   const title = `${nextEpisode.grandparentTitle} ${season}${episode} - ${nextEpisode.title}`;
 
   await videoStreamer.startStream(
-    interaction.guild!.id,
+    guildId,
     session.channelId,
     nextEpisode,
     streamInfo.url,
@@ -554,20 +577,27 @@ async function handleSkip(interaction: ChatInputCommandInteraction): Promise<voi
 
 async function handleFastForward(interaction: ChatInputCommandInteraction): Promise<void> {
   const timeStr = interaction.options.getString('time') || '30';
-  const offsetMs = parseTimeString(timeStr) || 30000;
-
   const videoStreamer = getVideoStreamer();
-  const session = videoStreamer.getSession(interaction.guild!.id);
+  const guildId = interaction.guildId;
+  
+  if (!guildId) {
+    await interaction.reply({ content: '❌ Guild not found', ephemeral: true });
+    return;
+  }
+  
+  const session = videoStreamer.getSession(guildId);
 
   if (!session) {
     await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
     return;
   }
 
-  const currentTime = videoStreamer.getCurrentTime(interaction.guild!.id);
+  const offsetMs = parseTimeString(timeStr) || 30000;
+
+  const currentTime = videoStreamer.getCurrentTime(guildId);
   const newTime = Math.min(currentTime + offsetMs, session.duration);
 
-  const success = await videoStreamer.seekStream(interaction.guild!.id, newTime);
+  const success = await videoStreamer.seekStream(guildId, newTime);
 
   if (success) {
     await interaction.reply(`⏩ +${formatDuration(offsetMs)} → ${formatDuration(newTime)}`);
@@ -578,20 +608,27 @@ async function handleFastForward(interaction: ChatInputCommandInteraction): Prom
 
 async function handleRewind(interaction: ChatInputCommandInteraction): Promise<void> {
   const timeStr = interaction.options.getString('time') || '30';
-  const offsetMs = parseTimeString(timeStr) || 30000;
-
   const videoStreamer = getVideoStreamer();
-  const session = videoStreamer.getSession(interaction.guild!.id);
+  const guildId = interaction.guildId;
+  
+  if (!guildId) {
+    await interaction.reply({ content: '❌ Guild not found', ephemeral: true });
+    return;
+  }
+  
+  const session = videoStreamer.getSession(guildId);
 
   if (!session) {
     await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
     return;
   }
 
-  const currentTime = videoStreamer.getCurrentTime(interaction.guild!.id);
+  const offsetMs = parseTimeString(timeStr) || 30000;
+
+  const currentTime = videoStreamer.getCurrentTime(guildId);
   const newTime = Math.max(currentTime - offsetMs, 0);
 
-  const success = await videoStreamer.seekStream(interaction.guild!.id, newTime);
+  const success = await videoStreamer.seekStream(guildId, newTime);
 
   if (success) {
     await interaction.reply(`⏪ -${formatDuration(offsetMs)} → ${formatDuration(newTime)}`);
@@ -602,14 +639,21 @@ async function handleRewind(interaction: ChatInputCommandInteraction): Promise<v
 
 async function handleNowPlaying(interaction: ChatInputCommandInteraction): Promise<void> {
   const videoStreamer = getVideoStreamer();
-  const session = videoStreamer.getSession(interaction.guild!.id);
+  const guildId = interaction.guildId;
+  
+  if (!guildId) {
+    await interaction.reply({ content: '❌ Guild not found', ephemeral: true });
+    return;
+  }
+  
+  const session = videoStreamer.getSession(guildId);
 
   if (!session) {
     await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
     return;
   }
 
-  const currentTime = videoStreamer.getCurrentTime(interaction.guild!.id);
+  const currentTime = videoStreamer.getCurrentTime(guildId);
   const duration = session.duration;
   const progress = duration > 0 ? Math.round((currentTime / duration) * 100) : 0;
 
@@ -637,7 +681,14 @@ async function handleVolume(interaction: ChatInputCommandInteraction): Promise<v
   const level = interaction.options.getInteger('level', true);
 
   const videoStreamer = getVideoStreamer();
-  const success = await videoStreamer.setVolume(interaction.guild!.id, level);
+  const guildId = interaction.guildId;
+  
+  if (!guildId) {
+    await interaction.reply({ content: '❌ Guild not found', ephemeral: true });
+    return;
+  }
+  
+  const success = await videoStreamer.setVolume(guildId, level);
 
   if (success) {
     await interaction.reply(`🔊 Volume set to ${level}%`);
