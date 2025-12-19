@@ -262,6 +262,23 @@ export class PlexClient {
     return `${this.baseUrl}${thumb}?X-Plex-Token=${this.token}`;
   }
 
+  async stopTranscodeSession(sessionId?: string): Promise<void> {
+    try {
+      const params = new URLSearchParams({
+        'X-Plex-Token': this.token,
+      });
+      if (sessionId) {
+        params.set('session', sessionId);
+      }
+      
+      const url = `${this.baseUrl}/video/:/transcode/universal/stop?${params.toString()}`;
+      await fetch(url, { method: 'GET' });
+      console.log('[Plex] Stopped transcode session');
+    } catch (error) {
+      // Ignore errors - session might not exist
+    }
+  }
+
   private parseMediaItem(item: any): PlexMediaItem {
     return {
       ratingKey: String(item.ratingKey),

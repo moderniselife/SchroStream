@@ -1,8 +1,14 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
 import { Client } from 'discord.js-selfbot-v13';
 import { spawn } from 'child_process';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { join } from 'path';
 import type { PlexMediaItem } from '../types/index.js';
 import config from '../config.js';
+import plexClient from '../plex/client.js';
+
+// Playback history file path
+const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
 
 export interface VideoStreamSession {
   guildId: string;
@@ -10,10 +16,79 @@ export interface VideoStreamSession {
   mediaItem: PlexMediaItem;
   streamUrl: string;
   isPaused: boolean;
+  isStopping: boolean; // Flag to track intentional stop (pause/seek)
   startedAt: number;
   currentTime: number;
   duration: number;
+  volume: number;
   ffmpegCommand: any | null;
+}
+
+// Store playback positions for resume functionality (ratingKey -> position in ms)
+interface PlaybackHistoryEntry {
+  position: number;
+  updatedAt: number;
+  title?: string;
+}
+
+let playbackHistory: Map<string, PlaybackHistoryEntry> = new Map();
+
+// Load playback history from disk
+function loadPlaybackHistory(): void {
+  try {
+    if (existsSync(HISTORY_FILE)) {
+      const data = readFileSync(HISTORY_FILE, 'utf-8');
+      const parsed = JSON.parse(data);
+      playbackHistory = new Map(Object.entries(parsed));
+      console.log(`[PlaybackHistory] Loaded ${playbackHistory.size} entries from disk`);
+    }
+  } catch (error) {
+    console.error('[PlaybackHistory] Failed to load:', error);
+    playbackHistory = new Map();
+  }
+}
+
+// Save playback history to disk
+function persistPlaybackHistory(): void {
+  try {
+    // Ensure data directory exists
+    const dataDir = join(process.cwd(), 'data');
+    if (!existsSync(dataDir)) {
+      mkdirSync(dataDir, { recursive: true });
+      console.log('[PlaybackHistory] Created data directory');
+    }
+    
+    const obj = Object.fromEntries(playbackHistory);
+    writeFileSync(HISTORY_FILE, JSON.stringify(obj, null, 2));
+    console.log(`[PlaybackHistory] Saved ${playbackHistory.size} entries to disk`);
+  } catch (error) {
+    console.error('[PlaybackHistory] Failed to save:', error);
+  }
+}
+
+// Initialize on module load
+loadPlaybackHistory();
+
+export function getPlaybackPosition(ratingKey: string): number | null {
+  const history = playbackHistory.get(ratingKey);
+  if (!history) return null;
+  // Expire after 7 days
+  if (Date.now() - history.updatedAt > 7 * 24 * 60 * 60 * 1000) {
+    playbackHistory.delete(ratingKey);
+    persistPlaybackHistory();
+    return null;
+  }
+  return history.position;
+}
+
+export function savePlaybackPosition(ratingKey: string, position: number, title?: string): void {
+  playbackHistory.set(ratingKey, { position, updatedAt: Date.now(), title });
+  persistPlaybackHistory();
+}
+
+export function clearPlaybackPosition(ratingKey: string): void {
+  playbackHistory.delete(ratingKey);
+  persistPlaybackHistory();
 }
 
 class VideoStreamer {
@@ -53,9 +128,11 @@ class VideoStreamer {
       mediaItem,
       streamUrl,
       isPaused: false,
+      isStopping: false,
       startedAt: Date.now(),
       currentTime: startTimeMs,
       duration: mediaItem.duration || 0,
+      volume: 100,
       ffmpegCommand: null,
     };
 
@@ -73,15 +150,51 @@ class VideoStreamer {
     try {
       console.log('[VideoStreamer] Stream URL:', session.streamUrl.substring(0, 100) + '...');
 
-      // Spawn FFmpeg manually to handle HLS input properly
-      // Build headers string for FFmpeg (must be before -i)
+      // Stop any existing transcode sessions first to avoid 400 errors
+      await plexClient.stopTranscodeSession();
+      
+      // Initialize Plex session by fetching the m3u8 first
+      // This tells Plex to start the transcode session
+      console.log('[VideoStreamer] Initializing Plex transcode session...');
+      const initResponse = await fetch(session.streamUrl, {
+        headers: {
+          'Accept': '*/*',
+          'X-Plex-Client-Identifier': config.plex.clientIdentifier,
+          'X-Plex-Product': 'Plex Web',
+          'X-Plex-Version': '4.0',
+          'X-Plex-Platform': 'Chrome',
+          'X-Plex-Device': 'Linux',
+        }
+      });
+      
+      if (!initResponse.ok) {
+        throw new Error(`Failed to initialize Plex session: ${initResponse.status} ${initResponse.statusText}`);
+      }
+      
+      const m3u8Content = await initResponse.text();
+      console.log('[VideoStreamer] Session initialized, m3u8:', m3u8Content.substring(0, 200));
+      
+      // Extract the actual stream URL from m3u8 (it's relative)
+      const lines = m3u8Content.split('\n');
+      const streamPath = lines.find(l => l.endsWith('.m3u8') && !l.startsWith('#'));
+      
+      let actualStreamUrl = session.streamUrl;
+      if (streamPath) {
+        // Convert relative path to absolute URL
+        const baseUrl = session.streamUrl.split('?')[0].replace('/start.m3u8', '');
+        actualStreamUrl = `${config.plex.url}/video/:/transcode/universal/${streamPath}?X-Plex-Token=${config.plex.token}`;
+        console.log('[VideoStreamer] Using stream URL:', actualStreamUrl.substring(0, 100) + '...');
+      }
+
+      // Build headers string for FFmpeg
       const headers = [
-        'Accept: application/json',
-        'X-Plex-Client-Identifier: SchroStream',
+        'Accept: */*',
+        'X-Plex-Client-Identifier: ' + config.plex.clientIdentifier,
         'X-Plex-Product: Plex Web',
         'X-Plex-Version: 4.0',
         'X-Plex-Platform: Chrome',
         'X-Plex-Device: Linux',
+        'X-Plex-Token: ' + config.plex.token,
       ].join('\r\n') + '\r\n';
 
       const ffmpegArgs = [
@@ -100,8 +213,11 @@ class VideoStreamer {
         ffmpegArgs.push('-ss', startTimeSec.toString());
       }
 
+      // Calculate volume filter (100% = 1.0, 50% = 0.5, 200% = 2.0)
+      const volumeMultiplier = (session.volume / 100).toFixed(2);
+
       ffmpegArgs.push(
-        '-i', session.streamUrl,
+        '-i', actualStreamUrl,
         // Video output
         '-c:v', 'libx264',
         '-preset', 'veryfast',
@@ -113,7 +229,8 @@ class VideoStreamer {
         '-r', '30',
         '-g', '60',
         '-pix_fmt', 'yuv420p',
-        // Audio output
+        // Audio output with volume filter
+        '-af', `volume=${volumeMultiplier}`,
         '-c:a', 'libopus',
         '-b:a', `${config.stream.audioBitrate}k`,
         '-ar', '48000',
@@ -153,12 +270,22 @@ class VideoStreamer {
       });
 
       console.log('[VideoStreamer] Playback finished');
-      this.sessions.delete(session.guildId);
+      // Only delete session if not intentionally stopped (pause/seek)
+      if (!session.isStopping) {
+        // Save position for resume later
+        savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(session.guildId));
+        this.sessions.delete(session.guildId);
+      }
     } catch (error) {
-      if (error instanceof Error && !error.message.includes('abort')) {
+      // Only log error if not intentionally stopped
+      if (!session.isStopping && error instanceof Error && !error.message.includes('abort')) {
         console.error('[VideoStreamer] Stream error:', error);
       }
-      this.sessions.delete(session.guildId);
+      // Only delete session if not intentionally stopped
+      if (!session.isStopping) {
+        savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(session.guildId));
+        this.sessions.delete(session.guildId);
+      }
     }
   }
 
@@ -166,6 +293,9 @@ class VideoStreamer {
     const session = this.sessions.get(guildId);
 
     if (session) {
+      // Save position before stopping
+      savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(guildId));
+      
       if (session.ffmpegCommand) {
         try {
           session.ffmpegCommand.kill('SIGKILL');
@@ -191,6 +321,7 @@ class VideoStreamer {
 
     session.currentTime = timeMs;
     session.startedAt = Date.now();
+    session.isStopping = true; // Mark as intentional stop
 
     if (session.ffmpegCommand) {
       try {
@@ -200,6 +331,16 @@ class VideoStreamer {
       }
     }
 
+    // Wait a bit for FFmpeg to fully stop
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Get fresh stream URL (new Plex session)
+    const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+    if (freshStreamInfo) {
+      session.streamUrl = freshStreamInfo.url;
+    }
+    
+    session.isStopping = false;
     await this.playVideoStream(session, timeMs);
     return true;
   }
@@ -211,6 +352,7 @@ class VideoStreamer {
     if (!session.isPaused) {
       session.currentTime = this.getCurrentTime(guildId);
       session.isPaused = true;
+      session.isStopping = true; // Mark as intentional stop
 
       if (session.ffmpegCommand) {
         try {
@@ -221,6 +363,9 @@ class VideoStreamer {
       }
 
       this.streamer.stopStream();
+      
+      // Save position for later resume
+      savePlaybackPosition(session.mediaItem.ratingKey, session.currentTime);
     }
 
     return true;
@@ -230,7 +375,14 @@ class VideoStreamer {
     const session = this.sessions.get(guildId);
     if (!session || !session.isPaused) return false;
 
+    // Get fresh stream URL (new Plex session)
+    const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+    if (freshStreamInfo) {
+      session.streamUrl = freshStreamInfo.url;
+    }
+
     session.isPaused = false;
+    session.isStopping = false;
     session.startedAt = Date.now();
 
     await this.playVideoStream(session, session.currentTime);
@@ -260,6 +412,46 @@ class VideoStreamer {
     const percentage = total > 0 ? (current / total) * 100 : 0;
 
     return { current, total, percentage };
+  }
+
+  async setVolume(guildId: string, volume: number): Promise<boolean> {
+    const session = this.sessions.get(guildId);
+    if (!session) return false;
+
+    const oldVolume = session.volume;
+    session.volume = Math.max(0, Math.min(200, volume));
+    
+    // If currently playing (not paused), restart stream at current position with new volume
+    if (!session.isPaused && session.ffmpegCommand) {
+      const currentTime = this.getCurrentTime(guildId);
+      console.log(`[VideoStreamer] Volume changing from ${oldVolume}% to ${session.volume}%, restarting at ${Math.floor(currentTime / 1000)}s...`);
+      
+      session.currentTime = currentTime;
+      session.isStopping = true;
+      
+      try {
+        session.ffmpegCommand.kill('SIGKILL');
+      } catch {
+        // Ignore
+      }
+      
+      // Wait for FFmpeg to stop
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Get fresh stream URL (new Plex session)
+      const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+      if (freshStreamInfo) {
+        session.streamUrl = freshStreamInfo.url;
+      }
+      
+      session.isStopping = false;
+      session.startedAt = Date.now();
+      await this.playVideoStream(session, currentTime);
+    } else {
+      console.log(`[VideoStreamer] Volume set to ${session.volume}% (will apply on resume)`);
+    }
+    
+    return true;
   }
 }
 

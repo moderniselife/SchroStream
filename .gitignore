@@ -1,8 +1,11 @@
 # Dependencies
 node_modules/
+docs/node_modules/
+docs/.vitepress/cache
 
 # Build output
 dist/
+docs/dist/
 
 # Environment
 .env
@@ -34,3 +37,4 @@ yarn-error.log*
 # Temporary files
 tmp/
 temp/
+data/
