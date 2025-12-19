@@ -29,6 +29,8 @@ export async function helpCommand(message: Message, _args: string[]): Promise<vo
 
 **External Sources:**
 \`${prefix}yt <url>\` - Play YouTube/Twitch/etc via yt-dlp
+\`${prefix}yts <query>\` - Search YouTube
+\`${prefix}ytp <number>\` - Play YouTube search result
 \`${prefix}url <url> [title]\` - Play m3u8/stream URL directly
 
 **Example:**
