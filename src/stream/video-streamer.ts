@@ -500,7 +500,7 @@ class VideoStreamer {
       
       // Stop Plex transcode FIRST (before killing FFmpeg) - only for Plex streams
       if (!session.isExternal) {
-        await plexClient.stopTranscodeSession();
+        await plexClient.stopTranscodeSession(session.sessionId);
       }
       
       if (session.ffmpegCommand) {

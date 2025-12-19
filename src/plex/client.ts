@@ -417,6 +417,8 @@ export class PlexClient {
       
       // Always try the transcode stop endpoint - this is the most important cleanup
       console.log('[Plex] Stopping all transcode sessions...');
+      
+      // First try the universal stop endpoint
       const stopParams = new URLSearchParams({
         'X-Plex-Token': this.token,
       });
@@ -424,18 +426,23 @@ export class PlexClient {
         stopParams.set('session', sessionId);
       }
       
-      // Try multiple stop endpoints to ensure cleanup
-      const stopUrls = [
-        `${this.baseUrl}/video/:/transcode/universal/stop?${stopParams.toString()}`,
-        `${this.baseUrl}/video/:/transcode/stop?${stopParams.toString()}`,
-      ];
+      try {
+        const response = await fetch(`${this.baseUrl}/video/:/transcode/universal/stop?${stopParams.toString()}`);
+        console.log(`[Plex] Universal stop response:`, response.status);
+      } catch (e) {
+        console.log(`[Plex] Universal stop failed:`, e);
+      }
       
-      for (const url of stopUrls) {
+      // If we have a specific session ID, try the DELETE endpoint
+      if (sessionId) {
         try {
-          const response = await fetch(url);
-          console.log(`[Plex] Transcode stop response:`, response.status);
+          console.log(`[Plex] Attempting to DELETE transcode session: ${sessionId}`);
+          const deleteResponse = await fetch(`${this.baseUrl}/transcode/sessions/${sessionId}?X-Plex-Token=${this.token}`, {
+            method: 'DELETE',
+          });
+          console.log(`[Plex] DELETE transcode session response:`, deleteResponse.status);
         } catch (e) {
-          console.log(`[Plex] Transcode stop failed:`, e);
+          console.log(`[Plex] DELETE transcode session failed:`, e);
         }
       }
       
