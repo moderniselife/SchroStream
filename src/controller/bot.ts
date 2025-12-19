@@ -301,10 +301,19 @@ async function startPlayback(
   mediaItem: PlexMediaItem,
   episodeStr?: string | null
 ): Promise<void> {
-  // Use interaction.guildId (always present) instead of guild
-  const guildId = interaction.guildId;
+  // Debug logging
+  console.log('[Controller] Interaction type:', interaction.constructor.name);
+  console.log('[Controller] guildId:', interaction.guildId);
+  console.log('[Controller] guild:', interaction.guild);
+  
+  // For component interactions, try to get guildId from message
+  let guildId = interaction.guildId;
+  if (!guildId && 'message' in interaction) {
+    guildId = (interaction as any).message?.guildId;
+  }
+  
   if (!guildId) {
-    await interaction.editReply('❌ This command can only be used in a server');
+    await interaction.editReply('❌ Guild ID not found - try running the command again');
     return;
   }
 
@@ -382,7 +391,7 @@ async function startPlayback(
   // Start stream
   const videoStreamer = getVideoStreamer();
   videoStreamer.startStream(
-    interaction.guild!.id,
+    guildId,
     voiceChannel.id,
     itemToPlay,
     streamInfo.url,
