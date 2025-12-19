@@ -419,7 +419,6 @@ async function startPlayback(
       return;
     }
     itemToPlay = episode;
-    console.log(`[Controller] Episode duration: ${episode.duration || 0}ms (${Math.round((episode.duration || 0)/60000)} minutes)`);
   }
 
   // Get stream URL
@@ -437,8 +436,6 @@ async function startPlayback(
     title = `${itemToPlay.grandparentTitle} ${season}${episode} - ${itemToPlay.title}`;
   }
 
-  const duration = itemToPlay.duration ? formatDuration(itemToPlay.duration) : 'Unknown';
-
   // Create playback controls
   const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
@@ -451,7 +448,6 @@ async function startPlayback(
   const embed = new EmbedBuilder()
     .setTitle('📺 Now Playing')
     .setDescription(`**${title}**`)
-    .addFields({ name: 'Duration', value: duration, inline: true })
     .setColor(0x00ff00);
 
   if (itemToPlay.thumb) {
@@ -662,7 +658,6 @@ async function handleNowPlaying(interaction: ChatInputCommandInteraction): Promi
 
   const currentTime = videoStreamer.getCurrentTime(guildId);
   const duration = session.duration;
-  console.log(`[NowPlaying] Duration: ${duration}ms (${Math.round(duration/60000)} minutes)`);
   const progress = duration > 0 ? Math.round((currentTime / duration) * 100) : 0;
 
   let title = session.mediaItem.title;

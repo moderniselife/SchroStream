@@ -173,7 +173,6 @@ class VideoStreamer {
     const sessionId = urlObj.searchParams.get('X-Plex-Session-Identifier') || 
                     urlObj.searchParams.get('session') || undefined;
 
-    console.log(`[VideoStreamer] Creating session with duration: ${mediaItem.duration || 0}ms (${Math.round((mediaItem.duration || 0)/60000)} minutes)`);
     const session: VideoStreamSession = {
       guildId,
       channelId,
@@ -192,7 +191,6 @@ class VideoStreamer {
       audioUrl: audioUrl || undefined,
       sessionId,
     };
-    console.log(`[VideoStreamer] Session duration set to: ${session.duration}ms`);
 
     this.sessions.set(guildId, session);
 
