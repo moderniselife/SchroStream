@@ -1,5 +1,6 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
 import { Client } from 'discord.js-selfbot-v13';
+import { spawn } from 'child_process';
 import type { PlexMediaItem } from '../types/index.js';
 import config from '../config.js';
 
@@ -67,36 +68,75 @@ class VideoStreamer {
     const startTimeSec = Math.floor(startTimeMs / 1000);
     
     const height = config.stream.defaultQuality;
+    const width = Math.round(height * (16 / 9));
 
     try {
-      const inputFlags: string[] = [];
+      console.log('[VideoStreamer] Stream URL:', session.streamUrl.substring(0, 100) + '...');
+
+      // Spawn FFmpeg manually to handle HLS input properly
+      const ffmpegArgs = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        // HLS input options
+        '-reconnect', '1',
+        '-reconnect_streamed', '1', 
+        '-reconnect_delay_max', '5',
+        '-protocol_whitelist', 'file,http,https,tcp,tls,crypto,hls',
+      ];
+
       if (startTimeSec > 0) {
-        inputFlags.push('-ss', startTimeSec.toString());
+        ffmpegArgs.push('-ss', startTimeSec.toString());
       }
 
-      const { command, output } = prepareStream(session.streamUrl, {
-        height,
-        frameRate: 30,
-        bitrateVideo: config.stream.maxBitrate,
-        bitrateVideoMax: Math.round(config.stream.maxBitrate * 1.5),
-        bitrateAudio: config.stream.audioBitrate,
-        videoCodec: Utils.normalizeVideoCodec('H264'),
-        h26xPreset: 'veryfast',
-        includeAudio: true,
-        customFfmpegFlags: inputFlags.length > 0 ? inputFlags : undefined,
+      ffmpegArgs.push(
+        '-i', session.streamUrl,
+        // Video output
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-tune', 'zerolatency',
+        '-b:v', `${config.stream.maxBitrate}k`,
+        '-maxrate', `${Math.round(config.stream.maxBitrate * 1.5)}k`,
+        '-bufsize', `${config.stream.maxBitrate * 2}k`,
+        '-vf', `scale=${width}:${height}`,
+        '-r', '30',
+        '-g', '60',
+        '-pix_fmt', 'yuv420p',
+        // Audio output
+        '-c:a', 'libopus',
+        '-b:a', `${config.stream.audioBitrate}k`,
+        '-ar', '48000',
+        '-ac', '2',
+        // Output format
+        '-f', 'matroska',
+        'pipe:1'
+      );
+
+      console.log('[VideoStreamer] Starting FFmpeg with HLS input...');
+      
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+      session.ffmpegCommand = ffmpeg;
+
+      ffmpeg.stderr.on('data', (data: Buffer) => {
+        const msg = data.toString().trim();
+        if (msg && !msg.includes('frame=')) {
+          console.error('[FFmpeg]', msg);
+        }
       });
 
-      session.ffmpegCommand = command;
+      ffmpeg.on('error', (err) => {
+        console.error('[VideoStreamer] FFmpeg spawn error:', err.message);
+      });
 
-      command.on('error', (err: Error) => {
-        if (!err.message.includes('SIGKILL') && !err.message.includes('ffmpeg was killed')) {
-          console.error('[VideoStreamer] FFmpeg error:', err.message);
+      ffmpeg.on('exit', (code) => {
+        if (code !== 0 && code !== null) {
+          console.log('[VideoStreamer] FFmpeg exited with code:', code);
         }
       });
 
       console.log('[VideoStreamer] Starting Go Live stream...');
 
-      await playStream(output, this.streamer, {
+      // Pass the FFmpeg stdout stream to playStream
+      await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
       });
 
