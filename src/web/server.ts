@@ -145,19 +145,28 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
       );
     }
 
-    // Output args - use fragmented MP4 for universal browser support
+    // Output args - optimized for low-memory streaming
     ffmpegArgs.push(
       '-map', '0:v:0?',
       '-map', session.audioUrl ? '1:a:0?' : '0:a:0?',
+      // Video: lower bitrate, faster encoding, small GOP for low latency
       '-c:v', 'libx264',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
+      '-b:v', '2500k',
+      '-maxrate', '3000k',
+      '-bufsize', '1000k',
+      '-g', '30', // Keyframe every 30 frames (1 sec at 30fps)
+      // Audio
       '-c:a', 'aac',
-      '-b:a', '192k',
-      '-ar', '48000',
+      '-b:a', '128k',
+      '-ar', '44100',
       '-ac', '2',
+      // Output format with small fragments for memory efficiency
       '-f', 'mp4',
-      '-movflags', 'frag_keyframe+empty_moov+faststart',
+      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+      '-frag_duration', '1000000', // 1 second fragments
+      '-min_frag_duration', '500000', // Min 0.5 second
       'pipe:1'
     );
 
