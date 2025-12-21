@@ -202,7 +202,7 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
 });
 
 // Serve React SPA for all non-API routes
-app.get('*', (req: Request, res: Response) => {
+app.get('/{*path}', (req: Request, res: Response) => {
   // Don't serve HTML for API routes
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'Not found' });
