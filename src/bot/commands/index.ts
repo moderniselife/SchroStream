@@ -17,6 +17,7 @@ import { youtubeCommand } from './youtube.js';
 import { urlCommand } from './url.js';
 import { ytSearchCommand, ytPlayCommand } from './ytsearch.js';
 import { ytrendingCommand } from './ytrending.js';
+import * as netflixCommand from './netflix.js';
 
 export type CommandHandler = (message: Message, args: string[]) => Promise<void>;
 
@@ -68,6 +69,8 @@ const commands: Record<string, CommandHandler> = {
   ytrending: ytrendingCommand,
   trend: ytrendingCommand,
   trending: ytrendingCommand,
+  netflix: netflixCommand.execute,
+  nf: netflixCommand.execute,
 };
 
 export async function handleCommand(
