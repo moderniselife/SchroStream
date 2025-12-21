@@ -28,8 +28,10 @@ function Player() {
   const [error, setError] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
 
+  const [videoInitialized, setVideoInitialized] = useState(false)
+
   useEffect(() => {
-    const loadStream = async () => {
+    const loadStreamInfo = async () => {
       try {
         const response = await fetch(`/api/stream/${guildId}`)
         if (!response.ok) throw new Error('Stream not found')
@@ -37,22 +39,21 @@ function Player() {
         const data = await response.json()
         setStream(data)
 
-        // Use FFmpeg proxy endpoint for all streams
-        if (videoRef.current) {
+        // Only set video src once, not on every refresh
+        if (videoRef.current && !videoInitialized) {
           videoRef.current.src = `/api/stream/${guildId}/hls`
-          if (data.currentTime > 0) {
-            videoRef.current.currentTime = data.currentTime / 1000
-          }
+          setVideoInitialized(true)
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load stream')
       }
     }
 
-    loadStream()
-    const interval = setInterval(loadStream, 5000)
+    loadStreamInfo()
+    // Only refresh metadata, not video source
+    const interval = setInterval(loadStreamInfo, 5000)
     return () => clearInterval(interval)
-  }, [guildId])
+  }, [guildId, videoInitialized])
 
   if (error) {
     return (
