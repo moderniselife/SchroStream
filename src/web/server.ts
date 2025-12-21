@@ -103,7 +103,7 @@ app.get('/api/stream/:guildId/url', (req: Request, res: Response) => {
   }
 });
 
-// Stream proxy endpoint - serves FFmpeg-processed HLS stream
+// Stream proxy endpoint - serves FFmpeg-processed stream synced to Discord
 app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
   const { guildId } = req.params;
   const streamer = getVideoStreamer();
@@ -115,12 +115,14 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
 
   try {
     const { spawn } = await import('child_process');
-    const config = (await import('../config.js')).default;
     
-    const height = config.stream.defaultQuality;
-    const width = Math.round(height * (16 / 9));
+    // Get current playback position from Discord stream to sync
+    const progress = streamer.getProgress(guildId);
+    const seekSeconds = Math.max(0, Math.floor(progress.current / 1000));
     
-    // Build FFmpeg args to process and serve as HLS
+    console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildId}, seeking to ${seekSeconds}s`);
+    
+    // Build FFmpeg args with seek to current position
     const ffmpegArgs = [
       '-hide_banner',
       '-loglevel', 'error',
@@ -128,15 +130,17 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
       '-reconnect_streamed', '1',
       '-reconnect_delay_max', '5',
       '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+      '-ss', seekSeconds.toString(), // Seek to current position
       '-i', session.streamUrl,
     ];
 
-    // Add audio input if separate (YouTube)
+    // Add audio input if separate (YouTube) - also seek audio to same position
     if (session.audioUrl) {
       ffmpegArgs.push(
         '-reconnect', '1',
         '-reconnect_streamed', '1',
         '-reconnect_delay_max', '5',
+        '-ss', seekSeconds.toString(), // Seek audio to same position
         '-i', session.audioUrl
       );
     }
