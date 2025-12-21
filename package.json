@@ -5,9 +5,11 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && vite build",
+    "build:web": "vite build",
     "start": "DEBUG= node dist/index.js",
     "dev": "DEBUG= tsx watch src/index.ts",
+    "dev:web": "vite",
     "lint": "eslint src/**/*.ts"
   },
   "keywords": [
@@ -22,6 +24,7 @@
     "@dank074/discord-video-stream": "^5.0.2",
     "@discordjs/rest": "^2.6.0",
     "@playwright/test": "^1.57.0",
+    "@tailwindcss/postcss": "^4.1.18",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/react": "^19.2.7",
