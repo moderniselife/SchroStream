@@ -339,6 +339,10 @@ class VideoStreamer {
         updateWatchDeck(session.mediaItem, 0, session.userId);
       }
 
+      // Register stream for web viewing
+      const { registerWebStream } = await import('../web/server.js');
+      registerWebStream(session.guildId, session, session.streamUrl);
+
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
       });
@@ -524,6 +528,10 @@ class VideoStreamer {
         updateWatchDeck(session.mediaItem, startTimeMs, session.userId);
       }
 
+      // Register stream for web viewing
+      const { registerWebStream } = await import('../web/server.js');
+      registerWebStream(session.guildId, session, actualStreamUrl);
+
       // Pass the FFmpeg stdout stream to playStream
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
@@ -579,6 +587,10 @@ class VideoStreamer {
       if (session.isPlaying && currentPosition > 0) {
         savePlaybackPosition(session.mediaItem.ratingKey, currentPosition);
       }
+
+      // Unregister from web server
+      const { unregisterWebStream } = await import('../web/server.js');
+      unregisterWebStream(guildId);
 
       this.sessions.delete(guildId);
     }

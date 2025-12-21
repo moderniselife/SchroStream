@@ -2,6 +2,7 @@ import { Client } from 'discord.js-selfbot-v13';
 import config from '../config.js';
 import { handleCommand } from './commands/index.js';
 import { initVideoStreamer } from '../stream/video-streamer.js';
+import { startWebServer } from '../web/server.js';
 
 export const client = new Client({
   checkUpdate: false,
@@ -25,6 +26,7 @@ client.on('ready', async () => {
   console.log(`[SchroStream] Video streaming enabled (Go Live)`);
   
   initVideoStreamer(client);
+  startWebServer();
 });
 
 function hasPermission(message: import('discord.js-selfbot-v13').Message): boolean {
