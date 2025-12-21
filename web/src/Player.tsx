@@ -27,33 +27,34 @@ function Player() {
   const [stream, setStream] = useState<StreamInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const videoInitializedRef = useRef(false)
 
-  const [videoInitialized, setVideoInitialized] = useState(false)
+  // Initialize video source once
+  useEffect(() => {
+    if (videoRef.current && !videoInitializedRef.current && guildId) {
+      videoRef.current.src = `/api/stream/${guildId}/hls`
+      videoInitializedRef.current = true
+      console.log('[Player] Video source set')
+    }
+  }, [guildId])
 
+  // Refresh metadata only (no video source changes)
   useEffect(() => {
     const loadStreamInfo = async () => {
       try {
         const response = await fetch(`/api/stream/${guildId}`)
         if (!response.ok) throw new Error('Stream not found')
-        
         const data = await response.json()
         setStream(data)
-
-        // Only set video src once, not on every refresh
-        if (videoRef.current && !videoInitialized) {
-          videoRef.current.src = `/api/stream/${guildId}/hls`
-          setVideoInitialized(true)
-        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load stream')
       }
     }
 
     loadStreamInfo()
-    // Only refresh metadata, not video source
-    const interval = setInterval(loadStreamInfo, 5000)
+    const interval = setInterval(loadStreamInfo, 10000) // Refresh every 10s instead of 5s
     return () => clearInterval(interval)
-  }, [guildId, videoInitialized])
+  }, [guildId])
 
   if (error) {
     return (
