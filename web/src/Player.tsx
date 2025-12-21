@@ -164,6 +164,8 @@ function Player() {
                 ref={videoRef}
                 controls
                 autoPlay
+                muted
+                playsInline
                 className="w-full aspect-video bg-black"
               >
                 Your browser does not support the video tag.
