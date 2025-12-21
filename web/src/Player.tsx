@@ -41,6 +41,12 @@ function Player() {
         const urlResponse = await fetch(`/api/stream/${guildId}/url`)
         const urlData = await urlResponse.json()
 
+        // Check if this is a YouTube stream with separate audio
+        if (urlData.audioUrl) {
+          setError('YouTube streams cannot be played in the web player (separate audio/video streams). Watch in Discord!')
+          return
+        }
+
         if (videoRef.current && urlData.url) {
           videoRef.current.src = urlData.url
           if (data.currentTime > 0) {
