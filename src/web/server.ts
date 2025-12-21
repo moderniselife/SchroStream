@@ -5,7 +5,7 @@ import { getVideoStreamer } from '../stream/video-streamer.js';
 import type { VideoStreamSession } from '../stream/video-streamer.js';
 
 const app = express();
-const PORT = process.env.WEB_PORT || 3000;
+const PORT = process.env.WEB_PORT || 3105;
 
 // Middleware
 app.use(cors());
