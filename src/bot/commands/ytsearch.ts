@@ -1,5 +1,6 @@
 import type { Message } from 'discord.js-selfbot-v13';
 import { spawn } from 'child_process';
+import { getTrendingResult } from './ytrending.js';
 
 interface YouTubeSearchResult {
   id: string;
@@ -144,13 +145,21 @@ export async function ytPlayCommand(message: Message, args: string[]): Promise<v
 
   const selection = parseInt(args[0], 10);
   if (isNaN(selection) || selection < 1) {
-    await message.channel.send('❌ Usage: `!ytp <number>` (use `!yts` to search first)');
+    await message.channel.send('❌ Usage: `!ytp <number>` (use `!yts` to search or `!ytrending` for trending videos first)');
     return;
   }
 
-  const result = getYouTubeSearchResult(message.author.id, selection);
+  // Try search results first, then trending results
+  let result = getYouTubeSearchResult(message.author.id, selection);
+  let source = 'search';
+  
   if (!result) {
-    await message.channel.send('❌ Invalid selection or search expired. Use `!yts` to search first.');
+    result = getTrendingResult(message.author.id, selection);
+    source = 'trending';
+  }
+  
+  if (!result) {
+    await message.channel.send('❌ Invalid selection or search/trending expired. Use `!yts` to search or `!ytrending` for trending videos first.');
     return;
   }
 

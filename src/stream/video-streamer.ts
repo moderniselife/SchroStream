@@ -200,6 +200,7 @@ class VideoStreamer {
   private async playExternalStream(session: VideoStreamSession): Promise<void> {
     const height = config.stream.defaultQuality;
     const width = Math.round(height * (16 / 9));
+    let streamlinkProcess: ReturnType<typeof spawn> | null = null;
 
     try {
       console.log('[VideoStreamer] External stream URL:', session.streamUrl.substring(0, 100) + '...');
@@ -209,15 +210,42 @@ class VideoStreamer {
 
       const volumeMultiplier = (session.volume / 100).toFixed(2);
 
-      // Build FFmpeg args - handle separate audio stream for YouTube
-      const ffmpegArgs: string[] = [
-        '-hide_banner',
-        '-loglevel', 'error',
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5',
-        '-i', session.streamUrl,
-      ];
+      // Check if this is a problematic stream that needs streamlink
+      const needsStreamlink = session.streamUrl.includes('.json') || 
+                              session.streamUrl.includes('.svg') || 
+                              session.streamUrl.includes('.php') ||
+                              session.streamUrl.includes('.txt') ||
+                              session.streamUrl.includes('.js');
+
+      let ffmpegArgs: string[];
+
+      if (needsStreamlink) {
+        console.log('[VideoStreamer] Using custom HLS fetcher for problematic stream...');
+        
+        // Use custom HLS fetcher that downloads segments directly
+        const { createHLSFetcherProcess } = await import('./hls-fetcher.js');
+        streamlinkProcess = createHLSFetcherProcess(session.streamUrl);
+
+        // Build FFmpeg args to read MPEG-TS from stdin
+        ffmpegArgs = [
+          '-hide_banner',
+          '-loglevel', 'error',
+          '-f', 'mpegts', // Raw MPEG-TS input
+          '-i', 'pipe:0', // Read from stdin
+        ];
+      } else {
+        // Build FFmpeg args - handle separate audio stream for YouTube
+        ffmpegArgs = [
+          '-hide_banner',
+          '-loglevel', 'error',
+          '-reconnect', '1',
+          '-reconnect_streamed', '1',
+          '-reconnect_delay_max', '5',
+          '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+          '-allowed_extensions', 'ALL',
+          '-i', session.streamUrl,
+        ];
+      }
 
       // Add separate audio input if provided (YouTube separates video/audio)
       if (session.audioUrl) {
@@ -256,6 +284,32 @@ class VideoStreamer {
       const ffmpeg = spawn('ffmpeg', ffmpegArgs);
       session.ffmpegCommand = ffmpeg;
 
+      // If using streamlink, pipe its output to FFmpeg
+      if (streamlinkProcess) {
+        if (streamlinkProcess.stdout) {
+          streamlinkProcess.stdout.pipe(ffmpeg.stdin);
+        }
+        
+        if (streamlinkProcess.stderr) {
+          streamlinkProcess.stderr.on('data', (data: Buffer) => {
+            const msg = data.toString().trim();
+            if (msg) {
+              console.log(msg); // Show all HLS fetcher output
+            }
+          });
+        }
+        
+        streamlinkProcess.on('error', (err: Error) => {
+          console.error('[VideoStreamer] Streamlink spawn error:', err.message);
+        });
+        
+        streamlinkProcess.on('exit', (code: number | null) => {
+          if (code !== 0 && code !== null) {
+            console.log('[VideoStreamer] Streamlink exited with code:', code);
+          }
+        });
+      }
+
       ffmpeg.stderr.on('data', (data) => {
         const msg = data.toString();
         // Always show errors, but only show other logs if enabled
@@ -290,6 +344,12 @@ class VideoStreamer {
       });
 
       console.log('[VideoStreamer] External playback finished');
+      
+      // Clean up streamlink process if it exists
+      if (streamlinkProcess && !streamlinkProcess.killed) {
+        streamlinkProcess.kill();
+      }
+      
       if (!session.isStopping) {
         this.sessions.delete(session.guildId);
       }
@@ -297,6 +357,12 @@ class VideoStreamer {
       if (!session.isStopping && error instanceof Error && !error.message.includes('abort')) {
         console.error('[VideoStreamer] External stream error:', error);
       }
+      
+      // Clean up streamlink process on error
+      if (streamlinkProcess && !streamlinkProcess.killed) {
+        streamlinkProcess.kill();
+      }
+      
       if (!session.isStopping) {
         this.sessions.delete(session.guildId);
       }

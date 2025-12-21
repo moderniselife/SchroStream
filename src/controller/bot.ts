@@ -141,6 +141,24 @@ const commands = [
         .setMaxValue(20)
     ),
   new SlashCommandBuilder()
+    .setName('ytrending')
+    .setDescription('Show trending YouTube videos')
+    .addStringOption(option =>
+      option.setName('category')
+        .setDescription('Category of trending videos')
+        .setRequired(false)
+        .addChoices(
+          { name: 'All', value: 'default' },
+          { name: 'Music', value: 'music' },
+          { name: 'Gaming', value: 'gaming' },
+          { name: 'News', value: 'news' },
+          { name: 'Movies', value: 'movies' },
+          { name: 'Sports', value: 'sports' },
+          { name: 'Learning', value: 'learning' },
+          { name: 'Tech', value: 'tech' }
+        )
+    ),
+  new SlashCommandBuilder()
     .setName('url')
     .setDescription('Play a direct stream URL')
     .addStringOption(option =>
@@ -212,6 +230,9 @@ export async function initControllerBot(): Promise<Client | null> {
 
   controllerBot.once('ready', () => {
     console.log(`[Controller] Bot ready as ${controllerBot?.user?.tag}`);
+    
+    // Set bot presence with status
+    controllerBot?.user?.setActivity('/help for commands', { type: 'Listening' });
   });
 
   await controllerBot.login(botToken);
@@ -260,6 +281,9 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'ytp':
       await handleYouTubePlay(interaction);
+      break;
+    case 'ytrending':
+      await handleYouTubeTrending(interaction);
       break;
     case 'url':
       await handleUrl(interaction);
@@ -836,17 +860,61 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
 
   await interaction.deferReply();
 
+  // Try to extract actual stream URL using yt-dlp for masked streams
+  let streamUrl = url;
+  let actualTitle = title;
+  
+  // Use yt-dlp for suspicious URLs (json, svg, etc. that might be masked streams)
+  if (url.includes('.json') || url.includes('.svg') || url.includes('.php') || url.includes('.js')) {
+    await interaction.editReply({ content: '🔍 Detecting masked stream...', embeds: [], components: [] });
+    
+    try {
+      const { spawn } = await import('child_process');
+      const extractedUrl = await new Promise<string>((resolve) => {
+        const ytdlp = spawn('yt-dlp', [
+          '-g',
+          '--no-warnings',
+          url
+        ]);
+
+        let output = '';
+        ytdlp.stdout.on('data', (data) => {
+          output += data.toString();
+        });
+
+        ytdlp.on('close', (code) => {
+          if (code !== 0 || !output.trim()) {
+            resolve('');
+            return;
+          }
+          resolve(output.trim().split('\n')[0]);
+        });
+
+        ytdlp.on('error', () => {
+          resolve('');
+        });
+      });
+
+      if (extractedUrl) {
+        streamUrl = extractedUrl;
+        console.log(`[Controller] Extracted real stream URL: ${streamUrl}`);
+      }
+    } catch (error) {
+      console.error('[Controller] Failed to extract stream URL:', error);
+    }
+  }
+
   const mediaItem = {
     ratingKey: `url-${Date.now()}`,
     key: url,
-    title,
+    title: actualTitle,
     type: 'movie' as const,
     duration: 0,
   };
 
   const embed = new EmbedBuilder()
     .setTitle('📺 Now Streaming')
-    .setDescription(`**${title}**`)
+    .setDescription(`**${actualTitle}**`)
     .setColor(0x0099ff);
 
   const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -861,7 +929,7 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
     guildId,
     voiceChannel.id,
     mediaItem,
-    url,
+    streamUrl,
     interaction.user.id
   ).catch(err => console.error('[Controller] URL stream error:', err));
 }
@@ -953,6 +1021,185 @@ async function handleYouTubeSearch(interaction: ChatInputCommandInteraction): Pr
   await displayYouTubeSearchPage(interaction, 0);
 }
 
+async function handleYouTubeTrending(interaction: ChatInputCommandInteraction): Promise<void> {
+  const category = interaction.options.getString('category') || 'default';
+  await interaction.deferReply();
+
+  const { spawn } = await import('child_process');
+  
+  // Category URLs for trending
+  const CATEGORY_URLS: Record<string, string> = {
+    default: 'https://www.youtube.com/feed/trending',
+    music: 'https://www.youtube.com/feed/trending?bp=4gIuCggvbS8wNGZrbmIyUgIIAzABOAFAAUgBUAFYAWAAaAGqAQtUcmVuZGluZyBub3c%3D',
+    gaming: 'https://www.youtube.com/feed/trending?bp=4gIuCggvbS8wNGZrbmIyUgIIAzABOAFAAUgBUAFYAWAAaAGqAQtUcmVuZGluZyBub3c%3D',
+    news: 'https://www.youtube.com/feed/trending?bp=4gIuCggvbS8wNGZrbmIyUgIIAzABOAFAAUgBUAFYAWAAaAGqAQtUcmVuZGluZyBub3c%3D',
+    movies: 'https://www.youtube.com/feed/trending?bp=4gIuCggvbS8wNGZrbmIyUgIIAzABOAFAAUgBUAFYAWAAaAGqAQtUcmVuZGluZyBub3c%3D',
+    sports: 'https://www.youtube.com/feed/trending?bp=4gIuCggvbS8wNGZrbmIyUgIIAzABOAFAAUgBUAFYAWAAaAGqAQtUcmVuZGluZyBub3c%3D',
+    learning: 'https://www.youtube.com/feed/trending?bp=4gIuCggvbS8wNGZrbmIyUgIIAzABOAFAAUgBUAFYAWAAaAGqAQtUcmVuZGluZyBub3c%3D',
+    tech: 'https://www.youtube.com/feed/trending?bp=4gIuCggvbS8wNGZrbmIyUgIIAzABOAFAAUgBUAFYAWAAaAGqAQtUcmVuZGluZyBub3c%3D',
+  };
+
+  // Fallback channels if trending fails
+  const FALLBACK_CHANNELS = {
+    music: ['https://www.youtube.com/@music', 'https://www.youtube.com/@billboard'],
+    gaming: ['https://www.youtube.com/@YouTubeGaming', 'https://www.youtube.com/@IGN'],
+    news: ['https://www.youtube.com/@BBCNews', 'https://www.youtube.com/@CNN'],
+    tech: ['https://www.youtube.com/@MKBHD', 'https://www.youtube.com/@LinusTechTips'],
+    default: ['https://www.youtube.com/@MrBeast', 'https://www.youtube.com/@pewdiepie'],
+  };
+
+  const fetchFromUrl = async (url: string, limit: number): Promise<YouTubeSearchResult[]> => {
+    // First get video IDs with flat playlist
+    const videoIds = await new Promise<string[]>((resolve) => {
+      const ytdlp = spawn('yt-dlp', [
+        '--flat-playlist',
+        '--no-warnings',
+        '-I', `1:${limit}`,
+        '--get-id',
+        url
+      ]);
+
+      let output = '';
+      let error = '';
+
+      ytdlp.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+
+      ytdlp.stderr.on('data', (data) => {
+        error += data.toString();
+      });
+
+      ytdlp.on('close', (code) => {
+        if (code !== 0 || !output) {
+          console.error('[YouTubeTrending] yt-dlp error:', error);
+          resolve([]);
+          return;
+        }
+
+        const ids = output.trim().split('\n').filter(line => line.trim());
+        resolve(ids);
+      });
+
+      ytdlp.on('error', (err) => {
+        console.error('[YouTubeTrending] yt-dlp spawn error:', err);
+        resolve([]);
+      });
+    });
+
+    if (videoIds.length === 0) return [];
+
+    // Now fetch full metadata for each video in parallel
+    const metadataPromises = videoIds.map(id => 
+      new Promise<YouTubeSearchResult | null>((resolve) => {
+        const ytdlp = spawn('yt-dlp', [
+          '--dump-json',
+          '--no-warnings',
+          `https://www.youtube.com/watch?v=${id}`
+        ]);
+
+        let output = '';
+        let error = '';
+
+        ytdlp.stdout.on('data', (data) => {
+          output += data.toString();
+        });
+
+        ytdlp.stderr.on('data', (data) => {
+          error += data.toString();
+        });
+
+        ytdlp.on('close', (code) => {
+          if (code !== 0 || !output) {
+            resolve(null);
+            return;
+          }
+
+          try {
+            const info = JSON.parse(output.trim());
+            resolve({
+              id: info.id,
+              title: info.title || 'Unknown',
+              duration: info.duration ? formatDuration(info.duration) : 'Live',
+              channel: info.channel || info.uploader || info.uploader_id || 'Unknown',
+              url: info.url || `https://www.youtube.com/watch?v=${info.id}`,
+              thumbnail: info.thumbnail || `https://i.ytimg.com/vi/${info.id}/hqdefault.jpg`,
+              description: info.description ? (info.description.substring(0, 100) + '...') : 'No description',
+              views: info.view_count ? formatNumber(info.view_count) : 'Unknown',
+              likes: info.like_count ? formatNumber(info.like_count) : 'Unknown',
+              uploadDate: info.upload_date ? formatDate(info.upload_date) : 'Unknown',
+            });
+          } catch (e) {
+            resolve(null);
+          }
+        });
+
+        ytdlp.on('error', () => {
+          resolve(null);
+        });
+      })
+    );
+
+    const metadataResults = await Promise.all(metadataPromises);
+    const results = metadataResults.filter((r): r is YouTubeSearchResult => r !== null);
+    return results;
+  };
+
+  const formatDuration = (seconds: number | null): string => {
+    if (!seconds) return 'Live';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) {
+      return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+    return `${m}:${String(s).padStart(2, '0')}`;
+  };
+
+  const formatNumber = (num: number): string => {
+    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+    if (num >= 1000) return `${(num / 1000).toFixed(0)}K`;
+    return num.toString();
+  };
+
+  const formatDate = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString();
+  };
+
+  // Try trending feed first
+  const categoryKey = category as keyof typeof CATEGORY_URLS;
+  const trendingUrl = CATEGORY_URLS[categoryKey] || CATEGORY_URLS.default;
+  let results = await fetchFromUrl(trendingUrl, 10);
+  
+  // If trending fails, try fallback channels
+  if (results.length === 0) {
+    const categoryKey = category as keyof typeof FALLBACK_CHANNELS;
+    const fallbackChannelUrls = FALLBACK_CHANNELS[categoryKey] || FALLBACK_CHANNELS.default;
+    
+    for (const channelUrl of fallbackChannelUrls) {
+      const channelResults = await fetchFromUrl(channelUrl, 5);
+      results.push(...channelResults);
+      if (results.length >= 10) break;
+    }
+  }
+
+  if (results.length === 0) {
+    await interaction.editReply('❌ No trending videos found. Try again later or a different category.');
+    return;
+  }
+
+  // Cache results for ytp command
+  youtubeSearchSessions.set(interaction.user.id, {
+    results,
+    timestamp: Date.now(),
+  });
+  youtubeSearchPages.set(interaction.user.id, { page: 0 });
+
+  // Display results
+  await displayYouTubeSearchPage(interaction, 0);
+}
+
 async function displayYouTubeSearchPage(interaction: ChatInputCommandInteraction | ButtonInteraction, page: number): Promise<void> {
   const session = youtubeSearchSessions.get(interaction.user.id);
   if (!session || Date.now() - session.timestamp > SESSION_TIMEOUT) {
@@ -965,96 +1212,99 @@ async function displayYouTubeSearchPage(interaction: ChatInputCommandInteraction
   }
 
   const results = session.results;
-  const resultsPerPage = 5;
-  const totalPages = Math.ceil(results.length / resultsPerPage);
-  const startIndex = page * resultsPerPage;
-  const endIndex = Math.min(startIndex + resultsPerPage, results.length);
-  const pageResults = results.slice(startIndex, endIndex);
+  const totalPages = results.length; // One video per page
+  
+  if (page >= totalPages || page < 0) {
+    await interaction.editReply({ content: '❌ Invalid page number', embeds: [], components: [] });
+    return;
+  }
 
-  // Create embed with multiple results
+  const video = results[page];
+  const actualIndex = page + 1;
+
+  // Create embed with full video details
   const embed = new EmbedBuilder()
-    .setTitle('🎬 YouTube Search Results')
-    .setDescription(`Found ${results.length} results (Page ${page + 1}/${totalPages})`)
-    .setColor(0xff0000);
-
-  // Add each result as a field
-  pageResults.forEach((r, i) => {
-    const actualIndex = startIndex + i;
-    embed.addFields({
-      name: `${actualIndex + 1}. ${r.title}`,
-      value: `👤 ${r.channel} • ⏱️ ${r.duration} • 👁️ ${r.views} • 👍 ${r.likes}\n${r.description.substring(0, 150)}${r.description.length > 150 ? '...' : ''}`,
-      inline: false
+    .setTitle(`🎬 ${video.title}`)
+    .setURL(video.url)
+    .setColor(0xff0000)
+    .setThumbnail(video.thumbnail)
+    .addFields(
+      { name: '👤 Channel', value: video.channel, inline: true },
+      { name: '⏱️ Duration', value: video.duration, inline: true },
+      { name: '👁️ Views', value: video.views, inline: true },
+      { name: '👍 Likes', value: video.likes, inline: true },
+      { name: '📅 Uploaded', value: video.uploadDate, inline: true },
+      { name: '🔗 Video ID', value: video.id, inline: true }
+    )
+    .setDescription(`**Description:**\n${video.description}`)
+    .setFooter({ 
+      text: `Result ${actualIndex} of ${results.length} • Use /ytp ${actualIndex} to play` 
     });
-  });
 
-  // Set thumbnail to first result's thumbnail
-  if (pageResults.length > 0 && pageResults[0].thumbnail) {
-    embed.setThumbnail(pageResults[0].thumbnail);
-  }
+  // Create action row with play button and pagination
+  const actionRow = new ActionRowBuilder<ButtonBuilder>();
+  
+  // Play button
+  actionRow.addComponents(
+    new ButtonBuilder()
+      .setCustomId(`yt_play_${page}`)
+      .setLabel('▶️ Play')
+      .setStyle(ButtonStyle.Success)
+  );
 
-  // Create action rows with play buttons and pagination
-  const playButtons = [];
-  for (let i = 0; i < pageResults.length; i++) {
-    const actualIndex = startIndex + i;
-    playButtons.push(
+  // Previous button
+  if (page > 0) {
+    actionRow.addComponents(
       new ButtonBuilder()
-        .setCustomId(`yt_play_${actualIndex}`)
-        .setLabel(`${actualIndex + 1}. ▶️ Play`)
-        .setStyle(ButtonStyle.Success)
-    );
-  }
-
-  // Group play buttons in rows of 5
-  const buttonRows: ActionRowBuilder<ButtonBuilder>[] = [];
-  for (let i = 0; i < playButtons.length; i += 5) {
-    buttonRows.push(
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        ...playButtons.slice(i, i + 5)
-      )
-    );
-  }
-
-  // Add pagination row if needed
-  if (totalPages > 1) {
-    const paginationRow = new ActionRowBuilder<ButtonBuilder>();
-    
-    if (page > 0) {
-      paginationRow.addComponents(
-        new ButtonBuilder()
-          .setCustomId('yt_page_prev')
-          .setLabel('◀️ Previous')
-          .setStyle(ButtonStyle.Secondary)
-      );
-    }
-    
-    paginationRow.addComponents(
-      new ButtonBuilder()
-        .setCustomId('yt_page_info')
-        .setLabel(`Page ${page + 1}/${totalPages}`)
+        .setCustomId('yt_page_prev')
+        .setLabel('◀️ Previous')
         .setStyle(ButtonStyle.Secondary)
-        .setDisabled(true)
     );
-    
-    if (page < totalPages - 1) {
-      paginationRow.addComponents(
-        new ButtonBuilder()
-          .setCustomId('yt_page_next')
-          .setLabel('Next ▶️')
-          .setStyle(ButtonStyle.Secondary)
-      );
-    }
-    
-    buttonRows.push(paginationRow);
   }
 
-  // Update page tracking
-  youtubeSearchPages.set(interaction.user.id, { page });
+  // Page info
+  actionRow.addComponents(
+    new ButtonBuilder()
+      .setCustomId('yt_page_info')
+      .setLabel(`${page + 1}/${totalPages}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true)
+  );
 
-  // Send response
-  if (interaction.replied || interaction.deferred) {
-    await interaction.editReply({ embeds: [embed], components: buttonRows });
+  // Next button
+  if (page < totalPages - 1) {
+    actionRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId('yt_page_next')
+        .setLabel('Next ▶️')
+        .setStyle(ButtonStyle.Secondary)
+    );
+  }
+
+  // Quick navigation row for many results
+  const navRow = new ActionRowBuilder<ButtonBuilder>();
+  if (totalPages > 5) {
+    navRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId('yt_page_first')
+        .setLabel('⏮️ First')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('yt_page_last')
+        .setLabel('⏭️ Last')
+        .setStyle(ButtonStyle.Secondary)
+    );
+  }
+
+  const components = [actionRow];
+  if (navRow.components.length > 0) {
+    components.push(navRow);
+  }
+
+  if (interaction.isButton()) {
+    await interaction.update({ embeds: [embed], components });
   } else {
-    await interaction.reply({ embeds: [embed], components: buttonRows });
+    await interaction.editReply({ embeds: [embed], components });
   }
 }
 
@@ -1409,6 +1659,7 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       else if (interaction.customId === 'yt_page_prev') {
         const currentPage = youtubeSearchPages.get(interaction.user.id)?.page || 0;
         if (currentPage > 0) {
+          youtubeSearchPages.set(interaction.user.id, { page: currentPage - 1 });
           await displayYouTubeSearchPage(interaction, currentPage - 1);
         }
       }
@@ -1419,10 +1670,25 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
           return;
         }
         const currentPage = youtubeSearchPages.get(interaction.user.id)?.page || 0;
-        const totalPages = Math.ceil(session.results.length / 5);
+        const totalPages = session.results.length; // One video per page
         if (currentPage < totalPages - 1) {
+          youtubeSearchPages.set(interaction.user.id, { page: currentPage + 1 });
           await displayYouTubeSearchPage(interaction, currentPage + 1);
         }
+      }
+      else if (interaction.customId === 'yt_page_first') {
+        youtubeSearchPages.set(interaction.user.id, { page: 0 });
+        await displayYouTubeSearchPage(interaction, 0);
+      }
+      else if (interaction.customId === 'yt_page_last') {
+        const session = youtubeSearchSessions.get(interaction.user.id);
+        if (!session || Date.now() - session.timestamp > SESSION_TIMEOUT) {
+          await interaction.reply({ content: '❌ Search expired', ephemeral: true });
+          return;
+        }
+        const lastPage = session.results.length - 1;
+        youtubeSearchPages.set(interaction.user.id, { page: lastPage });
+        await displayYouTubeSearchPage(interaction, lastPage);
       }
     }
   }
