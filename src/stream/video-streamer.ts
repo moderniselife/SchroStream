@@ -275,7 +275,7 @@ class VideoStreamer {
         '-b:a', `${config.stream.audioBitrate}k`,
         '-ar', '48000',
         '-ac', '2',
-        '-af', `volume=${volumeMultiplier},dynaudnorm=p=0.9:m=10:s=5,acompressor=threshold=-20dB:ratio=4:attack=5:release=50,alimiter=level_in=1:level_out=0.9:limit=0.9`,
+        '-af', `volume=${volumeMultiplier},acompressor=threshold=-18dB:ratio=3:attack=5:release=100:makeup=2dB`,
         '-f', 'matroska',
         '-'
       );
@@ -481,7 +481,7 @@ class VideoStreamer {
         '-g', gopSize.toString(),
         '-pix_fmt', 'yuv420p',
         // Audio output with volume filter
-        '-af', `volume=${volumeMultiplier},dynaudnorm=p=0.9:m=10:s=5,acompressor=threshold=-20dB:ratio=4:attack=5:release=50,alimiter=level_in=1:level_out=0.9:limit=0.9`,
+        '-af', `volume=${volumeMultiplier},acompressor=threshold=-18dB:ratio=3:attack=5:release=100:makeup=2dB`,
         '-c:a', 'libopus',
         '-b:a', `${config.stream.audioBitrate}k`,
         '-ar', '48000',
