@@ -117,10 +117,12 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     const { spawn } = await import('child_process');
     
     // Get current playback position from Discord stream to sync
+    // Add offset to compensate for FFmpeg startup/buffering delay
     const progress = streamer.getProgress(guildId);
-    const seekSeconds = Math.max(0, Math.floor(progress.current / 1000));
+    const STARTUP_OFFSET = 15; // seconds to add for FFmpeg startup time
+    const seekSeconds = Math.max(0, Math.floor(progress.current / 1000) + STARTUP_OFFSET);
     
-    console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildId}, seeking to ${seekSeconds}s`);
+    console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildId}, seeking to ${seekSeconds}s (current: ${Math.floor(progress.current / 1000)}s + ${STARTUP_OFFSET}s offset)`);
     
     // Build FFmpeg args with seek to current position
     const ffmpegArgs = [
