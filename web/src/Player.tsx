@@ -26,14 +26,15 @@ function Player() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const videoInitializedRef = useRef(false)
 
-  // Initialize video source once
+  // Initialize video source once (after stream metadata loads and video element mounts)
   useEffect(() => {
-    if (videoRef.current && !videoInitializedRef.current && guildId) {
-      videoRef.current.src = `/api/stream/${guildId}/hls`
+    if (videoRef.current && !videoInitializedRef.current && guildId && stream) {
+      const proxyUrl = `/api/stream/${guildId}/hls`
+      console.log('[Player] Setting video source:', proxyUrl)
+      videoRef.current.src = proxyUrl
       videoInitializedRef.current = true
-      console.log('[Player] Video source set')
     }
-  }, [guildId])
+  }, [guildId, stream])
 
   // Refresh metadata only (no video source changes)
   useEffect(() => {
