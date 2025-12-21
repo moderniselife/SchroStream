@@ -141,16 +141,19 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
       );
     }
 
-    // Output args
+    // Output args - use fragmented MP4 for universal browser support
     ffmpegArgs.push(
       '-map', '0:v:0?',
       '-map', session.audioUrl ? '1:a:0?' : '0:a:0?',
-      '-c:v', 'copy', // Copy video codec (faster)
-      '-c:a', 'aac', // Convert audio to AAC for browser compatibility
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-tune', 'zerolatency',
+      '-c:a', 'aac',
       '-b:a', '192k',
       '-ar', '48000',
       '-ac', '2',
-      '-f', 'mpegts', // MPEG-TS for streaming
+      '-f', 'mp4',
+      '-movflags', 'frag_keyframe+empty_moov+faststart',
       'pipe:1'
     );
 
@@ -159,7 +162,7 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     const ffmpeg = spawn('ffmpeg', ffmpegArgs);
     
     // Set headers for streaming
-    res.setHeader('Content-Type', 'video/mp2t');
+    res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     
