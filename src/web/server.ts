@@ -103,8 +103,8 @@ app.get('/api/stream/:guildId/url', (req: Request, res: Response) => {
   }
 });
 
-// Proxy endpoint for streams (to avoid CORS issues)
-app.get('/api/proxy/:guildId', async (req: Request, res: Response) => {
+// Stream proxy endpoint - serves FFmpeg-processed HLS stream
+app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
   const { guildId } = req.params;
   const streamer = getVideoStreamer();
   const session = streamer.getSession(guildId);
@@ -112,31 +112,92 @@ app.get('/api/proxy/:guildId', async (req: Request, res: Response) => {
   if (!session) {
     return res.status(404).json({ error: 'Stream not found' });
   }
-  
+
   try {
-    const response = await fetch(session.streamUrl);
+    const { spawn } = await import('child_process');
+    const config = (await import('../config.js')).default;
     
-    // Forward headers
-    response.headers.forEach((value, key) => {
-      res.setHeader(key, value);
+    const height = config.stream.defaultQuality;
+    const width = Math.round(height * (16 / 9));
+    
+    // Build FFmpeg args to process and serve as HLS
+    const ffmpegArgs = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-reconnect', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '5',
+      '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+      '-i', session.streamUrl,
+    ];
+
+    // Add audio input if separate (YouTube)
+    if (session.audioUrl) {
+      ffmpegArgs.push(
+        '-reconnect', '1',
+        '-reconnect_streamed', '1',
+        '-reconnect_delay_max', '5',
+        '-i', session.audioUrl
+      );
+    }
+
+    // Output args
+    ffmpegArgs.push(
+      '-map', '0:v:0?',
+      '-map', session.audioUrl ? '1:a:0?' : '0:a:0?',
+      '-c:v', 'copy', // Copy video codec (faster)
+      '-c:a', 'aac', // Convert audio to AAC for browser compatibility
+      '-b:a', '192k',
+      '-ar', '48000',
+      '-ac', '2',
+      '-f', 'mpegts', // MPEG-TS for streaming
+      'pipe:1'
+    );
+
+    console.log('[WebServer] Starting FFmpeg proxy for guild:', guildId);
+    
+    const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+    
+    // Set headers for streaming
+    res.setHeader('Content-Type', 'video/mp2t');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    
+    // Pipe FFmpeg output to response
+    ffmpeg.stdout.pipe(res);
+    
+    ffmpeg.stderr.on('data', (data: Buffer) => {
+      const msg = data.toString().trim();
+      if (msg && msg.includes('error')) {
+        console.error('[WebServer FFmpeg]', msg);
+      }
     });
     
-    // Pipe the stream
-    const reader = response.body?.getReader();
-    if (!reader) {
-      return res.status(500).json({ error: 'Failed to read stream' });
-    }
+    ffmpeg.on('error', (err: Error) => {
+      console.error('[WebServer] FFmpeg error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Stream processing failed' });
+      }
+    });
     
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(Buffer.from(value));
-    }
+    ffmpeg.on('exit', (code: number | null) => {
+      console.log('[WebServer] FFmpeg exited with code:', code);
+      if (!res.headersSent) {
+        res.end();
+      }
+    });
     
-    res.end();
+    // Clean up on client disconnect
+    req.on('close', () => {
+      console.log('[WebServer] Client disconnected, killing FFmpeg');
+      ffmpeg.kill('SIGKILL');
+    });
+    
   } catch (error) {
-    console.error('[WebServer] Proxy error:', error);
-    res.status(500).json({ error: 'Failed to proxy stream' });
+    console.error('[WebServer] Stream proxy error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to start stream proxy' });
+    }
   }
 });
 

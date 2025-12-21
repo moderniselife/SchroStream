@@ -37,18 +37,9 @@ function Player() {
         const data = await response.json()
         setStream(data)
 
-        // Get stream URL and initialize player
-        const urlResponse = await fetch(`/api/stream/${guildId}/url`)
-        const urlData = await urlResponse.json()
-
-        // Check if this is a YouTube stream with separate audio
-        if (urlData.audioUrl) {
-          setError('YouTube streams cannot be played in the web player (separate audio/video streams). Watch in Discord!')
-          return
-        }
-
-        if (videoRef.current && urlData.url) {
-          videoRef.current.src = urlData.url
+        // Use FFmpeg proxy endpoint for all streams
+        if (videoRef.current) {
+          videoRef.current.src = `/api/stream/${guildId}/hls`
           if (data.currentTime > 0) {
             videoRef.current.currentTime = data.currentTime / 1000
           }
