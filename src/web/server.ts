@@ -201,13 +201,13 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
   }
 });
 
-// HTML page route
-app.get('/', (req: Request, res: Response) => {
+// Serve React SPA for all non-API routes
+app.get('*', (req: Request, res: Response) => {
+  // Don't serve HTML for API routes
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'Not found' });
+  }
   res.sendFile(join(process.cwd(), 'public', 'index.html'));
-});
-
-app.get('/player/:guildId', (req: Request, res: Response) => {
-  res.sendFile(join(process.cwd(), 'public', 'player.html'));
 });
 
 // Export functions for integration
