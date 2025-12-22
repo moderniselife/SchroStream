@@ -288,15 +288,36 @@ app.post('/api/control/youtube', async (req: Request, res: Response) => {
     }
     
     // Get best video and audio URLs from formats
-    const videoFormat = info.formats?.find((f: any) => f.vcodec !== 'none' && f.acodec === 'none' && f.url);
-    const audioFormat = info.formats?.find((f: any) => f.acodec !== 'none' && f.vcodec === 'none' && f.url);
+    // YouTube's highest quality video is in video-only streams (acodec === 'none')
+    const videoOnlyFormats = info.formats?.filter((f: any) => 
+      f.vcodec !== 'none' && f.acodec === 'none' && f.url && f.height
+    ) || [];
     
-    // Use requested_formats if available (merged format), otherwise use separate streams
-    const videoUrl = info.requested_formats?.[0]?.url || videoFormat?.url || info.url;
-    const audioUrl = info.requested_formats?.[1]?.url || audioFormat?.url || null;
+    const audioOnlyFormats = info.formats?.filter((f: any) => 
+      f.acodec !== 'none' && f.vcodec === 'none' && f.url
+    ) || [];
     
-    console.log('[WebServer] YouTube video URL:', videoUrl);
-    console.log('[WebServer] YouTube audio URL:', audioUrl);
+    // Sort video by height (resolution) descending, then by bitrate
+    videoOnlyFormats.sort((a: any, b: any) => {
+      const heightDiff = (b.height || 0) - (a.height || 0);
+      if (heightDiff !== 0) return heightDiff;
+      return (b.vbr || b.tbr || 0) - (a.vbr || a.tbr || 0);
+    });
+    
+    // Sort audio by bitrate descending
+    audioOnlyFormats.sort((a: any, b: any) => (b.abr || b.tbr || 0) - (a.abr || a.tbr || 0));
+    
+    // Use requested_formats if available (already best quality from yt-dlp), otherwise use our sorted best
+    const videoUrl = info.requested_formats?.[0]?.url || videoOnlyFormats[0]?.url || info.url;
+    const audioUrl = info.requested_formats?.[1]?.url || audioOnlyFormats[0]?.url || null;
+    
+    const videoQuality = info.requested_formats?.[0] || videoOnlyFormats[0];
+    const audioQuality = info.requested_formats?.[1] || audioOnlyFormats[0];
+    
+    console.log('[WebServer] YouTube video:', videoQuality?.height + 'p', videoQuality?.vcodec, 'vbr:', videoQuality?.vbr, 'tbr:', videoQuality?.tbr);
+    console.log('[WebServer] YouTube audio:', audioQuality?.acodec, 'abr:', audioQuality?.abr);
+    console.log('[WebServer] Video URL (first 100 chars):', videoUrl?.substring(0, 100));
+    console.log('[WebServer] Audio URL (first 100 chars):', audioUrl?.substring(0, 100));
     
     const streamer = getVideoStreamer();
     await streamer.startExternalStream(
