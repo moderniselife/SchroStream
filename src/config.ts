@@ -29,6 +29,9 @@ export const config: Config = {
     allowedGuilds: parseCommaSeparated(process.env.ALLOWED_GUILDS),
     botToken: process.env.BOT_TOKEN,
     clientId: process.env.BOT_CLIENT_ID,
+    webUserId: process.env.WEB_USER_ID, // User ID allowed to start streams from web
+    webGuildId: process.env.WEB_GUILD_ID, // Default guild for web streams
+    webChannelId: process.env.WEB_CHANNEL_ID, // Default voice channel for web streams
   },
   plex: {
     url: getEnvOrThrow('PLEX_URL').replace(/\/$/, ''),

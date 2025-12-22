@@ -80,6 +80,9 @@ export interface Config {
     allowedGuilds: string[];
     botToken?: string;
     clientId?: string;
+    webUserId?: string;
+    webGuildId?: string;
+    webChannelId?: string;
   };
   plex: {
     url: string;

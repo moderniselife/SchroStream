@@ -6,6 +6,8 @@ import type { VideoStreamSession } from '../stream/video-streamer.js';
 import plexClient from '../plex/client.js';
 import { parseTimeString } from '../plex/library.js';
 import { client as selfbotClient } from '../bot/client.js';
+import config from '../config.js';
+import { spawn } from 'child_process';
 
 const app = express();
 const PORT = process.env.WEB_PORT || 3105;
@@ -120,9 +122,35 @@ app.post('/api/control/search', async (req: Request, res: Response) => {
 app.post('/api/control/play', async (req: Request, res: Response) => {
   try {
     const { number } = req.body;
-    // This would need to integrate with the bot command system
-    // For now, return error as it needs guild/channel context
-    res.json({ success: false, error: 'Play command requires voice channel context. Use Discord bot instead.' });
+    
+    // Check if web control is configured
+    if (!config.discord.webUserId || !config.discord.webGuildId || !config.discord.webChannelId) {
+      return res.json({ success: false, error: 'Web control not configured. Set WEB_USER_ID, WEB_GUILD_ID, and WEB_CHANNEL_ID in .env' });
+    }
+    
+    // Get search results from Plex
+    const results = await plexClient.search(''); // This needs to be stored per session
+    if (!results || results.length < number) {
+      return res.json({ success: false, error: 'Invalid result number or search expired' });
+    }
+    
+    const item = results[number - 1];
+    const streamInfo = await plexClient.getDirectStreamUrl(item.ratingKey);
+    if (!streamInfo) {
+      return res.json({ success: false, error: 'Failed to get stream URL' });
+    }
+    
+    const streamer = getVideoStreamer();
+    await streamer.startStream(
+      config.discord.webGuildId,
+      config.discord.webChannelId,
+      item,
+      streamInfo.url,
+      0,
+      config.discord.webUserId
+    );
+    
+    res.json({ success: true, message: `Playing: ${item.title}` });
   } catch (error) {
     res.json({ success: false, error: 'Play failed' });
   }
@@ -228,7 +256,54 @@ app.post('/api/control/volume', async (req: Request, res: Response) => {
 
 app.post('/api/control/youtube', async (req: Request, res: Response) => {
   try {
-    res.json({ success: false, error: 'YouTube playback requires Discord bot context for voice channel' });
+    const { url } = req.body;
+    
+    if (!config.discord.webUserId || !config.discord.webGuildId || !config.discord.webChannelId) {
+      return res.json({ success: false, error: 'Web control not configured. Set WEB_USER_ID, WEB_GUILD_ID, and WEB_CHANNEL_ID in .env' });
+    }
+    
+    // Get stream info using yt-dlp
+    const ytdlp = spawn('yt-dlp', [
+      '--dump-json',
+      '--no-warnings',
+      '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+      url
+    ]);
+    
+    let output = '';
+    ytdlp.stdout.on('data', (data) => output += data.toString());
+    
+    const info = await new Promise<any>((resolve) => {
+      ytdlp.on('close', () => {
+        try {
+          resolve(JSON.parse(output));
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    
+    if (!info) {
+      return res.json({ success: false, error: 'Failed to get video info' });
+    }
+    
+    const streamer = getVideoStreamer();
+    await streamer.startExternalStream(
+      config.discord.webGuildId,
+      config.discord.webChannelId,
+      {
+        title: info.title || 'YouTube Video',
+        ratingKey: info.id,
+        key: `/library/metadata/${info.id}`,
+        type: 'movie',
+        duration: (info.duration || 0) * 1000,
+      },
+      info.url,
+      config.discord.webUserId,
+      info.formats?.find((f: any) => f.acodec !== 'none')?.url || null
+    );
+    
+    res.json({ success: true, message: `Playing: ${info.title}` });
   } catch (error) {
     res.json({ success: false, error: 'YouTube playback failed' });
   }
@@ -236,7 +311,46 @@ app.post('/api/control/youtube', async (req: Request, res: Response) => {
 
 app.post('/api/control/youtube-search', async (req: Request, res: Response) => {
   try {
-    res.json({ success: false, error: 'YouTube search not yet implemented in web API' });
+    const { query } = req.body;
+    
+    const ytdlp = spawn('yt-dlp', [
+      '--dump-json',
+      '--flat-playlist',
+      '--no-warnings',
+      '-I', '1:20',
+      `ytsearch20:${query}`
+    ]);
+    
+    let output = '';
+    ytdlp.stdout.on('data', (data) => output += data.toString());
+    
+    const results = await new Promise<any[]>((resolve) => {
+      ytdlp.on('close', () => {
+        try {
+          const lines = output.trim().split('\n');
+          const parsed = lines.map(line => {
+            try {
+              const data = JSON.parse(line);
+              return {
+                id: data.id,
+                title: data.title,
+                duration: data.duration ? `${Math.floor(data.duration / 60)}:${String(Math.floor(data.duration % 60)).padStart(2, '0')}` : 'N/A',
+                channel: data.channel || data.uploader || 'Unknown',
+                url: data.url || `https://youtube.com/watch?v=${data.id}`,
+                views: data.view_count ? `${(data.view_count / 1000000).toFixed(1)}M views` : '',
+              };
+            } catch {
+              return null;
+            }
+          }).filter(Boolean);
+          resolve(parsed);
+        } catch {
+          resolve([]);
+        }
+      });
+    });
+    
+    res.json({ success: true, results });
   } catch (error) {
     res.json({ success: false, error: 'YouTube search failed' });
   }
@@ -244,7 +358,29 @@ app.post('/api/control/youtube-search', async (req: Request, res: Response) => {
 
 app.post('/api/control/url', async (req: Request, res: Response) => {
   try {
-    res.json({ success: false, error: 'URL playback requires Discord bot context for voice channel' });
+    const { url, title } = req.body;
+    
+    if (!config.discord.webUserId || !config.discord.webGuildId || !config.discord.webChannelId) {
+      return res.json({ success: false, error: 'Web control not configured. Set WEB_USER_ID, WEB_GUILD_ID, and WEB_CHANNEL_ID in .env' });
+    }
+    
+    const streamer = getVideoStreamer();
+    await streamer.startExternalStream(
+      config.discord.webGuildId,
+      config.discord.webChannelId,
+      {
+        title: title || 'External Stream',
+        ratingKey: url,
+        key: `/library/metadata/${url}`,
+        type: 'movie',
+        duration: 0,
+      },
+      url,
+      config.discord.webUserId,
+      null
+    );
+    
+    res.json({ success: true, message: `Playing: ${title || 'External Stream'}` });
   } catch (error) {
     res.json({ success: false, error: 'URL playback failed' });
   }
