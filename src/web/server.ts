@@ -116,15 +116,22 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
   try {
     const { spawn } = await import('child_process');
     
+    // Detect if this is an HLS stream (external) or direct video (YouTube)
+    const isHLS = session.streamUrl.includes('.m3u8') || session.streamUrl.includes('javascript.json');
+    
     // Get current playback position from Discord stream to sync
-    // Add offset to compensate for FFmpeg startup/buffering delay
+    // Only seek for non-HLS streams (HLS streams are live and can't seek reliably)
     const progress = streamer.getProgress(guildId);
     const STARTUP_OFFSET = 15; // seconds to add for FFmpeg startup time
     const seekSeconds = Math.max(0, Math.floor(progress.current / 1000) + STARTUP_OFFSET);
     
-    console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildId}, seeking to ${seekSeconds}s (current: ${Math.floor(progress.current / 1000)}s + ${STARTUP_OFFSET}s offset)`);
+    if (isHLS) {
+      console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildId} (HLS live stream, no seek)`);
+    } else {
+      console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildId}, seeking to ${seekSeconds}s (current: ${Math.floor(progress.current / 1000)}s + ${STARTUP_OFFSET}s offset)`);
+    }
     
-    // Build FFmpeg args with seek to current position
+    // Build FFmpeg args
     const ffmpegArgs = [
       '-hide_banner',
       '-loglevel', 'error',
@@ -132,19 +139,28 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
       '-reconnect_streamed', '1',
       '-reconnect_delay_max', '5',
       '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-      '-ss', seekSeconds.toString(), // Seek to current position
-      '-i', session.streamUrl,
     ];
+    
+    // Only add seek for non-HLS streams
+    if (!isHLS) {
+      ffmpegArgs.push('-ss', seekSeconds.toString());
+    }
+    
+    ffmpegArgs.push('-i', session.streamUrl);
 
     // Add audio input if separate (YouTube) - also seek audio to same position
     if (session.audioUrl) {
       ffmpegArgs.push(
         '-reconnect', '1',
         '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5',
-        '-ss', seekSeconds.toString(), // Seek audio to same position
-        '-i', session.audioUrl
+        '-reconnect_delay_max', '5'
       );
+      
+      if (!isHLS) {
+        ffmpegArgs.push('-ss', seekSeconds.toString());
+      }
+      
+      ffmpegArgs.push('-i', session.audioUrl);
     }
 
     // Output args - optimized for low-memory streaming
