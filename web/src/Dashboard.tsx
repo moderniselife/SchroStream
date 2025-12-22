@@ -44,12 +44,12 @@ function Dashboard() {
   // Auto-redirect to active stream if one exists
   useEffect(() => {
     if (!loading && streams.length === 1) {
-      navigate(`/player/${streams[0].guildId}`)
+      navigate(`/?stream=${streams[0].guildId}`)
     }
   }, [loading, streams, navigate])
 
   const handleStreamClick = (guildId: string) => {
-    navigate(`/player/${guildId}`)
+    navigate(`/?stream=${guildId}`)
   }
 
   return (

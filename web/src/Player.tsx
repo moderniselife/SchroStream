@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Play, Pause, Volume2, Clock, Tv, AlertCircle, ChevronRight } from 'lucide-react'
 import { formatTime } from './lib/utils'
 
@@ -18,8 +18,11 @@ interface StreamInfo {
   year?: number
 }
 
-function Player() {
-  const { guildId } = useParams<{ guildId: string }>()
+interface PlayerProps {
+  guildId: string
+}
+
+function Player({ guildId }: PlayerProps) {
   const navigate = useNavigate()
   const [stream, setStream] = useState<StreamInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
