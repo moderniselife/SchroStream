@@ -1,6 +1,7 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
 import { Client } from 'discord.js-selfbot-v13';
 import { spawn } from 'child_process';
+import { PassThrough } from 'stream';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { PlexMediaItem } from '../types/index.js';
@@ -28,6 +29,7 @@ export interface VideoStreamSession {
   isExternal?: boolean; // Flag for external streams (YouTube, URLs)
   audioUrl?: string; // Separate audio URL for YouTube streams
   sessionId?: string; // Plex transcode session ID for reuse
+  sharedStream?: PassThrough; // Shared stream for web clients (forked from Discord stream)
 }
 
 // Store playback positions for resume functionality (ratingKey -> position in ms)
@@ -527,12 +529,37 @@ class VideoStreamer {
         updateWatchDeck(session.mediaItem, startTimeMs, session.userId);
       }
 
-      // Register stream for web viewing (web will do its own transcode)
+      // Create two PassThrough streams to fork the FFmpeg output
+      // One goes to Discord, one is available for web clients
+      const discordStream = new PassThrough();
+      const webStream = new PassThrough({ highWaterMark: 1024 * 1024 }); // 1MB buffer for web
+      session.sharedStream = webStream;
+      
+      // Fork FFmpeg output to both streams
+      ffmpeg.stdout.on('data', (chunk: Buffer) => {
+        discordStream.write(chunk);
+        // Only write to web stream if it's not backed up (non-blocking)
+        if (!webStream.destroyed && webStream.writableLength < webStream.writableHighWaterMark) {
+          webStream.write(chunk);
+        }
+      });
+      
+      ffmpeg.stdout.on('end', () => {
+        discordStream.end();
+        if (!webStream.destroyed) webStream.end();
+      });
+      
+      ffmpeg.stdout.on('error', (err) => {
+        discordStream.destroy(err);
+        if (!webStream.destroyed) webStream.destroy(err);
+      });
+
+      // Register stream for web viewing
       const { registerWebStream } = await import('../web/server.js');
       registerWebStream(session.guildId, session, actualStreamUrl);
 
-      // Pass the FFmpeg stdout stream to playStream
-      await playStream(ffmpeg.stdout, this.streamer, {
+      // Pass the Discord fork to playStream
+      await playStream(discordStream, this.streamer, {
         type: 'go-live',
       });
 

@@ -495,6 +495,54 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
   try {
     const { spawn } = await import('child_process');
     
+    // Check if we can reuse the shared stream from Discord (Plex streams)
+    // This avoids re-transcoding - we just remux from matroska to fMP4
+    if (session.sharedStream && !session.sharedStream.destroyed && !session.isExternal) {
+      console.log(`[WebServer] Reusing shared Discord stream for guild ${guildId} (no re-transcode)`);
+      
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Transfer-Encoding', 'chunked');
+      res.setHeader('Cache-Control', 'no-cache, no-store');
+      res.setHeader('Connection', 'keep-alive');
+      
+      // Remux from matroska to fragmented MP4 (video copy, audio transcode to AAC)
+      const ffmpeg = spawn('ffmpeg', [
+        '-hide_banner',
+        '-loglevel', 'warning',
+        '-f', 'matroska',
+        '-i', 'pipe:0',
+        // Copy video without re-encoding
+        '-c:v', 'copy',
+        // Transcode audio since opus isn't supported in MP4 container
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        // Output format
+        '-f', 'mp4',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        'pipe:1'
+      ]);
+      
+      // Pipe shared stream to FFmpeg for remuxing
+      session.sharedStream.pipe(ffmpeg.stdin);
+      
+      // Pipe FFmpeg output to response
+      ffmpeg.stdout.pipe(res);
+      
+      ffmpeg.stderr.on('data', (data: Buffer) => {
+        const msg = data.toString().trim();
+        if (msg && !msg.includes('frame=')) {
+          console.error('[WebServer Remux]', msg);
+        }
+      });
+      
+      req.on('close', () => {
+        ffmpeg.kill('SIGTERM');
+      });
+      
+      return;
+    }
+    
+    // Fallback: Full transcode for external streams (YouTube, URLs) or if shared stream unavailable
     // Detect if this is an HLS stream (external masked) or direct video (YouTube/Plex)
     const needsHLSFetcher = (session.streamUrl.includes('.json') || 
                             session.streamUrl.includes('.svg') || 
