@@ -134,7 +134,7 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     // Build FFmpeg args
     const ffmpegArgs = [
       '-hide_banner',
-      '-loglevel', 'error',
+      '-loglevel', 'warning',
       '-reconnect', '1',
       '-reconnect_streamed', '1',
       '-reconnect_delay_max', '5',
@@ -202,8 +202,8 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     
     ffmpeg.stderr.on('data', (data: Buffer) => {
       const msg = data.toString().trim();
-      if (msg && msg.includes('error')) {
-        console.error('[WebServer FFmpeg]', msg);
+      if (msg) {
+        console.log('[WebServer FFmpeg]', msg);
       }
     });
     
