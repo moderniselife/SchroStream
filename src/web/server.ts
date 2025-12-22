@@ -399,13 +399,16 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
   try {
     const { spawn } = await import('child_process');
     
-    // Detect if this is an HLS stream (external) or direct video (YouTube)
-    const needsHLSFetcher = session.streamUrl.includes('.json') || 
+    // Detect if this is an HLS stream (external masked) or direct video (YouTube/Plex)
+    // Only use HLSFetcher for masked streams with .json/.svg/.php/.txt/.js extensions
+    // YouTube and Plex streams should use direct FFmpeg input
+    const needsHLSFetcher = (session.streamUrl.includes('.json') || 
                             session.streamUrl.includes('.svg') || 
                             session.streamUrl.includes('.php') ||
                             session.streamUrl.includes('.txt') ||
-                            session.streamUrl.includes('.js') ||
-                            session.streamUrl.includes('.m3u8');
+                            session.streamUrl.includes('.js')) &&
+                            !session.streamUrl.includes('googlevideo.com') &&
+                            !session.streamUrl.includes('plex');
     
     // Get current playback position from Discord stream to sync
     const progress = streamer.getProgress(guildId);
