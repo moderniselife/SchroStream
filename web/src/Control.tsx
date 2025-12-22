@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Play, Pause, StopCircle, FastForward, Volume2, Search, Youtube, Link, SkipForward, Clock } from 'lucide-react'
+import { Play, Pause, StopCircle, FastForward, Volume2, Search, Youtube, Link, SkipForward, Clock, ChevronRight, X, Tv } from 'lucide-react'
 
 interface Stream {
   guildId: string
@@ -8,6 +8,17 @@ interface Stream {
   duration: number
   isPaused: boolean
   volume: number
+}
+
+interface PlexItem {
+  ratingKey: string
+  title: string
+  type: string
+  year?: number
+  index?: number
+  parentIndex?: number
+  grandparentTitle?: string
+  childCount?: number
 }
 
 function Control() {
@@ -19,6 +30,12 @@ function Control() {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<any[]>([])
   const [searchType, setSearchType] = useState<'plex' | 'youtube'>('plex')
+
+  // TV Show episode selection states
+  const [selectedShow, setSelectedShow] = useState<PlexItem | null>(null)
+  const [seasons, setSeasons] = useState<PlexItem[]>([])
+  const [selectedSeason, setSelectedSeason] = useState<PlexItem | null>(null)
+  const [episodes, setEpisodes] = useState<PlexItem[]>([])
 
   // Command inputs
   const [seekTime, setSeekTime] = useState('')
@@ -105,11 +122,83 @@ function Control() {
     if (searchType === 'youtube') {
       // For YouTube, use the URL from the search result
       await executeCommand('youtube', { url: result.url })
+      setSearchResults([])
+    } else if (result.type === 'show') {
+      // For TV shows, open episode selector
+      setSelectedShow(result)
+      await loadSeasons(result.ratingKey)
     } else {
-      // For Plex, use the play command with index
+      // For Plex movies, use the play command with index
       await executeCommand('play', { number: index + 1 })
+      setSearchResults([])
     }
-    setSearchResults([])
+  }
+
+  const loadSeasons = async (showKey: string) => {
+    setLoading(true)
+    try {
+      const response = await fetch(`/api/plex/seasons/${showKey}`)
+      const data = await response.json()
+      if (data.success) {
+        setSeasons(data.seasons || [])
+        setSelectedSeason(null)
+        setEpisodes([])
+      }
+    } catch (error) {
+      showMessage('Failed to load seasons', true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadEpisodes = async (seasonKey: string) => {
+    setLoading(true)
+    try {
+      const response = await fetch(`/api/plex/episodes/${seasonKey}`)
+      const data = await response.json()
+      if (data.success) {
+        setEpisodes(data.episodes || [])
+      }
+    } catch (error) {
+      showMessage('Failed to load episodes', true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSeasonSelect = async (season: PlexItem) => {
+    setSelectedSeason(season)
+    await loadEpisodes(season.ratingKey)
+  }
+
+  const handleEpisodePlay = async (episode: PlexItem) => {
+    setLoading(true)
+    try {
+      const response = await fetch('/api/control/play-episode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ratingKey: episode.ratingKey }),
+      })
+      const data = await response.json()
+      if (data.success) {
+        showMessage(data.message || 'Playing episode')
+        closeEpisodeSelector()
+        loadActiveStream()
+      } else {
+        showMessage(data.error || 'Failed to play episode', true)
+      }
+    } catch (error) {
+      showMessage('Failed to play episode', true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const closeEpisodeSelector = () => {
+    setSelectedShow(null)
+    setSeasons([])
+    setSelectedSeason(null)
+    setEpisodes([])
   }
 
   return (
@@ -314,26 +403,108 @@ function Control() {
             </div>
 
             {/* Search Results */}
-            {searchResults.length > 0 && (
+            {searchResults.length > 0 && !selectedShow && (
               <div className="space-y-2 max-h-96 overflow-y-auto custom-scrollbar">
                 {searchResults.map((result, index) => (
                   <div
                     key={index}
                     className="flex items-center justify-between p-4 bg-white/[0.02] border border-white/[0.06] rounded-xl hover:bg-white/[0.05] hover:border-white/[0.1] transition-all group"
                   >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-medium truncate">{result.title}</p>
-                      <p className="text-xs text-zinc-500 mt-1">{result.year || result.channel}</p>
+                    <div className="flex-1 min-w-0 flex items-center gap-3">
+                      {result.type === 'show' && (
+                        <Tv className="w-5 h-5 text-purple-400 shrink-0" />
+                      )}
+                      <div>
+                        <p className="text-white font-medium truncate">{result.title}</p>
+                        <p className="text-xs text-zinc-500 mt-1">
+                          {result.type === 'show' ? `TV Show • ${result.childCount || '?'} Seasons` : result.year || result.channel}
+                        </p>
+                      </div>
                     </div>
                     <button
                       onClick={() => handlePlay(index)}
                       disabled={loading}
-                      className="ml-4 p-3 bg-gradient-to-r from-purple-500 to-violet-500 hover:from-purple-600 hover:to-violet-600 rounded-xl text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-purple-500/25 group-hover:scale-105"
+                      className="ml-4 p-3 bg-gradient-to-r from-purple-500 to-violet-500 hover:from-purple-600 hover:to-violet-600 rounded-xl text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-purple-500/25 group-hover:scale-105 flex items-center gap-2"
                     >
-                      <Play className="w-4 h-4" />
+                      {result.type === 'show' ? <ChevronRight className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                     </button>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Episode Selector for TV Shows */}
+            {selectedShow && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Tv className="w-5 h-5 text-purple-400" />
+                    <div>
+                      <p className="text-white font-medium">{selectedShow.title}</p>
+                      <p className="text-xs text-zinc-500">Select an episode to play</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={closeEpisodeSelector}
+                    className="p-2 hover:bg-white/[0.05] rounded-lg transition-all"
+                  >
+                    <X className="w-5 h-5 text-zinc-400" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Seasons List */}
+                  <div className="space-y-2">
+                    <p className="text-sm text-zinc-400 font-medium">Seasons</p>
+                    <div className="space-y-1 max-h-64 overflow-y-auto custom-scrollbar">
+                      {seasons.map((season) => (
+                        <button
+                          key={season.ratingKey}
+                          onClick={() => handleSeasonSelect(season)}
+                          className={`w-full text-left px-4 py-3 rounded-xl transition-all ${
+                            selectedSeason?.ratingKey === season.ratingKey
+                              ? 'bg-purple-500/20 border border-purple-500/40 text-white'
+                              : 'bg-white/[0.02] border border-white/[0.06] text-zinc-300 hover:bg-white/[0.05]'
+                          }`}
+                        >
+                          {season.title}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Episodes List */}
+                  <div className="space-y-2">
+                    <p className="text-sm text-zinc-400 font-medium">Episodes</p>
+                    <div className="space-y-1 max-h-64 overflow-y-auto custom-scrollbar">
+                      {episodes.length > 0 ? (
+                        episodes.map((episode) => (
+                          <div
+                            key={episode.ratingKey}
+                            className="flex items-center justify-between px-4 py-3 bg-white/[0.02] border border-white/[0.06] rounded-xl hover:bg-white/[0.05] transition-all group"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <p className="text-white text-sm truncate">
+                                E{String(episode.index || 0).padStart(2, '0')} - {episode.title}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => handleEpisodePlay(episode)}
+                              disabled={loading}
+                              className="ml-2 p-2 bg-gradient-to-r from-purple-500 to-violet-500 hover:from-purple-600 hover:to-violet-600 rounded-lg text-white transition-all disabled:opacity-50 group-hover:scale-105"
+                            >
+                              <Play className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-zinc-500 text-sm px-4 py-3">
+                          {selectedSeason ? 'Loading episodes...' : 'Select a season'}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 

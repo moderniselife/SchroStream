@@ -156,6 +156,73 @@ app.post('/api/control/play', async (req: Request, res: Response) => {
   }
 });
 
+// Get seasons for a TV show
+app.get('/api/plex/seasons/:ratingKey', async (req: Request, res: Response) => {
+  try {
+    const { ratingKey } = req.params;
+    const seasons = await plexClient.getSeasons(ratingKey);
+    res.json({ success: true, seasons });
+  } catch (error) {
+    res.json({ success: false, error: 'Failed to get seasons' });
+  }
+});
+
+// Get episodes for a season
+app.get('/api/plex/episodes/:seasonKey', async (req: Request, res: Response) => {
+  try {
+    const { seasonKey } = req.params;
+    const episodes = await plexClient.getSeasonEpisodes(seasonKey);
+    res.json({ success: true, episodes });
+  } catch (error) {
+    res.json({ success: false, error: 'Failed to get episodes' });
+  }
+});
+
+// Play a specific episode
+app.post('/api/control/play-episode', async (req: Request, res: Response) => {
+  try {
+    const { ratingKey } = req.body;
+    
+    if (!config.discord.webUserId || !config.discord.webGuildId || !config.discord.webChannelId) {
+      return res.json({ success: false, error: 'Web control not configured' });
+    }
+    
+    // Get the episode details
+    const episode = await plexClient.getMetadata(ratingKey);
+    if (!episode) {
+      return res.json({ success: false, error: 'Episode not found' });
+    }
+    
+    const streamInfo = await plexClient.getDirectStreamUrl(ratingKey);
+    if (!streamInfo) {
+      return res.json({ success: false, error: 'Failed to get stream URL' });
+    }
+    
+    // Build title
+    let title = episode.title;
+    if (episode.grandparentTitle) {
+      const s = episode.parentIndex ? `S${String(episode.parentIndex).padStart(2, '0')}` : '';
+      const e = episode.index ? `E${String(episode.index).padStart(2, '0')}` : '';
+      title = `${episode.grandparentTitle} ${s}${e} - ${episode.title}`;
+    }
+    
+    const streamer = getVideoStreamer();
+    await streamer.startStream(
+      config.discord.webGuildId,
+      config.discord.webChannelId,
+      { ...episode, title },
+      streamInfo.url,
+      0,
+      config.discord.webUserId
+    );
+    
+    res.json({ success: true, message: `Playing: ${title}` });
+  } catch (error) {
+    console.error('[WebServer] Play episode error:', error);
+    res.json({ success: false, error: 'Play failed' });
+  }
+});
+
 app.post('/api/control/pause', async (req: Request, res: Response) => {
   try {
     const streamer = getVideoStreamer();
