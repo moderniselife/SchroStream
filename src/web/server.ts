@@ -3,6 +3,9 @@ import cors from 'cors';
 import { join } from 'path';
 import { getVideoStreamer } from '../stream/video-streamer.js';
 import type { VideoStreamSession } from '../stream/video-streamer.js';
+import plexClient from '../plex/client.js';
+import { parseTimeString } from '../plex/library.js';
+import { client as selfbotClient } from '../bot/client.js';
 
 const app = express();
 const PORT = process.env.WEB_PORT || 3105;
@@ -100,6 +103,150 @@ app.get('/api/stream/:guildId/url', (req: Request, res: Response) => {
       url: session.streamUrl,
       type: 'plex'
     });
+  }
+});
+
+// Control API endpoints
+app.post('/api/control/search', async (req: Request, res: Response) => {
+  try {
+    const { query } = req.body;
+    const results = await plexClient.search(query);
+    res.json({ success: true, results: results.slice(0, 20) });
+  } catch (error) {
+    res.json({ success: false, error: 'Search failed' });
+  }
+});
+
+app.post('/api/control/play', async (req: Request, res: Response) => {
+  try {
+    const { number } = req.body;
+    // This would need to integrate with the bot command system
+    // For now, return error as it needs guild/channel context
+    res.json({ success: false, error: 'Play command requires voice channel context. Use Discord bot instead.' });
+  } catch (error) {
+    res.json({ success: false, error: 'Play failed' });
+  }
+});
+
+app.post('/api/control/pause', async (req: Request, res: Response) => {
+  try {
+    const streamer = getVideoStreamer();
+    const guildIds = streamer.getAllSessions();
+    if (guildIds.length === 0) {
+      return res.json({ success: false, error: 'No active stream' });
+    }
+    const guildId = guildIds[0];
+    const session = streamer.getSession(guildId);
+    if (session?.isPaused) {
+      await streamer.resumeStream(guildId);
+      res.json({ success: true, message: 'Resumed' });
+    } else {
+      await streamer.pauseStream(guildId);
+      res.json({ success: true, message: 'Paused' });
+    }
+  } catch (error) {
+    res.json({ success: false, error: 'Pause/resume failed' });
+  }
+});
+
+app.post('/api/control/stop', async (req: Request, res: Response) => {
+  try {
+    const streamer = getVideoStreamer();
+    const guildIds = streamer.getAllSessions();
+    if (guildIds.length === 0) {
+      return res.json({ success: false, error: 'No active stream' });
+    }
+    await streamer.stopStream(guildIds[0]);
+    res.json({ success: true, message: 'Stream stopped' });
+  } catch (error) {
+    res.json({ success: false, error: 'Stop failed' });
+  }
+});
+
+app.post('/api/control/seek', async (req: Request, res: Response) => {
+  try {
+    const { time } = req.body;
+    const streamer = getVideoStreamer();
+    const guildIds = streamer.getAllSessions();
+    if (guildIds.length === 0) {
+      return res.json({ success: false, error: 'No active stream' });
+    }
+    const timeMs = parseTimeString(time);
+    if (timeMs === null) {
+      return res.json({ success: false, error: 'Invalid time format' });
+    }
+    await streamer.seekStream(guildIds[0], timeMs);
+    res.json({ success: true, message: `Seeked to ${time}` });
+  } catch (error) {
+    res.json({ success: false, error: 'Seek failed' });
+  }
+});
+
+app.post('/api/control/skip', async (req: Request, res: Response) => {
+  try {
+    res.json({ success: false, error: 'Skip requires Discord bot context for next episode lookup' });
+  } catch (error) {
+    res.json({ success: false, error: 'Skip failed' });
+  }
+});
+
+app.post('/api/control/ff', async (req: Request, res: Response) => {
+  try {
+    const { time = '30s' } = req.body;
+    const streamer = getVideoStreamer();
+    const guildIds = streamer.getAllSessions();
+    if (guildIds.length === 0) {
+      return res.json({ success: false, error: 'No active stream' });
+    }
+    const guildId = guildIds[0];
+    const currentTime = streamer.getCurrentTime(guildId);
+    const skipMs = parseTimeString(time);
+    if (skipMs === null) {
+      return res.json({ success: false, error: 'Invalid time format' });
+    }
+    await streamer.seekStream(guildId, currentTime + skipMs);
+    res.json({ success: true, message: `Fast forwarded ${time}` });
+  } catch (error) {
+    res.json({ success: false, error: 'Fast forward failed' });
+  }
+});
+
+app.post('/api/control/volume', async (req: Request, res: Response) => {
+  try {
+    const { level } = req.body;
+    const streamer = getVideoStreamer();
+    const guildIds = streamer.getAllSessions();
+    if (guildIds.length === 0) {
+      return res.json({ success: false, error: 'No active stream' });
+    }
+    await streamer.setVolume(guildIds[0], level);
+    res.json({ success: true, message: `Volume set to ${level}%` });
+  } catch (error) {
+    res.json({ success: false, error: 'Volume change failed' });
+  }
+});
+
+app.post('/api/control/youtube', async (req: Request, res: Response) => {
+  try {
+    res.json({ success: false, error: 'YouTube playback requires Discord bot context for voice channel' });
+  } catch (error) {
+    res.json({ success: false, error: 'YouTube playback failed' });
+  }
+});
+
+app.post('/api/control/youtube-search', async (req: Request, res: Response) => {
+  try {
+    res.json({ success: false, error: 'YouTube search not yet implemented in web API' });
+  } catch (error) {
+    res.json({ success: false, error: 'YouTube search failed' });
+  }
+});
+
+app.post('/api/control/url', async (req: Request, res: Response) => {
+  try {
+    res.json({ success: false, error: 'URL playback requires Discord bot context for voice channel' });
+  } catch (error) {
+    res.json({ success: false, error: 'URL playback failed' });
   }
 });
 
