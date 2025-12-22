@@ -262,19 +262,16 @@ app.post('/api/control/youtube', async (req: Request, res: Response) => {
       return res.json({ success: false, error: 'Web control not configured. Set WEB_USER_ID, WEB_GUILD_ID, and WEB_CHANNEL_ID in .env' });
     }
     
-    // Get stream info using yt-dlp
-    const ytdlp = spawn('yt-dlp', [
-      '--dump-json',
-      '--no-warnings',
-      '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-      url
-    ]);
-    
-    let output = '';
-    ytdlp.stdout.on('data', (data) => output += data.toString());
-    
+    // Get video info using yt-dlp (same as controller bot)
     const info = await new Promise<any>((resolve) => {
-      ytdlp.on('close', () => {
+      const ytdlp = spawn('yt-dlp', ['--dump-json', '--no-playlist', '--no-warnings', url]);
+      let output = '';
+      ytdlp.stdout.on('data', (data) => output += data.toString());
+      ytdlp.on('close', (code) => {
+        if (code !== 0 || !output) {
+          resolve(null);
+          return;
+        }
         try {
           resolve(JSON.parse(output));
         } catch {
@@ -282,42 +279,41 @@ app.post('/api/control/youtube', async (req: Request, res: Response) => {
         }
       });
     });
-    
+
     if (!info) {
       return res.json({ success: false, error: 'Failed to get video info' });
     }
-    
-    // Get best video and audio URLs from formats
-    // YouTube's highest quality video is in video-only streams (acodec === 'none')
-    const videoOnlyFormats = info.formats?.filter((f: any) => 
-      f.vcodec !== 'none' && f.acodec === 'none' && f.url && f.height
-    ) || [];
-    
-    const audioOnlyFormats = info.formats?.filter((f: any) => 
-      f.acodec !== 'none' && f.vcodec === 'none' && f.url
-    ) || [];
-    
-    // Sort video by height (resolution) descending, then by bitrate
-    videoOnlyFormats.sort((a: any, b: any) => {
-      const heightDiff = (b.height || 0) - (a.height || 0);
-      if (heightDiff !== 0) return heightDiff;
-      return (b.vbr || b.tbr || 0) - (a.vbr || a.tbr || 0);
+
+    // Get stream URLs using yt-dlp -g flag (same approach as controller bot)
+    const urls = await new Promise<{ video: string; audio: string | null } | null>((resolve) => {
+      const ytdlp = spawn('yt-dlp', [
+        '-g',
+        '-f', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
+        '--no-playlist',
+        '--no-warnings',
+        url
+      ]);
+      let output = '';
+      ytdlp.stdout.on('data', (data) => output += data.toString());
+      ytdlp.on('close', (code) => {
+        if (code !== 0 || !output) {
+          resolve(null);
+          return;
+        }
+        const lines = output.trim().split('\n');
+        resolve({
+          video: lines[0],
+          audio: lines[1] || null
+        });
+      });
     });
-    
-    // Sort audio by bitrate descending
-    audioOnlyFormats.sort((a: any, b: any) => (b.abr || b.tbr || 0) - (a.abr || a.tbr || 0));
-    
-    // Use requested_formats if available (already best quality from yt-dlp), otherwise use our sorted best
-    const videoUrl = info.requested_formats?.[0]?.url || videoOnlyFormats[0]?.url || info.url;
-    const audioUrl = info.requested_formats?.[1]?.url || audioOnlyFormats[0]?.url || null;
-    
-    const videoQuality = info.requested_formats?.[0] || videoOnlyFormats[0];
-    const audioQuality = info.requested_formats?.[1] || audioOnlyFormats[0];
-    
-    console.log('[WebServer] YouTube video:', videoQuality?.height + 'p', videoQuality?.vcodec, 'vbr:', videoQuality?.vbr, 'tbr:', videoQuality?.tbr);
-    console.log('[WebServer] YouTube audio:', audioQuality?.acodec, 'abr:', audioQuality?.abr);
-    console.log('[WebServer] Video URL (first 100 chars):', videoUrl?.substring(0, 100));
-    console.log('[WebServer] Audio URL (first 100 chars):', audioUrl?.substring(0, 100));
+
+    if (!urls) {
+      return res.json({ success: false, error: 'Failed to get stream URLs' });
+    }
+
+    console.log('[WebServer] YouTube video URL:', urls.video.substring(0, 100) + '...');
+    console.log('[WebServer] YouTube audio URL:', urls.audio ? urls.audio.substring(0, 100) + '...' : 'none (merged format)');
     
     const streamer = getVideoStreamer();
     await streamer.startExternalStream(
@@ -330,13 +326,14 @@ app.post('/api/control/youtube', async (req: Request, res: Response) => {
         type: 'movie',
         duration: (info.duration || 0) * 1000,
       },
-      videoUrl,
+      urls.video,
       config.discord.webUserId,
-      audioUrl
+      urls.audio
     );
     
     res.json({ success: true, message: `Playing: ${info.title}` });
   } catch (error) {
+    console.error('[WebServer] YouTube playback error:', error);
     res.json({ success: false, error: 'YouTube playback failed' });
   }
 });
