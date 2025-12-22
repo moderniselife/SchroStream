@@ -488,22 +488,23 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
       }
     }
 
-    // Output args - optimized for low-memory streaming
+    // Output args - high quality streaming
     ffmpegArgs.push(
       '-map', '0:v:0?',
       '-map', session.audioUrl ? '1:a:0?' : '0:a:0?',
-      // Video: lower bitrate, faster encoding, small GOP for low latency
+      // Video: high quality encoding
       '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-tune', 'zerolatency',
-      '-b:v', '2500k',
-      '-maxrate', '3000k',
-      '-bufsize', '1000k',
-      '-g', '30', // Keyframe every 30 frames (1 sec at 30fps)
+      '-preset', 'fast',
+      '-crf', '18', // High quality (lower = better, 18 is visually lossless)
+      '-b:v', '8000k',
+      '-maxrate', '10000k',
+      '-bufsize', '16000k',
+      '-g', '60', // Keyframe every 60 frames (2 sec at 30fps)
+      '-pix_fmt', 'yuv420p',
       // Audio
       '-c:a', 'aac',
-      '-b:a', '128k',
-      '-ar', '44100',
+      '-b:a', '192k',
+      '-ar', '48000',
       '-ac', '2',
       // Output format with small fragments for memory efficiency
       '-f', 'mp4',
