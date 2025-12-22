@@ -427,6 +427,10 @@ class VideoStreamer {
       const m3u8Content = await initResponse.text();
       console.log('[VideoStreamer] Session initialized, m3u8:', m3u8Content.substring(0, 200));
       
+      // Wait for Plex to generate the first segment
+      console.log('[VideoStreamer] Waiting for Plex to generate first segment...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
       // Extract the actual stream URL from m3u8 (it's relative)
       const lines = m3u8Content.split('\n');
       const streamPath = lines.find(l => l.endsWith('.m3u8') && !l.startsWith('#'));
