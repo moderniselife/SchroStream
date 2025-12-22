@@ -1,7 +1,6 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
 import { Client } from 'discord.js-selfbot-v13';
 import { spawn } from 'child_process';
-import { PassThrough } from 'stream';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { PlexMediaItem } from '../types/index.js';
@@ -29,7 +28,6 @@ export interface VideoStreamSession {
   isExternal?: boolean; // Flag for external streams (YouTube, URLs)
   audioUrl?: string; // Separate audio URL for YouTube streams
   sessionId?: string; // Plex transcode session ID for reuse
-  sharedStream?: PassThrough; // Shared stream for web clients (forked from Discord stream)
 }
 
 // Store playback positions for resume functionality (ratingKey -> position in ms)
@@ -427,10 +425,6 @@ class VideoStreamer {
       const m3u8Content = await initResponse.text();
       console.log('[VideoStreamer] Session initialized, m3u8:', m3u8Content.substring(0, 200));
       
-      // Wait for Plex to generate the first segment
-      console.log('[VideoStreamer] Waiting for Plex to generate first segment...');
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
       // Extract the actual stream URL from m3u8 (it's relative)
       const lines = m3u8Content.split('\n');
       const streamPath = lines.find(l => l.endsWith('.m3u8') && !l.startsWith('#'));
@@ -533,32 +527,11 @@ class VideoStreamer {
         updateWatchDeck(session.mediaItem, startTimeMs, session.userId);
       }
 
-      // Create a PassThrough stream for web clients
-      // Web clients can read from this while Discord reads from ffmpeg.stdout directly
-      const webStream = new PassThrough({ highWaterMark: 1024 * 1024 }); // 1MB buffer
-      session.sharedStream = webStream;
-      
-      // Tee FFmpeg output to web stream (non-blocking)
-      ffmpeg.stdout.on('data', (chunk: Buffer) => {
-        // Write to web stream if not backed up
-        if (!webStream.destroyed && webStream.writableLength < webStream.writableHighWaterMark) {
-          webStream.write(chunk);
-        }
-      });
-      
-      ffmpeg.stdout.on('end', () => {
-        if (!webStream.destroyed) webStream.end();
-      });
-      
-      ffmpeg.stdout.on('error', (err) => {
-        if (!webStream.destroyed) webStream.destroy(err);
-      });
-
-      // Register stream for web viewing
+      // Register stream for web viewing (web will do its own transcode)
       const { registerWebStream } = await import('../web/server.js');
       registerWebStream(session.guildId, session, actualStreamUrl);
 
-      // Pass FFmpeg stdout directly to playStream (Discord library consumes it)
+      // Pass the FFmpeg stdout stream to playStream
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
       });
