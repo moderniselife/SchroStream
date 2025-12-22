@@ -101,7 +101,14 @@ function Control() {
   }
 
   const handlePlay = async (index: number) => {
-    await executeCommand('play', { number: index + 1 })
+    const result = searchResults[index]
+    if (searchType === 'youtube') {
+      // For YouTube, use the URL from the search result
+      await executeCommand('youtube', { url: result.url })
+    } else {
+      // For Plex, use the play command with index
+      await executeCommand('play', { number: index + 1 })
+    }
     setSearchResults([])
   }
 
