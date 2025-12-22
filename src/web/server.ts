@@ -204,6 +204,13 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     
     // If using HLSFetcher, pipe its output to FFmpeg stdin
     if (hlsFetcherProcess && hlsFetcherProcess.stdout) {
+      hlsFetcherProcess.stdout.on('error', (err: Error) => {
+        // Ignore EPIPE errors when FFmpeg closes stdin
+        if ((err as any).code !== 'EPIPE') {
+          console.error('[WebServer] HLSFetcher stdout error:', err);
+        }
+      });
+      
       hlsFetcherProcess.stdout.pipe(ffmpeg.stdin);
       
       hlsFetcherProcess.on('error', (err: Error) => {

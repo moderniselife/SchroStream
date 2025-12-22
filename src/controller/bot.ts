@@ -13,6 +13,7 @@ import {
   ChatInputCommandInteraction,
   ButtonInteraction,
   StringSelectMenuInteraction,
+  ActivityType,
 } from 'discord.js';
 import config from '../config.js';
 import plexClient from '../plex/client.js';
@@ -232,7 +233,38 @@ export async function initControllerBot(): Promise<Client | null> {
     console.log(`[Controller] Bot ready as ${controllerBot?.user?.tag}`);
     
     // Set bot presence with status
-    controllerBot?.user?.setActivity('/help for commands', { type: 'Listening' });
+    controllerBot?.user?.setActivity('/help for commands', { type: ActivityType.Listening });
+  });
+
+  // Monitor voice state changes to stop stream when channel is empty (except bot)
+  controllerBot.on('voiceStateUpdate', async (oldState, newState) => {
+    try {
+      const streamer = getVideoStreamer();
+      if (!streamer) return;
+
+      // Check if someone left a voice channel
+      if (oldState.channelId && !newState.channelId) {
+        const channel = oldState.channel;
+        if (!channel) return;
+
+        // Check if there's an active stream in this guild
+        const guildId = oldState.guild.id;
+        if (!streamer.isStreaming(guildId)) return;
+
+        // Count non-bot members in the channel
+        const nonBotMembers = channel.members.filter(m => !m.user.bot).size;
+        
+        // If only bots are left (or channel is empty), stop the stream
+        if (nonBotMembers === 0) {
+          console.log(`[Controller] Voice channel empty (only bots left), stopping stream in guild ${guildId}`);
+          await streamer.stopStream(guildId);
+        } else {
+          console.log(`[Controller] ${nonBotMembers} non-bot member(s) still in voice channel, keeping stream active`);
+        }
+      }
+    } catch (error) {
+      console.error('[Controller] Error in voiceStateUpdate:', error);
+    }
   });
 
   await controllerBot.login(botToken);
