@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Play, Pause, StopCircle, FastForward, Rewind, Volume2, Search, Youtube, Link, SkipForward, Clock } from 'lucide-react'
-import { Button } from './components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
+import { Play, Pause, StopCircle, FastForward, Volume2, Search, Youtube, Link, SkipForward, Clock } from 'lucide-react'
 
 interface Stream {
   guildId: string
@@ -108,95 +106,108 @@ function Control() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white p-6">
-      {/* Background effects */}
+    <div className="min-h-screen bg-[#0a0a0a] text-white relative overflow-hidden">
+      {/* Background gradient effects */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-1/2 -left-1/2 w-full h-full bg-gradient-radial from-purple-900/20 via-transparent to-transparent" />
         <div className="absolute -bottom-1/2 -right-1/2 w-full h-full bg-gradient-radial from-violet-900/15 via-transparent to-transparent" />
+        <div className="absolute top-1/4 right-1/4 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 left-1/4 w-96 h-96 bg-violet-500/5 rounded-full blur-3xl" />
       </div>
+      
+      {/* Grid pattern overlay */}
+      <div 
+        className="absolute inset-0 opacity-[0.02]"
+        style={{
+          backgroundImage: `linear-gradient(rgba(255,255,255,.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.1) 1px, transparent 1px)`,
+          backgroundSize: '64px 64px'
+        }}
+      />
 
-      <div className="relative z-10 max-w-6xl mx-auto space-y-6">
+      <div className="relative z-10 max-w-6xl mx-auto p-6 space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">
-              Stream Control
-            </h1>
-            <p className="text-zinc-500 text-sm mt-1">Control your streams from the web</p>
+        <header className="border-b border-white/[0.08] bg-black/40 backdrop-blur-xl sticky top-0 z-50 -mx-6 px-6 py-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">
+                Stream Control
+              </h1>
+              <p className="text-zinc-500 text-sm mt-1">Control your streams from the web</p>
+            </div>
+            <a href="/" className="text-zinc-400 hover:text-white transition-colors text-sm flex items-center gap-2">
+              ← Back
+            </a>
           </div>
-          <a href="/" className="text-zinc-400 hover:text-white transition-colors">
-            ← Back to Dashboard
-          </a>
-        </div>
+        </header>
 
         {/* Message Banner */}
         {message && (
-          <div className={`p-4 rounded-lg border ${message.includes('failed') || message.includes('error') ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-green-500/10 border-green-500/20 text-green-400'}`}>
+          <div className={`p-4 rounded-xl border backdrop-blur-xl shadow-lg ${message.includes('failed') || message.includes('error') ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-green-500/10 border-green-500/20 text-green-400'}`}>
             {message}
           </div>
         )}
 
         {/* Active Stream Info */}
         {activeStream && (
-          <Card className="bg-white/5 border-white/10">
-            <CardHeader>
-              <CardTitle className="text-white">Now Playing</CardTitle>
-              <CardDescription className="text-zinc-400">{activeStream.title}</CardDescription>
-            </CardHeader>
-            <CardContent>
+          <div className="bg-white/[0.02] border border-white/[0.06] rounded-2xl backdrop-blur-xl shadow-2xl overflow-hidden">
+            <div className="p-6 border-b border-white/[0.06]">
+              <h2 className="text-lg font-semibold text-white mb-1">Now Playing</h2>
+              <p className="text-zinc-400 text-sm">{activeStream.title}</p>
+            </div>
+            <div className="p-6">
               <div className="flex items-center gap-4 text-sm text-zinc-400">
-                <span>{Math.floor(activeStream.currentTime / 60000)}:{String(Math.floor((activeStream.currentTime % 60000) / 1000)).padStart(2, '0')}</span>
-                <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                <span className="font-mono">{Math.floor(activeStream.currentTime / 60000)}:{String(Math.floor((activeStream.currentTime % 60000) / 1000)).padStart(2, '0')}</span>
+                <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">
                   <div 
-                    className="h-full bg-gradient-to-r from-purple-500 to-violet-500"
+                    className="h-full bg-gradient-to-r from-purple-500 to-violet-500 transition-all duration-300"
                     style={{ width: `${(activeStream.currentTime / activeStream.duration) * 100}%` }}
                   />
                 </div>
-                <span>{Math.floor(activeStream.duration / 60000)}:{String(Math.floor((activeStream.duration % 60000) / 1000)).padStart(2, '0')}</span>
+                <span className="font-mono">{Math.floor(activeStream.duration / 60000)}:{String(Math.floor((activeStream.duration % 60000) / 1000)).padStart(2, '0')}</span>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         )}
 
         {/* Playback Controls */}
-        <Card className="bg-white/5 border-white/10">
-          <CardHeader>
-            <CardTitle className="text-white">Playback Controls</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <div className="bg-white/[0.02] border border-white/[0.06] rounded-2xl backdrop-blur-xl shadow-2xl overflow-hidden">
+          <div className="p-6 border-b border-white/[0.06]">
+            <h2 className="text-lg font-semibold text-white">Playback Controls</h2>
+          </div>
+          <div className="p-6 space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Button
+              <button
                 onClick={() => executeCommand('pause')}
                 disabled={loading || !activeStream}
-                className="bg-white/10 hover:bg-white/20 border-white/20"
+                className="px-4 py-3 bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] rounded-xl text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                {activeStream?.isPaused ? <Play className="w-4 h-4 mr-2" /> : <Pause className="w-4 h-4 mr-2" />}
+                {activeStream?.isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
                 {activeStream?.isPaused ? 'Resume' : 'Pause'}
-              </Button>
-              <Button
+              </button>
+              <button
                 onClick={() => executeCommand('stop')}
                 disabled={loading || !activeStream}
-                className="bg-white/10 hover:bg-white/20 border-white/20"
+                className="px-4 py-3 bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] rounded-xl text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                <StopCircle className="w-4 h-4 mr-2" />
+                <StopCircle className="w-4 h-4" />
                 Stop
-              </Button>
-              <Button
+              </button>
+              <button
                 onClick={() => executeCommand('skip')}
                 disabled={loading || !activeStream}
-                className="bg-white/10 hover:bg-white/20 border-white/20"
+                className="px-4 py-3 bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] rounded-xl text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                <SkipForward className="w-4 h-4 mr-2" />
+                <SkipForward className="w-4 h-4" />
                 Skip
-              </Button>
-              <Button
+              </button>
+              <button
                 onClick={() => executeCommand('ff', { time: '30s' })}
                 disabled={loading || !activeStream}
-                className="bg-white/10 hover:bg-white/20 border-white/20"
+                className="px-4 py-3 bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] rounded-xl text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                <FastForward className="w-4 h-4 mr-2" />
+                <FastForward className="w-4 h-4" />
                 +30s
-              </Button>
+              </button>
             </div>
 
             {/* Seek */}
@@ -206,66 +217,74 @@ function Control() {
                 placeholder="Time (e.g., 1:30:00)"
                 value={seekTime}
                 onChange={(e) => setSeekTime(e.target.value)}
-                className="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-purple-500"
+                className="flex-1 px-4 py-3 bg-white/[0.02] border border-white/[0.08] rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
               />
-              <Button
+              <button
                 onClick={() => {
                   executeCommand('seek', { time: seekTime })
                   setSeekTime('')
                 }}
                 disabled={loading || !activeStream || !seekTime}
-                className="bg-purple-500 hover:bg-purple-600"
+                className="px-6 py-3 bg-gradient-to-r from-purple-500 to-violet-500 hover:from-purple-600 hover:to-violet-600 rounded-xl text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-purple-500/25"
               >
-                <Clock className="w-4 h-4 mr-2" />
+                <Clock className="w-4 h-4" />
                 Seek
-              </Button>
+              </button>
             </div>
 
             {/* Volume */}
-            <div className="flex gap-2 items-center">
-              <Volume2 className="w-4 h-4 text-zinc-400" />
+            <div className="flex gap-3 items-center">
+              <Volume2 className="w-5 h-5 text-zinc-400 shrink-0" />
               <input
                 type="range"
                 min="0"
                 max="200"
                 value={volumeLevel}
                 onChange={(e) => setVolumeLevel(Number(e.target.value))}
-                className="flex-1"
+                className="flex-1 h-2 bg-white/5 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gradient-to-r [&::-webkit-slider-thumb]:from-purple-500 [&::-webkit-slider-thumb]:to-violet-500 [&::-webkit-slider-thumb]:cursor-pointer"
               />
-              <span className="text-sm text-zinc-400 w-12">{volumeLevel}%</span>
-              <Button
+              <span className="text-sm text-zinc-400 w-12 font-mono">{volumeLevel}%</span>
+              <button
                 onClick={() => executeCommand('volume', { level: volumeLevel })}
                 disabled={loading || !activeStream}
-                className="bg-white/10 hover:bg-white/20 border-white/20"
+                className="px-4 py-2 bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] rounded-xl text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Set
-              </Button>
+              </button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
         {/* Search & Play */}
-        <Card className="bg-white/5 border-white/10">
-          <CardHeader>
-            <CardTitle className="text-white">Search & Play</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <div className="bg-white/[0.02] border border-white/[0.06] rounded-2xl backdrop-blur-xl shadow-2xl overflow-hidden">
+          <div className="p-6 border-b border-white/[0.06]">
+            <h2 className="text-lg font-semibold text-white">Search & Play</h2>
+          </div>
+          <div className="p-6 space-y-4">
             {/* Search Type Toggle */}
             <div className="flex gap-2">
-              <Button
+              <button
                 onClick={() => setSearchType('plex')}
-                className={searchType === 'plex' ? 'bg-purple-500' : 'bg-white/10 hover:bg-white/20 border-white/20'}
+                className={`px-4 py-3 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+                  searchType === 'plex'
+                    ? 'bg-gradient-to-r from-purple-500 to-violet-500 text-white shadow-lg shadow-purple-500/25'
+                    : 'bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] text-white'
+                }`}
               >
-                <Search className="w-4 h-4 mr-2" />
+                <Search className="w-4 h-4" />
                 Plex
-              </Button>
-              <Button
+              </button>
+              <button
                 onClick={() => setSearchType('youtube')}
-                className={searchType === 'youtube' ? 'bg-purple-500' : 'bg-white/10 hover:bg-white/20 border-white/20'}
+                className={`px-4 py-3 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+                  searchType === 'youtube'
+                    ? 'bg-gradient-to-r from-purple-500 to-violet-500 text-white shadow-lg shadow-purple-500/25'
+                    : 'bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] text-white'
+                }`}
               >
-                <Youtube className="w-4 h-4 mr-2" />
+                <Youtube className="w-4 h-4" />
                 YouTube
-              </Button>
+              </button>
             </div>
 
             {/* Search Input */}
@@ -276,63 +295,62 @@ function Control() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                className="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-purple-500"
+                className="flex-1 px-4 py-3 bg-white/[0.02] border border-white/[0.08] rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
               />
-              <Button
+              <button
                 onClick={handleSearch}
                 disabled={loading || !searchQuery.trim()}
-                className="bg-purple-500 hover:bg-purple-600"
+                className="px-6 py-3 bg-gradient-to-r from-purple-500 to-violet-500 hover:from-purple-600 hover:to-violet-600 rounded-xl text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-purple-500/25"
               >
                 Search
-              </Button>
+              </button>
             </div>
 
             {/* Search Results */}
             {searchResults.length > 0 && (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
+              <div className="space-y-2 max-h-96 overflow-y-auto custom-scrollbar">
                 {searchResults.map((result, index) => (
                   <div
                     key={index}
-                    className="flex items-center justify-between p-3 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 transition-colors"
+                    className="flex items-center justify-between p-4 bg-white/[0.02] border border-white/[0.06] rounded-xl hover:bg-white/[0.05] hover:border-white/[0.1] transition-all group"
                   >
-                    <div className="flex-1">
-                      <p className="text-white font-medium">{result.title}</p>
-                      <p className="text-xs text-zinc-500">{result.year || result.channel}</p>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-medium truncate">{result.title}</p>
+                      <p className="text-xs text-zinc-500 mt-1">{result.year || result.channel}</p>
                     </div>
-                    <Button
+                    <button
                       onClick={() => handlePlay(index)}
                       disabled={loading}
-                      className="bg-purple-500 hover:bg-purple-600"
-                      size="sm"
+                      className="ml-4 p-3 bg-gradient-to-r from-purple-500 to-violet-500 hover:from-purple-600 hover:to-violet-600 rounded-xl text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-purple-500/25 group-hover:scale-105"
                     >
                       <Play className="w-4 h-4" />
-                    </Button>
+                    </button>
                   </div>
                 ))}
               </div>
             )}
 
             {/* Direct URL Input */}
-            <div className="pt-4 border-t border-white/10 space-y-3">
+            <div className="pt-4 border-t border-white/[0.06] space-y-3">
               <div className="flex gap-2">
                 <input
                   type="text"
                   placeholder="YouTube URL"
                   value={youtubeUrl}
                   onChange={(e) => setYoutubeUrl(e.target.value)}
-                  className="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-purple-500"
+                  className="flex-1 px-4 py-3 bg-white/[0.02] border border-white/[0.08] rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/20 transition-all"
                 />
-                <Button
+                <button
                   onClick={() => {
                     executeCommand('youtube', { url: youtubeUrl })
                     setYoutubeUrl('')
                   }}
                   disabled={loading || !youtubeUrl}
-                  className="bg-red-500 hover:bg-red-600"
+                  className="px-6 py-3 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 rounded-xl text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-red-500/25"
                 >
-                  <Youtube className="w-4 h-4 mr-2" />
+                  <Youtube className="w-4 h-4" />
                   Play
-                </Button>
+                </button>
               </div>
 
               <div className="flex gap-2">
@@ -341,23 +359,23 @@ function Control() {
                   placeholder="Direct Stream URL (M3U8, MP4, etc.)"
                   value={streamUrl}
                   onChange={(e) => setStreamUrl(e.target.value)}
-                  className="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-purple-500"
+                  className="flex-1 px-4 py-3 bg-white/[0.02] border border-white/[0.08] rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
                 />
-                <Button
+                <button
                   onClick={() => {
                     executeCommand('url', { url: streamUrl })
                     setStreamUrl('')
                   }}
                   disabled={loading || !streamUrl}
-                  className="bg-blue-500 hover:bg-blue-600"
+                  className="px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 rounded-xl text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-blue-500/25"
                 >
-                  <Link className="w-4 h-4 mr-2" />
+                  <Link className="w-4 h-4" />
                   Play
-                </Button>
+                </button>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
     </div>
   )
