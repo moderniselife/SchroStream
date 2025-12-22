@@ -287,6 +287,17 @@ app.post('/api/control/youtube', async (req: Request, res: Response) => {
       return res.json({ success: false, error: 'Failed to get video info' });
     }
     
+    // Get best video and audio URLs from formats
+    const videoFormat = info.formats?.find((f: any) => f.vcodec !== 'none' && f.acodec === 'none' && f.url);
+    const audioFormat = info.formats?.find((f: any) => f.acodec !== 'none' && f.vcodec === 'none' && f.url);
+    
+    // Use requested_formats if available (merged format), otherwise use separate streams
+    const videoUrl = info.requested_formats?.[0]?.url || videoFormat?.url || info.url;
+    const audioUrl = info.requested_formats?.[1]?.url || audioFormat?.url || null;
+    
+    console.log('[WebServer] YouTube video URL:', videoUrl);
+    console.log('[WebServer] YouTube audio URL:', audioUrl);
+    
     const streamer = getVideoStreamer();
     await streamer.startExternalStream(
       config.discord.webGuildId,
@@ -298,9 +309,9 @@ app.post('/api/control/youtube', async (req: Request, res: Response) => {
         type: 'movie',
         duration: (info.duration || 0) * 1000,
       },
-      info.url,
+      videoUrl,
       config.discord.webUserId,
-      info.formats?.find((f: any) => f.acodec !== 'none')?.url || null
+      audioUrl
     );
     
     res.json({ success: true, message: `Playing: ${info.title}` });
