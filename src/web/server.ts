@@ -117,55 +117,60 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     const { spawn } = await import('child_process');
     
     // Detect if this is an HLS stream (external) or direct video (YouTube)
-    const isHLS = session.streamUrl.includes('.m3u8') || session.streamUrl.includes('javascript.json');
+    const needsHLSFetcher = session.streamUrl.includes('.json') || 
+                            session.streamUrl.includes('.svg') || 
+                            session.streamUrl.includes('.php') ||
+                            session.streamUrl.includes('.txt') ||
+                            session.streamUrl.includes('.js') ||
+                            session.streamUrl.includes('.m3u8');
     
     // Get current playback position from Discord stream to sync
-    // Only seek for non-HLS streams (HLS streams are live and can't seek reliably)
     const progress = streamer.getProgress(guildId);
     const STARTUP_OFFSET = 15; // seconds to add for FFmpeg startup time
     const seekSeconds = Math.max(0, Math.floor(progress.current / 1000) + STARTUP_OFFSET);
     
-    if (isHLS) {
-      console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildId} (HLS live stream, no seek)`);
+    let hlsFetcherProcess: ReturnType<typeof spawn> | null = null;
+    let ffmpegArgs: string[];
+    
+    if (needsHLSFetcher) {
+      console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildId} (HLS via custom fetcher)`);
+      
+      // Use custom HLS fetcher that downloads segments directly
+      const { createHLSFetcherProcess } = await import('../stream/hls-fetcher.js');
+      hlsFetcherProcess = createHLSFetcherProcess(session.streamUrl);
+      
+      // Build FFmpeg args to read MPEG-TS from HLSFetcher stdin
+      ffmpegArgs = [
+        '-hide_banner',
+        '-loglevel', 'warning',
+        '-f', 'mpegts', // Raw MPEG-TS input from HLSFetcher
+        '-i', 'pipe:0', // Read from stdin
+      ];
     } else {
       console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildId}, seeking to ${seekSeconds}s (current: ${Math.floor(progress.current / 1000)}s + ${STARTUP_OFFSET}s offset)`);
-    }
-    
-    // Build FFmpeg args
-    const ffmpegArgs = [
-      '-hide_banner',
-      '-loglevel', 'warning',
-      '-reconnect', '1',
-      '-reconnect_streamed', '1',
-      '-reconnect_delay_max', '5',
-      '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-    ];
-    
-    // For HLS streams, add allowed_extensions to handle .txt segments
-    if (isHLS) {
-      ffmpegArgs.push('-allowed_extensions', 'ALL');
-    }
-    
-    // Only add seek for non-HLS streams
-    if (!isHLS) {
-      ffmpegArgs.push('-ss', seekSeconds.toString());
-    }
-    
-    ffmpegArgs.push('-i', session.streamUrl);
-
-    // Add audio input if separate (YouTube) - also seek audio to same position
-    if (session.audioUrl) {
-      ffmpegArgs.push(
+      
+      // Build FFmpeg args for direct streams (YouTube)
+      ffmpegArgs = [
+        '-hide_banner',
+        '-loglevel', 'warning',
         '-reconnect', '1',
         '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5'
-      );
+        '-reconnect_delay_max', '5',
+        '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+        '-ss', seekSeconds.toString(),
+        '-i', session.streamUrl,
+      ];
       
-      if (!isHLS) {
-        ffmpegArgs.push('-ss', seekSeconds.toString());
+      // Add audio input if separate (YouTube)
+      if (session.audioUrl) {
+        ffmpegArgs.push(
+          '-reconnect', '1',
+          '-reconnect_streamed', '1',
+          '-reconnect_delay_max', '5',
+          '-ss', seekSeconds.toString(),
+          '-i', session.audioUrl
+        );
       }
-      
-      ffmpegArgs.push('-i', session.audioUrl);
     }
 
     // Output args - optimized for low-memory streaming
@@ -197,6 +202,21 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     
     const ffmpeg = spawn('ffmpeg', ffmpegArgs);
     
+    // If using HLSFetcher, pipe its output to FFmpeg stdin
+    if (hlsFetcherProcess && hlsFetcherProcess.stdout) {
+      hlsFetcherProcess.stdout.pipe(ffmpeg.stdin);
+      
+      hlsFetcherProcess.on('error', (err: Error) => {
+        console.error('[WebServer] HLSFetcher error:', err);
+      });
+      
+      hlsFetcherProcess.on('exit', (code: number | null) => {
+        if (code !== 0 && code !== null) {
+          console.log('[WebServer] HLSFetcher exited with code:', code);
+        }
+      });
+    }
+    
     // Set headers for streaming
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Cache-Control', 'no-cache');
@@ -221,6 +241,9 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     
     ffmpeg.on('exit', (code: number | null) => {
       console.log('[WebServer] FFmpeg exited with code:', code);
+      if (hlsFetcherProcess && !hlsFetcherProcess.killed) {
+        hlsFetcherProcess.kill();
+      }
       if (!res.headersSent) {
         res.end();
       }
@@ -230,6 +253,9 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     req.on('close', () => {
       console.log('[WebServer] Client disconnected, killing FFmpeg');
       ffmpeg.kill('SIGKILL');
+      if (hlsFetcherProcess && !hlsFetcherProcess.killed) {
+        hlsFetcherProcess.kill();
+      }
     });
     
   } catch (error) {
