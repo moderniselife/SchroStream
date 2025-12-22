@@ -428,9 +428,54 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
   try {
     const { spawn } = await import('child_process');
     
+    // Check if we can reuse the shared stream from Discord (Plex streams)
+    // This avoids re-transcoding - we just remux from matroska to fMP4
+    if (session.sharedStream && !session.sharedStream.destroyed && !session.isExternal) {
+      console.log(`[WebServer] Reusing shared Discord stream for guild ${guildId} (no re-transcode)`);
+      
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Transfer-Encoding', 'chunked');
+      res.setHeader('Cache-Control', 'no-cache, no-store');
+      res.setHeader('Connection', 'keep-alive');
+      
+      // Remux from matroska to fragmented MP4 (no re-encoding, very fast)
+      const ffmpeg = spawn('ffmpeg', [
+        '-hide_banner',
+        '-loglevel', 'warning',
+        '-f', 'matroska',
+        '-i', 'pipe:0',
+        // Copy streams without re-encoding
+        '-c:v', 'copy',
+        '-c:a', 'aac', // Need to transcode audio since opus isn't supported in MP4
+        '-b:a', '192k',
+        // Output format
+        '-f', 'mp4',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        'pipe:1'
+      ]);
+      
+      // Pipe shared stream to FFmpeg
+      session.sharedStream.pipe(ffmpeg.stdin);
+      
+      // Pipe FFmpeg output to response
+      ffmpeg.stdout.pipe(res);
+      
+      ffmpeg.stderr.on('data', (data: Buffer) => {
+        const msg = data.toString().trim();
+        if (msg && !msg.includes('frame=')) {
+          console.error('[WebServer Remux]', msg);
+        }
+      });
+      
+      req.on('close', () => {
+        ffmpeg.kill('SIGTERM');
+      });
+      
+      return;
+    }
+    
+    // Fallback: Full transcode for external streams (YouTube, URLs)
     // Detect if this is an HLS stream (external masked) or direct video (YouTube/Plex)
-    // Only use HLSFetcher for masked streams with .json/.svg/.php/.txt/.js extensions
-    // YouTube and Plex streams should use direct FFmpeg input
     const needsHLSFetcher = (session.streamUrl.includes('.json') || 
                             session.streamUrl.includes('.svg') || 
                             session.streamUrl.includes('.php') ||
