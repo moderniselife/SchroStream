@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { Play, Pause, Volume2, RefreshCw, Tv, Radio, Zap } from 'lucide-react'
 import { formatTime } from './lib/utils'
 
@@ -15,8 +14,11 @@ interface Stream {
   thumbnail?: string
 }
 
-function Dashboard() {
-  const navigate = useNavigate()
+interface DashboardProps {
+  onStreamSelect: (guildId: string) => void
+}
+
+function Dashboard({ onStreamSelect }: DashboardProps) {
   const [streams, setStreams] = useState<Stream[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -44,12 +46,12 @@ function Dashboard() {
   // Auto-redirect to active stream if one exists
   useEffect(() => {
     if (!loading && streams.length === 1) {
-      navigate(`/?stream=${streams[0].guildId}`)
+      onStreamSelect(streams[0].guildId)
     }
-  }, [loading, streams, navigate])
+  }, [loading, streams, onStreamSelect])
 
   const handleStreamClick = (guildId: string) => {
-    navigate(`/?stream=${guildId}`)
+    onStreamSelect(guildId)
   }
 
   return (

@@ -1,5 +1,4 @@
 import { useEffect, useState, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Play, Pause, Volume2, Clock, Tv, AlertCircle, ChevronRight } from 'lucide-react'
 import { formatTime } from './lib/utils'
 
@@ -20,10 +19,10 @@ interface StreamInfo {
 
 interface PlayerProps {
   guildId: string
+  onBack?: () => void
 }
 
-function Player({ guildId }: PlayerProps) {
-  const navigate = useNavigate()
+function Player({ guildId, onBack }: PlayerProps) {
   const [stream, setStream] = useState<StreamInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -73,7 +72,7 @@ function Player({ guildId }: PlayerProps) {
             <h2 className="text-xl font-medium text-white mb-2">Stream Error</h2>
             <p className="text-zinc-400 mb-6">{error}</p>
             <button
-              onClick={() => navigate('/')}
+              onClick={onBack}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] text-sm text-zinc-300 hover:text-white transition-all"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -122,11 +121,11 @@ function Player({ guildId }: PlayerProps) {
           <div className="max-w-7xl mx-auto px-6 py-4">
             <div className="flex items-center gap-4">
               <button
-                onClick={() => navigate('/')}
+                onClick={onBack}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/[0.05] text-zinc-400 hover:text-white transition-all"
               >
                 <ArrowLeft className="w-4 h-4" />
-                <span className="text-sm hidden sm:inline">Back</span>
+                <span className="text-sm">Back</span>
               </button>
               
               <div className="h-6 w-px bg-white/10" />
