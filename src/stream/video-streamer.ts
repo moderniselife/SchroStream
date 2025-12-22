@@ -1,7 +1,6 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
 import { Client } from 'discord.js-selfbot-v13';
 import { spawn } from 'child_process';
-import { PassThrough } from 'stream';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { PlexMediaItem } from '../types/index.js';
@@ -29,7 +28,6 @@ export interface VideoStreamSession {
   isExternal?: boolean; // Flag for external streams (YouTube, URLs)
   audioUrl?: string; // Separate audio URL for YouTube streams
   sessionId?: string; // Plex transcode session ID for reuse
-  sharedStream?: PassThrough; // Shared stream for web clients to tap into
 }
 
 // Store playback positions for resume functionality (ratingKey -> position in ms)
@@ -529,26 +527,7 @@ class VideoStreamer {
         updateWatchDeck(session.mediaItem, startTimeMs, session.userId);
       }
 
-      // Create shared PassThrough stream for web clients
-      // This allows web clients to read the same transcoded output
-      const sharedStream = new PassThrough();
-      session.sharedStream = sharedStream;
-      
-      // Fork FFmpeg output to both Discord and shared stream
-      ffmpeg.stdout.on('data', (chunk: Buffer) => {
-        // Write to shared stream for web clients (don't block if no listeners)
-        if (!sharedStream.destroyed) {
-          sharedStream.write(chunk);
-        }
-      });
-      
-      ffmpeg.stdout.on('end', () => {
-        if (!sharedStream.destroyed) {
-          sharedStream.end();
-        }
-      });
-
-      // Register stream for web viewing
+      // Register stream for web viewing (web will do its own transcode)
       const { registerWebStream } = await import('../web/server.js');
       registerWebStream(session.guildId, session, actualStreamUrl);
 
