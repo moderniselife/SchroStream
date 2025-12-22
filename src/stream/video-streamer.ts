@@ -533,28 +533,24 @@ class VideoStreamer {
         updateWatchDeck(session.mediaItem, startTimeMs, session.userId);
       }
 
-      // Create two PassThrough streams to fork the FFmpeg output
-      // One goes to Discord, one is available for web clients
-      const discordStream = new PassThrough();
-      const webStream = new PassThrough({ highWaterMark: 1024 * 1024 }); // 1MB buffer for web
+      // Create a PassThrough stream for web clients
+      // Web clients can read from this while Discord reads from ffmpeg.stdout directly
+      const webStream = new PassThrough({ highWaterMark: 1024 * 1024 }); // 1MB buffer
       session.sharedStream = webStream;
       
-      // Fork FFmpeg output to both streams
+      // Tee FFmpeg output to web stream (non-blocking)
       ffmpeg.stdout.on('data', (chunk: Buffer) => {
-        discordStream.write(chunk);
-        // Only write to web stream if it's not backed up (non-blocking)
+        // Write to web stream if not backed up
         if (!webStream.destroyed && webStream.writableLength < webStream.writableHighWaterMark) {
           webStream.write(chunk);
         }
       });
       
       ffmpeg.stdout.on('end', () => {
-        discordStream.end();
         if (!webStream.destroyed) webStream.end();
       });
       
       ffmpeg.stdout.on('error', (err) => {
-        discordStream.destroy(err);
         if (!webStream.destroyed) webStream.destroy(err);
       });
 
@@ -562,8 +558,8 @@ class VideoStreamer {
       const { registerWebStream } = await import('../web/server.js');
       registerWebStream(session.guildId, session, actualStreamUrl);
 
-      // Pass the Discord fork to playStream
-      await playStream(discordStream, this.streamer, {
+      // Pass FFmpeg stdout directly to playStream (Discord library consumes it)
+      await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
       });
 
