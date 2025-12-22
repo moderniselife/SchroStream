@@ -141,6 +141,11 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
       '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
     ];
     
+    // For HLS streams, add allowed_extensions to handle .txt segments
+    if (isHLS) {
+      ffmpegArgs.push('-allowed_extensions', 'ALL');
+    }
+    
     // Only add seek for non-HLS streams
     if (!isHLS) {
       ffmpegArgs.push('-ss', seekSeconds.toString());
