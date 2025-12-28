@@ -13,20 +13,20 @@ RUN npm install -g tsx
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files first for better caching
 COPY package.json package-lock.json* ./
 
 # Install dependencies with npm
 RUN npm install --production=false
 
-# Copy source
+# Copy the rest of the files
 COPY . .
-
-# Build TypeScript
-RUN npm run build
 
 # Create data directory
 RUN mkdir -p /app/data
+
+# Build TypeScript
+RUN npm run build
 
 # Set environment
 ENV NODE_ENV=production

@@ -17,10 +17,12 @@ import {
 } from 'discord.js';
 import config from '../config.js';
 import plexClient from '../plex/client.js';
-import { getVideoStreamer } from '../stream/video-streamer.js';
+import { getVideoStreamer, getPlaybackPosition } from '../stream/video-streamer.js';
 import { formatDuration as formatPlexDuration, parseTimeString, getNextEpisode } from '../plex/library.js';
 import type { PlexMediaItem } from '../types/index.js';
 import { client as selfbotClient } from '../bot/client.js';
+import { getQueue, addToQueue, removeFromQueue, clearQueue, popQueue, formatQueueEntry } from '../data/queue.js';
+import { getWatchDeck, formatDeckEntry } from '../data/watch-deck.js';
 
 // Store search results per user
 const searchSessions = new Map<string, { results: PlexMediaItem[], timestamp: number }>();
@@ -172,6 +174,68 @@ const commands = [
         .setDescription('Optional title for the stream')
         .setRequired(false)
     ),
+  new SlashCommandBuilder()
+    .setName('channels')
+    .setDescription('List available Live TV channels'),
+  new SlashCommandBuilder()
+    .setName('channel')
+    .setDescription('Play a Live TV channel')
+    .addIntegerOption(option =>
+      option.setName('number')
+        .setDescription('Channel number to play')
+        .setRequired(true)
+        .setMinValue(1)
+    ),
+  new SlashCommandBuilder()
+    .setName('queue')
+    .setDescription('Manage the playback queue')
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('add')
+        .setDescription('Add a media item to the queue')
+        .addIntegerOption(option =>
+          option.setName('number')
+            .setDescription('Search result number to add')
+            .setRequired(true)
+            .setMinValue(1)
+            .setMaxValue(20)
+        )
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('list')
+        .setDescription('Show the current queue')
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('remove')
+        .setDescription('Remove an item from the queue')
+        .addIntegerOption(option =>
+          option.setName('number')
+            .setDescription('Queue position to remove')
+            .setRequired(true)
+            .setMinValue(1)
+        )
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('clear')
+        .setDescription('Clear the entire queue')
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('next')
+        .setDescription('Play the next item in the queue')
+    ),
+  new SlashCommandBuilder()
+    .setName('ondeck')
+    .setDescription('Show recently watched media (watch deck)')
+    .addIntegerOption(option =>
+      option.setName('number')
+        .setDescription('Item number to resume watching')
+        .setRequired(false)
+        .setMinValue(1)
+    ),
 ].map(cmd => cmd.toJSON());
 
 export async function initControllerBot(): Promise<Client | null> {
@@ -186,6 +250,8 @@ export async function initControllerBot(): Promise<Client | null> {
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildVoiceStates,
+      GatewayIntentBits.GuildMembers, // Required to show in members list
+      GatewayIntentBits.GuildPresences, // Required for presence updates
     ],
   });
 
@@ -232,8 +298,14 @@ export async function initControllerBot(): Promise<Client | null> {
   controllerBot.once('ready', () => {
     console.log(`[Controller] Bot ready as ${controllerBot?.user?.tag}`);
     
-    // Set bot presence with status
-    controllerBot?.user?.setActivity('/help for commands', { type: ActivityType.Listening });
+    // Set full presence (status and activity in one call)
+    controllerBot?.user?.setPresence({
+      status: 'online',
+      activities: [{
+        name: '/help for commands',
+        type: ActivityType.Listening
+      }]
+    });
   });
 
   // Monitor voice state changes to stop stream when channel is empty (except bot)
@@ -319,6 +391,18 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'url':
       await handleUrl(interaction);
+      break;
+    case 'channels':
+      await handleChannels(interaction);
+      break;
+    case 'channel':
+      await handleChannel(interaction);
+      break;
+    case 'queue':
+      await handleQueue(interaction);
+      break;
+    case 'ondeck':
+      await handleOnDeck(interaction);
       break;
   }
 }
@@ -477,8 +561,19 @@ async function startPlayback(
     itemToPlay = episode;
   }
 
-  // Get stream URL
-  const streamInfo = await plexClient.getDirectStreamUrl(itemToPlay.ratingKey);
+  // Get stream URL - use different method for Live TV channels
+  let streamInfo;
+  console.log('[Controller] Media item type:', itemToPlay.type);
+  console.log('[Controller] Media item ratingKey:', itemToPlay.ratingKey);
+  
+  if (itemToPlay.type === 'channel') {
+    console.log('[Controller] Using getChannelStreamUrl for Live TV channel');
+    streamInfo = await plexClient.getChannelStreamUrl(itemToPlay.ratingKey);
+  } else {
+    console.log('[Controller] Using getDirectStreamUrl for regular media');
+    streamInfo = await plexClient.getDirectStreamUrl(itemToPlay.ratingKey);
+  }
+  
   if (!streamInfo) {
     await interaction.editReply('❌ Could not get stream URL');
     return;
@@ -1727,7 +1822,21 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
 }
 
 async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
-  if (interaction.customId === 'search_select') {
+  if (interaction.customId === 'select_network') {
+    await showChannelSelector(interaction);
+  } else if (interaction.customId === 'select_channel') {
+    await interaction.deferReply();
+    const ratingKey = interaction.values[0];
+    const channels = await plexClient.getLiveTVChannels();
+    const channel = channels.find(ch => ch.ratingKey === ratingKey);
+    
+    if (!channel) {
+      await interaction.followUp({ content: '❌ Channel not found', ephemeral: true });
+      return;
+    }
+    
+    await startPlayback(interaction, channel);
+  } else if (interaction.customId === 'search_select') {
     const session = searchSessions.get(interaction.user.id);
     if (!session) {
       await interaction.reply({ content: '❌ Search expired', ephemeral: true });
@@ -1779,6 +1888,52 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promi
     await interaction.deferReply();
     await startPlayback(interaction, show, `S${seasonNum}E${episodeNum}`);
   }
+}
+
+async function showChannelSelector(interaction: StringSelectMenuInteraction): Promise<void> {
+  // Get the selected network from the interaction message
+  const selectedNetwork = interaction.values[0];
+  
+  // Get all channels and filter by selected network
+  const allChannels = await plexClient.getLiveTVChannels();
+  const networkChannels = allChannels.filter(ch => ch.grandparentTitle === selectedNetwork);
+  
+  if (networkChannels.length === 0) {
+    await interaction.followUp({ content: '❌ No channels found for this network', ephemeral: true });
+    return;
+  }
+  
+  // Sort channels by number
+  const sortedChannels = networkChannels.sort((a, b) => (a.index || 0) - (b.index || 0));
+  
+  // Create channel selection dropdown (limit to 25 options)
+  const channelOptions = sortedChannels.slice(0, 25).map(channel => ({
+    label: `${channel.index || '?'} - ${channel.title}`,
+    description: channel.summary || `Channel ${channel.index}`,
+    value: channel.ratingKey,
+  }));
+  
+  const channelSelect = new StringSelectMenuBuilder()
+    .setCustomId('select_channel')
+    .setPlaceholder('Select a channel...')
+    .addOptions(channelOptions);
+  
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(channelSelect);
+  
+  // Update the embed
+  const embed = new EmbedBuilder()
+    .setTitle(`📺 ${selectedNetwork} Channels`)
+    .setDescription(`Select a channel to start streaming. Showing ${Math.min(25, sortedChannels.length)} of ${sortedChannels.length} channels.`)
+    .setColor(0xe5a00d);
+  
+  if (sortedChannels.length > 25) {
+    embed.setFooter({ text: 'Only showing first 25 channels. Use /channel <number> for others.' });
+  }
+  
+  await interaction.update({ 
+    embeds: [embed],
+    components: [row]
+  });
 }
 
 async function showEpisodeSelector(
@@ -1854,6 +2009,334 @@ function createProgressBar(percent: number): string {
   const filled = Math.round(percent / 5);
   const empty = 20 - filled;
   return '▓'.repeat(filled) + '░'.repeat(empty);
+}
+
+async function handleChannels(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply();
+
+  const channels = await plexClient.getLiveTVChannels();
+
+  if (channels.length === 0) {
+    await interaction.editReply('❌ No Live TV channels found. Make sure you have DVR/Live TV configured in Plex.');
+    return;
+  }
+
+  // Group channels by network (grandparentTitle)
+  const networks = new Map<string, typeof channels>();
+  channels.forEach(channel => {
+    const network = channel.grandparentTitle || 'Unknown Network';
+    if (!networks.has(network)) {
+      networks.set(network, []);
+    }
+    networks.get(network)!.push(channel);
+  });
+
+  // Create network selection dropdown
+  const networkSelect = new StringSelectMenuBuilder()
+    .setCustomId('select_network')
+    .setPlaceholder('Select a network...')
+    .addOptions(
+      Array.from(networks.keys()).map(network => ({
+        label: network,
+        description: `${networks.get(network)!.length} channels`,
+        value: network,
+      }))
+    );
+
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(networkSelect);
+
+  // Create embed
+  const embed = new EmbedBuilder()
+    .setTitle('📺 Live TV Channels')
+    .setDescription(`Select a network to view its channels. Found ${networks.size} networks with ${channels.length} total channels.`)
+    .setColor(0xe5a00d)
+    .addFields(
+      { name: 'Available Networks', value: Array.from(networks.entries()).map(([name, chans]) => `• **${name}**: ${chans.length} channels`).join('\n') }
+    );
+
+  await interaction.editReply({ 
+    embeds: [embed],
+    components: [row]
+  });
+}
+
+async function handleChannel(interaction: ChatInputCommandInteraction): Promise<void> {
+  const channelNumber = interaction.options.getInteger('number', true);
+  
+  await interaction.deferReply();
+
+  // Get all channels and find the one with matching channel number
+  const channels = await plexClient.getLiveTVChannels();
+  const channel = channels.find(ch => ch.index === channelNumber);
+
+  if (!channel) {
+    await interaction.editReply(`❌ Channel ${channelNumber} not found`);
+    return;
+  }
+
+  // Get user's voice channel
+  const member = interaction.member;
+  if (!member || !('voice' in member) || !member.voice.channel) {
+    await interaction.editReply('❌ You must be in a voice channel to play Live TV');
+    return;
+  }
+
+  const voiceChannel = member.voice.channel;
+  const guildId = interaction.guildId;
+
+  if (!guildId) {
+    await interaction.editReply('❌ Could not determine guild');
+    return;
+  }
+
+  // Get stream URL for the channel
+  const streamInfo = await plexClient.getChannelStreamUrl(channel.ratingKey);
+  if (!streamInfo) {
+    await interaction.editReply('❌ Failed to get stream URL for this channel');
+    return;
+  }
+
+  // Start streaming the channel
+  const streamer = getVideoStreamer();
+  try {
+    await streamer.startStream(
+      guildId,
+      voiceChannel.id,
+      channel,
+      streamInfo.url,
+      0,
+      interaction.user.id
+    );
+
+    await interaction.editReply(`📺 Now playing: **${channel.title}** (Channel ${channelNumber})`);
+  } catch (error) {
+    console.error('[Controller] Error starting Live TV channel:', error);
+    await interaction.editReply('❌ Failed to start Live TV stream');
+  }
+}
+
+async function handleQueue(interaction: ChatInputCommandInteraction): Promise<void> {
+  const subcommand = interaction.options.getSubcommand();
+  
+  await interaction.deferReply();
+
+  switch (subcommand) {
+    case 'add': {
+      const number = interaction.options.getInteger('number', true);
+      const session = searchSessions.get(interaction.user.id);
+      
+      if (!session || Date.now() - session.timestamp > SESSION_TIMEOUT) {
+        await interaction.editReply('❌ No active search session. Use `/search` first');
+        return;
+      }
+
+      const mediaItem = session.results[number - 1];
+      if (!mediaItem) {
+        await interaction.editReply('❌ Invalid selection');
+        return;
+      }
+
+      const added = addToQueue(mediaItem, interaction.user.id);
+      if (!added) {
+        await interaction.editReply('❌ Item already in queue');
+        return;
+      }
+
+      await interaction.editReply(`✅ Added to queue: **${mediaItem.title}**`);
+      break;
+    }
+
+    case 'list': {
+      const queue = getQueue();
+      if (queue.length === 0) {
+        await interaction.editReply('📋 Queue is empty');
+        return;
+      }
+
+      const lines = queue.map((entry, i) => formatQueueEntry(entry, i));
+      await interaction.editReply(`📋 **Queue** (${queue.length} items)\n\n${lines.join('\n')}`);
+      break;
+    }
+
+    case 'remove': {
+      const number = interaction.options.getInteger('number', true);
+      const removed = removeFromQueue(number);
+      
+      if (!removed) {
+        await interaction.editReply('❌ Invalid queue position');
+        return;
+      }
+
+      await interaction.editReply(`🗑️ Removed from queue: **${removed.title}**`);
+      break;
+    }
+
+    case 'clear': {
+      clearQueue();
+      await interaction.editReply('🗑️ Queue cleared');
+      break;
+    }
+
+    case 'next': {
+      const next = popQueue();
+      if (!next) {
+        await interaction.editReply('❌ Queue is empty');
+        return;
+      }
+
+      // Get user's voice channel
+      const member = interaction.member;
+      if (!member || !('voice' in member) || !member.voice.channel) {
+        await interaction.editReply('❌ You must be in a voice channel');
+        return;
+      }
+
+      const voiceChannel = member.voice.channel;
+      const guildId = interaction.guildId;
+
+      if (!guildId) {
+        await interaction.editReply('❌ Could not determine guild');
+        return;
+      }
+
+      // Get full media item and stream URL
+      const mediaItem = await plexClient.getMetadata(next.ratingKey);
+      if (!mediaItem) {
+        await interaction.editReply('❌ Could not find media item');
+        return;
+      }
+
+      const streamInfo = await plexClient.getDirectStreamUrl(next.ratingKey);
+      if (!streamInfo) {
+        await interaction.editReply('❌ Could not get stream URL');
+        return;
+      }
+
+      // Check for saved position
+      const savedPosition = getPlaybackPosition(next.ratingKey);
+      const startPosition = (savedPosition && savedPosition > 30000) ? savedPosition : 0;
+
+      // Start streaming
+      const streamer = getVideoStreamer();
+      try {
+        await streamer.startStream(
+          guildId,
+          voiceChannel.id,
+          mediaItem,
+          streamInfo.url,
+          startPosition,
+          interaction.user.id
+        );
+
+        await interaction.editReply(`▶️ Now playing from queue: **${next.title}**`);
+      } catch (error) {
+        console.error('[Controller] Error playing from queue:', error);
+        await interaction.editReply('❌ Failed to start playback');
+      }
+      break;
+    }
+  }
+}
+
+async function handleOnDeck(interaction: ChatInputCommandInteraction): Promise<void> {
+  const number = interaction.options.getInteger('number');
+  
+  await interaction.deferReply();
+
+  const deck = getWatchDeck();
+  
+  if (deck.length === 0) {
+    await interaction.editReply('📺 Watch deck is empty');
+    return;
+  }
+
+  // If number is provided, resume that item
+  if (number !== null) {
+    const entry = deck[number - 1];
+    if (!entry) {
+      await interaction.editReply('❌ Invalid selection');
+      return;
+    }
+
+    // Get user's voice channel
+    const member = interaction.member;
+    if (!member || !('voice' in member) || !member.voice.channel) {
+      await interaction.editReply('❌ You must be in a voice channel');
+      return;
+    }
+
+    const voiceChannel = member.voice.channel;
+    const guildId = interaction.guildId;
+
+    if (!guildId) {
+      await interaction.editReply('❌ Could not determine guild');
+      return;
+    }
+
+    // Get full media item and stream URL
+    const mediaItem = await plexClient.getMetadata(entry.ratingKey);
+    if (!mediaItem) {
+      await interaction.editReply('❌ Could not find media item');
+      return;
+    }
+
+    const streamInfo = await plexClient.getDirectStreamUrl(entry.ratingKey);
+    if (!streamInfo) {
+      await interaction.editReply('❌ Could not get stream URL');
+      return;
+    }
+
+    // Check for saved position
+    const savedPosition = getPlaybackPosition(entry.ratingKey);
+    let startPosition = 0;
+
+    if (savedPosition && savedPosition > 30000) {
+      const minutes = Math.floor(savedPosition / 60000);
+      const seconds = Math.floor((savedPosition % 60000) / 1000);
+      await interaction.editReply(`🔄 Resume from ${minutes}:${seconds.toString().padStart(2, '0')}? React with ✅ to resume or ❌ to start from beginning`);
+      
+      const message = await interaction.fetchReply();
+      await message.react('✅');
+      await message.react('❌');
+
+      try {
+        const filter = (reaction: any, user: any) => {
+          return ['✅', '❌'].includes(reaction.emoji.name) && user.id === interaction.user.id;
+        };
+
+        const collected = await message.awaitReactions({ filter, max: 1, time: 15000 });
+        const reaction = collected.first();
+
+        if (reaction?.emoji.name === '✅') {
+          startPosition = savedPosition;
+        }
+      } catch {
+        // Timeout, start from beginning
+      }
+    }
+
+    // Start streaming
+    const streamer = getVideoStreamer();
+    try {
+      await streamer.startStream(
+        guildId,
+        voiceChannel.id,
+        mediaItem,
+        streamInfo.url,
+        startPosition,
+        interaction.user.id
+      );
+
+      await interaction.editReply(`▶️ Now playing: **${entry.title}**`);
+    } catch (error) {
+      console.error('[Controller] Error playing from watch deck:', error);
+      await interaction.editReply('❌ Failed to start playback');
+    }
+  } else {
+    // Just show the watch deck
+    const lines = deck.map((entry, i) => formatDeckEntry(entry, i));
+    await interaction.editReply(`📺 **On Deck** (Recently Watched)\n\n${lines.join('\n')}\n\nUse \`/ondeck <number>\` to resume watching`);
+  }
 }
 
 export function getControllerBot(): Client | null {

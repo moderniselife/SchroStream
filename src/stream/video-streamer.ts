@@ -7,6 +7,7 @@ import type { PlexMediaItem } from '../types/index.js';
 import config from '../config.js';
 import plexClient from '../plex/client.js';
 import { updateWatchDeck } from '../data/watch-deck.js';
+import { popQueue, peekQueue } from '../data/queue.js';
 
 // Playback history file path
 const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
@@ -123,6 +124,47 @@ class VideoStreamer {
     return this.sessions.has(guildId);
   }
 
+  private async playNextInQueue(guildId: string, channelId: string, userId?: string): Promise<void> {
+    const nextItem = popQueue();
+    if (!nextItem) {
+      console.log('[VideoStreamer] Queue is empty, playback stopped');
+      return;
+    }
+
+    console.log(`[VideoStreamer] Auto-playing next in queue: ${nextItem.title}`);
+
+    try {
+      // Get the full media item from Plex
+      const mediaItem = await plexClient.getMetadata(nextItem.ratingKey);
+      if (!mediaItem) {
+        console.error('[VideoStreamer] Could not find media item in Plex');
+        // Try next item in queue
+        await this.playNextInQueue(guildId, channelId, userId);
+        return;
+      }
+
+      // Get stream URL
+      const streamInfo = await plexClient.getDirectStreamUrl(nextItem.ratingKey);
+      if (!streamInfo) {
+        console.error('[VideoStreamer] Could not get stream URL');
+        // Try next item in queue
+        await this.playNextInQueue(guildId, channelId, userId);
+        return;
+      }
+
+      // Check for saved position
+      const savedPosition = getPlaybackPosition(nextItem.ratingKey);
+      const startPosition = (savedPosition && savedPosition > 30000) ? savedPosition : 0;
+
+      // Start streaming the next item
+      await this.startStream(guildId, channelId, mediaItem, streamInfo.url, startPosition, userId);
+    } catch (error) {
+      console.error('[VideoStreamer] Error playing next in queue:', error);
+      // Try next item in queue
+      await this.playNextInQueue(guildId, channelId, userId);
+    }
+  }
+
   async startStream(
     guildId: string,
     channelId: string,
@@ -149,11 +191,18 @@ class VideoStreamer {
       volume: 100,
       ffmpegCommand: null,
       userId,
+      isExternal: mediaItem.type === 'channel', // Treat Live TV channels as external streams
     };
 
     this.sessions.set(guildId, session);
 
-    this.playVideoStream(session, startTimeMs);
+    // Play Live TV channels as external streams to skip Plex transcoding
+    if (mediaItem.type === 'channel') {
+      console.log('[VideoStreamer] Playing Live TV channel as external stream');
+      await this.playExternalStream(session, startTimeMs);
+    } else {
+      await this.playVideoStream(session, startTimeMs);
+    }
   }
 
   async startExternalStream(
@@ -197,15 +246,19 @@ class VideoStreamer {
     this.playExternalStream(session);
   }
 
-  private async playExternalStream(session: VideoStreamSession): Promise<void> {
+  private async playExternalStream(session: VideoStreamSession, startTimeMs: number = 0): Promise<void> {
     const height = config.stream.defaultQuality;
     const width = Math.round(height * (16 / 9));
     let streamlinkProcess: ReturnType<typeof spawn> | null = null;
 
     try {
+      const startTimeSec = Math.floor(startTimeMs / 1000);
       console.log('[VideoStreamer] External stream URL:', session.streamUrl.substring(0, 100) + '...');
       if (session.audioUrl) {
         console.log('[VideoStreamer] Separate audio URL:', session.audioUrl.substring(0, 100) + '...');
+      }
+      if (startTimeSec > 0) {
+        console.log(`[VideoStreamer] Starting external stream at ${startTimeSec}s`);
       }
 
       const volumeMultiplier = (session.volume / 100).toFixed(2);
@@ -242,8 +295,14 @@ class VideoStreamer {
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '5',
           '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-          '-i', session.streamUrl,
         ];
+        
+        // Add seek before input for better performance
+        if (startTimeSec > 0) {
+          ffmpegArgs.push('-ss', startTimeSec.toString());
+        }
+        
+        ffmpegArgs.push('-i', session.streamUrl);
       }
 
       // Add separate audio input if provided (YouTube separates video/audio)
@@ -252,8 +311,14 @@ class VideoStreamer {
           '-reconnect', '1',
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '5',
-          '-i', session.audioUrl
         );
+        
+        // Add seek for audio too
+        if (startTimeSec > 0) {
+          ffmpegArgs.push('-ss', startTimeSec.toString());
+        }
+        
+        ffmpegArgs.push('-i', session.audioUrl);
       }
 
       // Map video from first input, audio from second (or first if no separate audio)
@@ -355,6 +420,9 @@ class VideoStreamer {
       
       if (!session.isStopping) {
         this.sessions.delete(session.guildId);
+        
+        // Auto-play next item in queue
+        await this.playNextInQueue(session.guildId, session.channelId, session.userId);
       }
     } catch (error) {
       if (!session.isStopping && error instanceof Error && !error.message.includes('abort')) {
@@ -379,11 +447,18 @@ class VideoStreamer {
     const width = Math.round(height * (16 / 9));
 
     try {
-      // Always get a fresh stream URL to avoid stale session IDs
-      console.log('[VideoStreamer] Getting fresh stream URL...');
-      const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
-      if (!freshStreamInfo) {
-        throw new Error('Failed to get stream URL from Plex');
+      // For Live TV channels, use the existing stream URL directly
+      let freshStreamInfo;
+      if (session.mediaItem.type === 'channel') {
+        console.log('[VideoStreamer] Using Live TV channel URL directly');
+        freshStreamInfo = { url: session.streamUrl };
+      } else {
+        // Always get a fresh stream URL to avoid stale session IDs
+        console.log('[VideoStreamer] Getting fresh stream URL...');
+        freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+        if (!freshStreamInfo) {
+          throw new Error('Failed to get stream URL from Plex');
+        }
       }
       
       // Update session with fresh URL and extract session ID
@@ -544,6 +619,9 @@ class VideoStreamer {
           savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(session.guildId));
         }
         this.sessions.delete(session.guildId);
+        
+        // Auto-play next item in queue
+        await this.playNextInQueue(session.guildId, session.channelId, session.userId);
       }
     } catch (error) {
       // Only log error if not intentionally stopped
@@ -612,45 +690,160 @@ class VideoStreamer {
       return false;
     }
 
-    // Try HLS offset seeking first (no new session needed)
-    if (session.sessionId && timeMs > 0) {
-      console.log('[VideoStreamer] Using HLS offset seeking');
+    // For external streams (YouTube, URLs), use FFmpeg -ss for seeking
+    if (session.isExternal) {
+      console.log(`[VideoStreamer] Seeking external stream to ${Math.floor(timeMs / 1000)}s`);
+      session.currentTime = timeMs;
+      session.startedAt = Date.now();
+      session.isStopping = true;
+
+      if (session.ffmpegCommand) {
+        try {
+          session.ffmpegCommand.kill('SIGTERM');
+        } catch {
+          // Ignore
+        }
+      }
+
+      // Stop the current stream
+      try {
+        this.streamer.stopStream();
+      } catch {
+        // Ignore
+      }
+
+      // Wait for FFmpeg to stop
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      session.isStopping = false;
+      await this.playExternalStream(session, timeMs);
+      return true;
+    }
+
+    // For Plex streams: Try HLS offset seeking first (no new session needed)
+    // Note: This only works if we already have an active session URL (not start.m3u8)
+    if (session.sessionId && timeMs > 0 && session.streamUrl.includes('/session/')) {
+      console.log('[VideoStreamer] Using HLS offset seeking with existing session');
+      
+      // Use the existing session URL and add offset parameter
       const url = new URL(session.streamUrl);
       url.searchParams.set('offset', String(timeMs));
       
       session.currentTime = timeMs;
       session.startedAt = Date.now();
+      session.isStopping = true;
       
-      // Update stream URL with offset
-      session.streamUrl = url.toString();
-      
-      // Restart FFmpeg with new URL offset
+      // Kill current FFmpeg
       if (session.ffmpegCommand) {
         try {
-          session.ffmpegCommand.kill('SIGKILL');
+          session.ffmpegCommand.kill('SIGTERM');
         } catch {
           // Ignore
         }
       }
       
+      // Stop Discord stream
+      try {
+        this.streamer.stopStream();
+      } catch {
+        // Ignore
+      }
+      
       // Wait for FFmpeg to stop
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Restart with offset
+      // Restart with the offset URL directly (don't call playVideoStream which would create new session)
       session.isStopping = false;
-      await this.playVideoStream(session, 0); // Start from beginning since offset is in URL
+      
+      // Build FFmpeg args directly with the offset URL
+      const height = config.stream.defaultQuality;
+      const width = Math.round(height * (16 / 9));
+      const volumeMultiplier = (session.volume / 100).toFixed(2);
+      const frameRate = config.stream.frameRate;
+      const gopSize = frameRate * 2;
+      
+      const headers = [
+        'Accept: */*',
+        'X-Plex-Client-Identifier: ' + config.plex.clientIdentifier,
+        'X-Plex-Product: Plex Web',
+        'X-Plex-Version: 4.0',
+        'X-Plex-Platform: Chrome',
+        'X-Plex-Device: Linux',
+        'X-Plex-Token: ' + config.plex.token,
+      ].join('\r\n') + '\r\n';
+      
+      const ffmpegArgs = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-headers', headers,
+        '-reconnect', '1',
+        '-reconnect_streamed', '1',
+        '-reconnect_delay_max', '5',
+        '-protocol_whitelist', 'file,http,https,tcp,tls,crypto,hls',
+        '-i', url.toString(),
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-tune', 'zerolatency',
+        '-b:v', `${config.stream.maxBitrate}k`,
+        '-maxrate', `${Math.round(config.stream.maxBitrate * 1.5)}k`,
+        '-bufsize', `${config.stream.maxBitrate * 2}k`,
+        '-vf', `scale=${width}:${height}`,
+        '-r', frameRate.toString(),
+        '-g', gopSize.toString(),
+        '-pix_fmt', 'yuv420p',
+        '-af', `volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`,
+        '-c:a', 'libopus',
+        '-b:a', '320k',
+        '-ar', '48000',
+        '-ac', '2',
+        '-f', 'matroska',
+        'pipe:1'
+      ];
+      
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+      session.ffmpegCommand = ffmpeg;
+      
+      ffmpeg.stderr.on('data', (data: Buffer) => {
+        const msg = data.toString().trim();
+        if (msg && !msg.includes('frame=')) {
+          console.error('[FFmpeg]', msg);
+        }
+      });
+      
+      ffmpeg.on('error', (err) => {
+        console.error('[VideoStreamer] FFmpeg spawn error:', err.message);
+      });
+      
+      ffmpeg.on('exit', (code) => {
+        if (code !== 0 && code !== null) {
+          console.log('[VideoStreamer] FFmpeg exited with code:', code);
+        }
+      });
+      
+      session.isPlaying = true;
+      session.startedAt = Date.now();
+      
+      // Register for web viewing
+      const { registerWebStream } = await import('../web/server.js');
+      registerWebStream(session.guildId, session, url.toString());
+      
+      // Start streaming
+      await playStream(ffmpeg.stdout, this.streamer, {
+        type: 'go-live',
+      });
+      
       return true;
     }
 
-    // Fallback: create new session
-    console.log('[VideoStreamer] Creating new session for seek');
+    // Fallback: create new Plex session
+    console.log('[VideoStreamer] Creating new Plex session for seek');
     session.currentTime = timeMs;
     session.startedAt = Date.now();
     session.isStopping = true;
 
     if (session.ffmpegCommand) {
       try {
-        session.ffmpegCommand.kill('SIGKILL');
+        session.ffmpegCommand.kill('SIGTERM');
       } catch {
         // Ignore
       }
@@ -691,7 +884,7 @@ class VideoStreamer {
 
       if (session.ffmpegCommand) {
         try {
-          session.ffmpegCommand.kill('SIGKILL');
+          session.ffmpegCommand.kill('SIGTERM'); // Use SIGTERM instead of SIGKILL for graceful shutdown
         } catch {
           // Ignore
         }
@@ -710,17 +903,27 @@ class VideoStreamer {
     const session = this.sessions.get(guildId);
     if (!session || !session.isPaused) return false;
 
-    // Get fresh stream URL (new Plex session)
-    const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
-    if (freshStreamInfo) {
-      session.streamUrl = freshStreamInfo.url;
+    // For Plex streams, get fresh stream URL (new Plex session)
+    // For YouTube/external, reuse the same URL
+    // For Live TV channels, reuse the same URL
+    if (!session.isExternal && session.mediaItem.type !== 'channel') {
+      const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+      if (freshStreamInfo) {
+        session.streamUrl = freshStreamInfo.url;
+      }
     }
 
     session.isPaused = false;
     session.isStopping = false;
     session.startedAt = Date.now();
 
-    await this.playVideoStream(session, session.currentTime);
+    // Resume from saved position for both external and Plex streams
+    if (session.isExternal) {
+      await this.playExternalStream(session, session.currentTime);
+    } else {
+      await this.playVideoStream(session, session.currentTime);
+    }
+    
     return true;
   }
 
@@ -777,10 +980,12 @@ class VideoStreamer {
       // Wait for FFmpeg to stop
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Get fresh stream URL (new Plex session)
-      const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
-      if (freshStreamInfo) {
-        session.streamUrl = freshStreamInfo.url;
+      // Get fresh stream URL (new Plex session) - but not for Live TV channels
+      if (session.mediaItem.type !== 'channel') {
+        const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+        if (freshStreamInfo) {
+          session.streamUrl = freshStreamInfo.url;
+        }
       }
       
       session.isStopping = false;

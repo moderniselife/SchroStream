@@ -296,7 +296,7 @@ export function createHLSFetcherProcess(playlistUrl: string): ChildProcess {
     main().catch(e => console.error('[HLSFetcher] Fatal:', e));
   `;
   
-  return spawn('bun', ['-e', script], {
+  return spawn('node', ['-e', script], {
     stdio: ['ignore', 'pipe', 'pipe']
   });
 }

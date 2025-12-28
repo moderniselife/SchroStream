@@ -5,7 +5,6 @@ import { initVideoStreamer } from '../stream/video-streamer.js';
 import { startWebServer } from '../web/server.js';
 
 export const client = new Client({
-  checkUpdate: false,
 });
 
 client.on('ready', async () => {

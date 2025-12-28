@@ -1,7 +1,7 @@
 export interface PlexMediaItem {
   ratingKey: string;
   key: string;
-  type: 'movie' | 'show' | 'season' | 'episode';
+  type: 'movie' | 'show' | 'season' | 'episode' | 'channel';
   title: string;
   year?: number;
   summary?: string;

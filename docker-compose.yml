@@ -1,22 +1,35 @@
-version: '3.8'
-
 services:
   schrostream:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: schrostream
     restart: unless-stopped
     network_mode: host
+    ports:
+      - "3105:3105"
+    env_file: .env
     environment:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - OWNER_ID=${OWNER_ID}
+      - BOT_TOKEN=${BOT_TOKEN}
+      - BOT_CLIENT_ID=${BOT_CLIENT_ID}
       - PLEX_URL=${PLEX_URL}
       - PLEX_TOKEN=${PLEX_TOKEN}
-      - COMMAND_PREFIX=${COMMAND_PREFIX:-!}
-      - ALLOWED_USERS=${ALLOWED_USERS:-}
-      - ALLOWED_ROLES=${ALLOWED_ROLES:-}
-      - ALLOWED_GUILDS=${ALLOWED_GUILDS:-}
+      - PLEX_CLIENT_IDENTIFIER=${PLEX_CLIENT_IDENTIFIER}
+      - PLEX_USERNAME=${PLEX_USERNAME}
       - DEFAULT_QUALITY=${DEFAULT_QUALITY:-1080}
       - MAX_BITRATE=${MAX_BITRATE:-8000}
-      - AUDIO_BITRATE=${AUDIO_BITRATE:-192}
-      - PLEX_CLIENT_IDENTIFIER=${PLEX_CLIENT_IDENTIFIER:-SchroStream}
+      - AUDIO_BITRATE=${AUDIO_BITRATE:-256}
+      - FRAME_RATE=${FRAME_RATE:-30}
+      - SHOW_FFMPEG_LOGS=${SHOW_FFMPEG_LOGS:-false}
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+      - PREFIX=${PREFIX:-!}
+      - WEB_PORT=${WEB_PORT:-3105}
+      - WEB_USER_ID=${WEB_USER_ID}
+      - WEB_GUILD_ID=${WEB_GUILD_ID}
+      - WEB_CHANNEL_ID=${WEB_CHANNEL_ID}
+      - ALLOWED_GUILDS=${ALLOWED_GUILDS}
+      - ALLOWED_ROLES=${ALLOWED_ROLES}
     volumes:
       - ./data:/app/data

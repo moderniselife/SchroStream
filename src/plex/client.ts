@@ -124,7 +124,7 @@ export class PlexClient {
           : [container.Metadata];
 
         results = items
-          .filter((item: any) => ['movie', 'show', 'episode'].includes(item.type))
+          .filter((item: any) => ['movie', 'show', 'episode', 'channel'].includes(item.type))
           .map((item: any) => this.parseMediaItem(item));
       }
     } catch (err) {
@@ -210,7 +210,7 @@ export class PlexClient {
     // Extract metadata from SearchResult array
     const items = searchResults
       .map((result: any) => result.Metadata)
-      .filter((item: any) => item && ['movie', 'show', 'episode'].includes(item.type));
+      .filter((item: any) => item && ['movie', 'show', 'episode', 'channel'].includes(item.type));
 
     return items.map((item: any) => this.parseMediaItem(item));
   }
@@ -428,7 +428,7 @@ export class PlexClient {
 
       // If we have a specific session ID, try the DELETE endpoint
       if (sessionId) {
-      
+
         // this is safe - it only stops the specific session 
         try {
           console.log(`[Plex] Attempting to DELETE transcode session: ${sessionId}`);
@@ -475,6 +475,359 @@ export class PlexClient {
       }
     }
     console.log('[Plex] Cleanup complete');
+  }
+
+  async getLiveTVChannels(): Promise<PlexMediaItem[]> {
+    try {
+      // Get all DVRs
+      const response = await this.request<any>('/livetv/dvrs');
+      const container = response.MediaContainer;
+
+      if (!container?.Dvr) {
+        console.log('[Plex] No DVRs found');
+        return [];
+      }
+
+      const dvrs = Array.isArray(container.Dvr) ? container.Dvr : [container.Dvr];
+      console.log(`[Plex] Found ${dvrs.length} DVR(s):`);
+      dvrs.forEach((dvr: any) => {
+        console.log(`  - DVR ${dvr.key}: ${dvr.title || 'Untitled'}`);
+      });
+
+      const allChannels: PlexMediaItem[] = [];
+
+      // Get channels from each DVR
+      for (const dvrInfo of dvrs) {
+        try {
+          console.log(`[Plex] Fetching channels for DVR ${dvrInfo.key}...`);
+
+          // First check if DVR has any channels configured
+          const dvrStatus = await this.request<any>(`/livetv/dvrs/${dvrInfo.key}`);
+          console.log(`[Plex] DVR ${dvrInfo.key} raw response:`, JSON.stringify(dvrStatus, null, 2));
+          const dvrContainer: any = dvrStatus.MediaContainer;
+
+          // Try different approaches to get channels
+          console.log(`[Plex] DVR container size: ${dvrContainer?.size}`);
+          console.log(`[Plex] DVR container keys:`, Object.keys(dvrContainer || {}));
+
+          // Channels are in the ChannelMapping arrays of each device
+          // Networks are in the Lineup array, devices correspond to networks
+          const dvrList = Array.isArray(dvrContainer?.Dvr) ? dvrContainer.Dvr : [dvrContainer?.Dvr];
+
+          for (const dvrData of dvrList) {
+            if (!dvrData?.Device) continue;
+
+            // Get networks from Lineup array
+            const lineups = Array.isArray(dvrData.Lineup) ? dvrData.Lineup : [dvrData.Lineup];
+            const devices = Array.isArray(dvrData.Device) ? dvrData.Device : [dvrData.Device];
+
+            console.log(`[Plex] Found ${lineups.length} networks and ${devices.length} devices`);
+
+            // Match each device to its network by title
+            for (const device of devices) {
+              if (!device?.ChannelMapping) continue;
+
+              // Find the matching network for this device
+              const network = lineups.find((lineup: any) => lineup.title === device.title);
+              const networkName = network?.title || device.title || 'Unknown Network';
+
+              console.log(`[Plex] Processing device: ${device.title} (${networkName})`);
+
+              const channelMappings = Array.isArray(device.ChannelMapping)
+                ? device.ChannelMapping
+                : [device.ChannelMapping];
+
+              console.log(`[Plex] Found ${channelMappings.length} channels in ${device.title}`);
+
+              const parsedChannels = channelMappings.map((mapping: any) => ({
+                ratingKey: `${dvrInfo.key}-${dvrData.key}-${device.key}-${mapping.deviceIdentifier}`,
+                key: mapping.channelKey,
+                type: 'channel',
+                title: mapping.channelKey.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+                year: undefined,
+                summary: `Live TV channel - ${mapping.lineupIdentifier} (${networkName})`,
+                thumb: undefined,
+                art: undefined,
+                duration: undefined, // Live TV has no duration
+                addedAt: undefined,
+                parentTitle: device.title,
+                grandparentTitle: networkName,
+                parentRatingKey: undefined,
+                grandparentRatingKey: undefined,
+                index: parseInt(mapping.deviceIdentifier, 10),
+                parentIndex: undefined,
+              }));
+
+              allChannels.push(...parsedChannels);
+            }
+          }
+        } catch (err) {
+          console.error(`[Plex] Error getting channels for DVR ${dvrInfo.key}:`, err);
+        }
+      }
+
+      return allChannels;
+    } catch (error) {
+      console.error('[Plex] Error getting Live TV channels:', error);
+      return [];
+    }
+  }
+
+  async getChannelStreamUrl(ratingKey: string): Promise<PlexStreamInfo | null> {
+    try {
+      // Parse the ratingKey to extract DVR key, DVR data key, device key, and device identifier
+      const parts = ratingKey.split('-');
+      if (parts.length < 3) {
+        // Old format fallback
+        const [dvrKey, deviceIdentifier] = parts;
+        // Use old endpoint
+        const response = await this.request<any>(`/livetv/dvrs/${dvrKey}/channels/${deviceIdentifier}/stream`);
+
+        if (!response?.MediaContainer) {
+          // Fallback: try the old method
+          const fallbackResponse = await this.request<any>(`/library/metadata/${ratingKey}`);
+          const container = fallbackResponse.MediaContainer;
+
+          if (!container?.Metadata) return null;
+
+          const channel = Array.isArray(container.Metadata) ? container.Metadata[0] : container.Metadata;
+
+          // Get the Media part which contains the stream URL
+          if (channel.Media && channel.Media.length > 0) {
+            const media = Array.isArray(channel.Media) ? channel.Media[0] : channel.Media;
+            if (media.Part && media.Part.length > 0) {
+              const part = Array.isArray(media.Part) ? media.Part[0] : media.Part;
+              const streamUrl = `${this.baseUrl}${part.key}`;
+
+              return {
+                url: streamUrl,
+                container: media.container || 'mpegts',
+              };
+            }
+          }
+
+          // Fallback: construct stream URL directly
+          const streamUrl = `${this.baseUrl}/library/metadata/${ratingKey}/file.m3u8`;
+          return {
+            url: streamUrl,
+            container: 'mpegts',
+          };
+        }
+
+        // Use the new Live TV endpoint response
+        const streamUrl = `${this.baseUrl}${response.MediaContainer.key}`;
+        return {
+          url: streamUrl,
+          container: 'mpegts',
+        };
+      }
+
+      // New format: dvrKey-dvrDataKey-deviceKey-deviceIdentifier
+      const [dvrKey, dvrDataKey, deviceKey, deviceIdentifier] = parts;
+
+      console.log(`[Plex] Looking for Live TV stream: dvrKey=${dvrKey}, deviceKey=${deviceKey}, deviceIdentifier=${deviceIdentifier}`);
+
+      // Try multiple approaches for Live TV streaming
+      let response: any;
+
+      // Approach 1: Try the assumed endpoint
+      try {
+        response = await this.request<any>(`/livetv/dvrs/${dvrKey}/channels/${deviceIdentifier}/stream`);
+        console.log('[Plex] Approach 1 succeeded');
+      } catch (err) {
+        console.log('[Plex] Approach 1 failed:', err);
+
+        // Approach 2: Try using deviceKey instead
+        try {
+          response = await this.request<any>(`/livetv/dvrs/${dvrKey}/devices/${deviceKey}/channels/${deviceIdentifier}/stream`);
+          console.log('[Plex] Approach 2 succeeded');
+        } catch (err2) {
+          console.log('[Plex] Approach 2 failed:', err2);
+
+          // Approach 3: Try getting channel metadata first
+          try {
+            const channelMeta = await this.request<any>(`/livetv/dvrs/${dvrKey}/channels/${deviceIdentifier}`);
+            console.log('[Plex] Channel metadata:', channelMeta);
+
+            // Look for Media container with stream URL
+            if (channelMeta?.MediaContainer?.Metadata?.[0]?.Media?.[0]?.Part?.[0]?.key) {
+              const streamKey = channelMeta.MediaContainer.Metadata[0].Media[0].Part[0].key;
+              response = { MediaContainer: { key: streamKey } };
+              console.log('[Plex] Approach 3 succeeded - found stream key in metadata');
+            }
+          } catch (err3) {
+            console.log('[Plex] Approach 3 failed:', err3);
+            // Approach 7: Fetch device lineup.json to find correct channel number
+            try {
+              // Get the device info
+              const dvrStatus = await this.request<any>(`/livetv/dvrs/${dvrKey}`);
+              const dvrData = Array.isArray(dvrStatus.MediaContainer.Dvr) ? dvrStatus.MediaContainer.Dvr[0] : dvrStatus.MediaContainer.Dvr;
+              const devices = Array.isArray(dvrData.Device) ? dvrData.Device : [dvrData.Device];
+              const device = devices.find((d: any) => d.key === deviceKey);
+
+              if (device?.uri) {
+                // Find the channel mapping to get lineupIdentifier
+                const channelMappings = Array.isArray(device.ChannelMapping) ? device.ChannelMapping : [device.ChannelMapping];
+                const mapping = channelMappings.find((m: any) => m.deviceIdentifier === deviceIdentifier);
+
+                if (mapping?.lineupIdentifier) {
+                  console.log(`[Plex] Looking for lineupIdentifier - approach 7: ${mapping.lineupIdentifier}`);
+
+                  // Fetch the device's lineup.json
+                  const fetch = await import('node-fetch');
+                  console.log(`[Plex] Fetching lineup from: ${device.uri}/lineup.json`);
+                  const lineupResponse = await fetch.default(`${device.uri}/lineup.json`);
+                  const lineup = await lineupResponse.json() as any[];
+                  console.log(`[Plex] Found ${lineup.length} channels in lineup`);
+
+                  // Find the channel with matching lineupIdentifier
+                  const channel = lineup.find((ch: any) =>
+                    ch.lineupIdentifier === mapping.lineupIdentifier ||
+                    ch.GuideName === mapping.lineupIdentifier ||
+                    ch.URL?.includes(mapping.lineupIdentifier)
+                  );
+
+                  if (!channel) {
+                    console.log(`[Plex] Channel not found for lineupIdentifier - approach 7: ${mapping.lineupIdentifier}`);
+                    console.log(`[Plex] Available channels:`, lineup.map((ch: any) => `${ch.GuideName} (${ch.GuideNumber})`).slice(0, 10));
+                  } else if (channel?.GuideNumber) {
+                    const streamUrl = `${device.uri}/auto/v${channel.GuideNumber}`;
+                    console.log(`[Plex] Approach 4: Found channel ${channel.GuideName} (${channel.GuideNumber}) - URL: ${streamUrl}`);
+
+                    return {
+                      url: streamUrl,
+                      container: 'mpegts',
+                    };
+                  }
+                }
+              }
+            } catch (err7) {
+              console.log('[Plex] Approach 7 failed:', err7);
+
+              // Approach 5: Try universal transcode
+              try {
+                const transcodeUrl = `${this.baseUrl}/video/:/transcode/universal/start.m3u8?X-Plex-Token=${this.token}&path=%2Flivetv%2Fdvrs%2F${dvrKey}%2Fchannels%2F${deviceIdentifier}`;
+                console.log('[Plex] Approach 5: Trying transcode URL');
+
+                return {
+                  url: transcodeUrl,
+                  container: 'mpegts',
+                };
+              } catch (err5) {
+                console.log('[Plex] Approach 5 failed:', err5);
+
+                // Approach 6: Try using channelKey from the original channel data
+                try {
+                  // Get all channels to find the channel key for this device
+                  const allChannels = await this.getLiveTVChannels();
+                  const channel = allChannels.find(ch => ch.ratingKey === ratingKey);
+
+                  if (channel?.key) {
+                    const channelStreamUrl = `${this.baseUrl}/livetv/channels/${channel.key}/stream?X-Plex-Token=${this.token}`;
+                    console.log('[Plex] Approach 6: Trying channel key URL:', channelStreamUrl);
+
+                    return {
+                      url: channelStreamUrl,
+                      container: 'mpegts',
+                    };
+                  }
+                } catch (err6) {
+                  console.log('[Plex] Approach 6 failed:', err6);
+
+
+                }
+              }
+            }
+
+            // // Approach 4: Fetch device lineup.json to find correct channel number
+            // try {
+            //   // Get the device info
+            //   const dvrStatus = await this.request<any>(`/livetv/dvrs/${dvrKey}`);
+            //   const dvrData = Array.isArray(dvrStatus.MediaContainer.Dvr) ? dvrStatus.MediaContainer.Dvr[0] : dvrStatus.MediaContainer.Dvr;
+            //   const devices = Array.isArray(dvrData.Device) ? dvrData.Device : [dvrData.Device];
+            //   const device = devices.find((d: any) => d.key === deviceKey);
+
+            //   if (device?.uri) {
+            //     // Find the channel mapping to get lineupIdentifier
+            //     const channelMappings = Array.isArray(device.ChannelMapping) ? device.ChannelMapping : [device.ChannelMapping];
+            //     const mapping = channelMappings.find((m: any) => m.deviceIdentifier === deviceIdentifier);
+
+            //     if (mapping?.lineupIdentifier) {
+            //       console.log(`[Plex] Looking for lineupIdentifier - approach 4: ${mapping.lineupIdentifier}`);
+
+            //       // Fetch the device's lineup.json
+            //       const fetch = await import('node-fetch');
+            //       const lineupResponse = await fetch.default(`${device.uri}/lineup.json`);
+            //       const lineup = await lineupResponse.json() as any[];
+
+            //       // Find the channel with matching lineupIdentifier
+            //       const channel = lineup.find((ch: any) => (ch.GuideName || ch.lineupIdentifier) === mapping.lineupIdentifier ||
+            //         ch.URL.includes(mapping.lineupIdentifier));
+
+            //       if (!channel) {
+            //         console.log(`[Plex] Channel not found for lineupIdentifier - approach 4: ${mapping.GuideNumber}`);
+            //       } else if (channel?.GuideNumber) {
+            //         const streamUrl = `${device.uri}/auto/v${channel.GuideNumber}`;
+            //         console.log(`[Plex] Approach 4: Found channel ${channel.GuideName} (${channel.GuideNumber}) - URL: ${streamUrl}`);
+
+            //         return {
+            //           url: streamUrl,
+            //           container: 'mpegts',
+            //         };
+            //       }
+            //     }
+            //   }
+            // } catch (err4) {
+            //   console.log('[Plex] Approach 4 failed:', err4);
+
+
+
+            // }
+          }
+        }
+      }
+
+      if (!response?.MediaContainer) {
+        // Fallback: try the old method
+        const fallbackResponse = await this.request<any>(`/library/metadata/${ratingKey}`);
+        const container = fallbackResponse.MediaContainer;
+
+        if (!container?.Metadata) return null;
+
+        const channel = Array.isArray(container.Metadata) ? container.Metadata[0] : container.Metadata;
+
+        // Get the Media part which contains the stream URL
+        if (channel.Media && channel.Media.length > 0) {
+          const media = Array.isArray(channel.Media) ? channel.Media[0] : channel.Media;
+          if (media.Part && media.Part.length > 0) {
+            const part = Array.isArray(media.Part) ? media.Part[0] : media.Part;
+            const streamUrl = `${this.baseUrl}${part.key}`;
+
+            return {
+              url: streamUrl,
+              container: media.container || 'mpegts',
+            };
+          }
+        }
+
+        // Fallback: construct stream URL directly
+        const streamUrl = `${this.baseUrl}/library/metadata/${ratingKey}/file.m3u8`;
+        return {
+          url: streamUrl,
+          container: 'mpegts',
+        };
+      }
+
+      // Use the new Live TV endpoint response
+      const streamUrl = `${this.baseUrl}${response.MediaContainer.key}`;
+      return {
+        url: streamUrl,
+        container: 'mpegts',
+      };
+    } catch (error) {
+      console.error('[Plex] Error getting channel stream URL:', error);
+      return null;
+    }
   }
 
   private parseMediaItem(item: any): PlexMediaItem {
