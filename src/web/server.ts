@@ -610,7 +610,15 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     
-    // Pipe FFmpeg output to response
+    // Pipe FFmpeg output to response with error handling
+    ffmpeg.stdout.on('error', (err: any) => {
+      if (err.code === 'EPIPE') {
+        console.log('[WebServer] FFmpeg stdout pipe broken (client disconnected)');
+      } else {
+        console.error('[WebServer] FFmpeg stdout error:', err);
+      }
+    });
+    
     ffmpeg.stdout.pipe(res);
     
     ffmpeg.stderr.on('data', (data: Buffer) => {
@@ -640,9 +648,32 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     // Clean up on client disconnect
     req.on('close', () => {
       console.log('[WebServer] Client disconnected, killing FFmpeg');
-      ffmpeg.kill('SIGKILL');
-      if (hlsFetcherProcess && !hlsFetcherProcess.killed) {
-        hlsFetcherProcess.kill();
+      try {
+        ffmpeg.kill('SIGKILL');
+        if (hlsFetcherProcess && !hlsFetcherProcess.killed) {
+          hlsFetcherProcess.kill();
+        }
+      } catch (err) {
+        // Ignore errors during cleanup
+        console.error('[WebServer] Cleanup error on disconnect:', err);
+      }
+    });
+    
+    // Handle response errors (including EPIPE)
+    res.on('error', (err: any) => {
+      if (err.code === 'EPIPE') {
+        console.log('[WebServer] Response pipe broken (client disconnected)');
+      } else {
+        console.error('[WebServer] Response error:', err);
+      }
+      // Clean up FFmpeg processes on response error
+      try {
+        ffmpeg.kill('SIGKILL');
+        if (hlsFetcherProcess && !hlsFetcherProcess.killed) {
+          hlsFetcherProcess.kill();
+        }
+      } catch (cleanupErr) {
+        // Ignore cleanup errors
       }
     });
     

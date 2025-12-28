@@ -173,6 +173,22 @@ export function createHLSFetcherProcess(playlistUrl: string): ChildProcess {
       }
     });
     
+    // Handle all other uncaught errors to prevent crashes
+    process.on('uncaughtException', (err) => {
+      if (err.code === 'EPIPE') {
+        console.error('[HLSFetcher] Uncaught EPIPE, exiting...');
+        process.exit(0);
+      } else {
+        console.error('[HLSFetcher] Uncaught exception:', err);
+        process.exit(1);
+      }
+    });
+    
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('[HLSFetcher] Unhandled rejection at:', promise, 'reason:', reason);
+      process.exit(1);
+    });
+    
     async function fetchText(url) {
       const res = await fetch(url, { headers: HEADERS });
       if (!res.ok) throw new Error('Fetch failed: ' + res.status);
