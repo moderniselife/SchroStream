@@ -890,8 +890,8 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
   }
 
   // Import YouTube downloader
-  const { downloadYouTubeVideo } = await import('../youtube/downloader.js');
-  type DownloadProgress = import('../youtube/downloader.js').DownloadProgress;
+  const { downloadYouTubeVideo } = await import('../youtube/downloader');
+  type DownloadProgress = import('../youtube/downloader').DownloadProgress;
 
   function createProgressBar(percent: number): string {
     const barLength = 20;
@@ -919,12 +919,18 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
         );
       },
       onComplete: async () => {
+        console.log('[Controller] YouTube download completion callback triggered');
         downloadComplete = true;
-        await interaction.editReply(
-          `📥 **Download Complete!**\n` +
-          `✅ Video downloaded successfully\n\n` +
-          `🎬 *Starting stream automatically...*`
-        );
+        try {
+          await interaction.editReply(
+            `📥 **Download Complete!**\n` +
+            `✅ Video downloaded successfully\n\n` +
+            `🎬 *Starting stream automatically...*`
+          );
+          console.log('[Controller] Successfully updated interaction with completion message');
+        } catch (error) {
+          console.error('[Controller] Failed to update interaction on completion:', error);
+        }
       },
       onError: async (error: string) => {
         await interaction.editReply(`❌ Download failed: ${error}`);

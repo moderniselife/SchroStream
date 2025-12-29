@@ -55,6 +55,14 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
 
     let output = '';
     let error = '';
+    let completionTriggered = false;
+
+    const triggerCompletion = () => {
+      if (!completionTriggered && options.onComplete) {
+        completionTriggered = true;
+        options.onComplete();
+      }
+    };
 
     ytdlp.stdout.on('data', (data) => {
       const lines = data.toString().split('\n');
@@ -77,12 +85,16 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
             if (options.onProgress) {
               options.onProgress(progress);
             }
+
+            // Trigger completion when reaching 100%
+            if (progress.percent >= 100.0 && !completionTriggered) {
+              console.log('[YouTubeDownloader] Download reached 100%, triggering completion');
+              setTimeout(triggerCompletion, 500); // Small delay to ensure file is fully written
+            }
           }
         } else if (line.includes('DOWNLOAD_COMPLETE')) {
           console.log('[YouTubeDownloader] Download completed successfully');
-          if (options.onComplete) {
-            options.onComplete();
-          }
+          triggerCompletion();
         }
       }
       output += data.toString();
@@ -125,6 +137,12 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
       }
 
       console.log('[YouTubeDownloader] Download completed:', outputPath);
+
+      // Trigger completion as a fallback if it hasn't been triggered yet
+      if (!completionTriggered) {
+        console.log('[YouTubeDownloader] Triggering completion from close event');
+        triggerCompletion();
+      }
 
       // Get video info for metadata
       try {
