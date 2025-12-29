@@ -2551,7 +2551,7 @@ async function handleQueue(interaction: ChatInputCommandInteraction): Promise<vo
             guildId,
             voiceChannel.id,
             mediaItem,
-            streamInfo.url,
+            streamInfo,
             0,
             interaction.user.id
           );
