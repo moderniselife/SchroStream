@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import config from '../config';
 
@@ -325,7 +325,7 @@ export function getVideoMetadata(videoFile: string): VideoMetadata | null {
       return null;
     }
     
-    const metadataContent = require(metadataPath);
+    const metadataContent = JSON.parse(readFileSync(metadataPath, 'utf8'));
     return metadataContent as VideoMetadata;
   } catch (error) {
     console.error('[YouTubeDownloader] Failed to read metadata:', error);
