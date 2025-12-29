@@ -46,11 +46,20 @@ app.get('/api/streams', (req: Request, res: Response) => {
       percentage: progress.percentage,
       isPaused: session.isPaused,
       volume: session.volume,
-      thumbnail: session.mediaItem.thumb,
+      // Get thumbnail based on media type
+      thumbnail: (() => {
+        if (session.mediaItem.type === 'movie' || session.mediaItem.type === 'show' || session.mediaItem.type === 'episode' || session.mediaItem.type === 'channel') {
+          // Plex media item
+          const plexItem = session.mediaItem as any;
+          return plexItem.thumb;
+        } else if (session.mediaItem.type === 'youtube') {
+          // YouTube item
+          const ytItem = session.mediaItem as any;
+          return ytItem.thumb;
+        }
+        return undefined;
+      })(),
     };
-  }).filter(Boolean);
-  
-  res.json({ streams });
 });
 
 // Get specific stream details
@@ -69,7 +78,14 @@ app.get('/api/stream/:guildId', (req: Request, res: Response) => {
   res.json({
     guildId,
     title: session.mediaItem.title,
-    description: session.mediaItem.summary,
+    description: (() => {
+      if (session.mediaItem.type === 'movie' || session.mediaItem.type === 'show' || session.mediaItem.type === 'episode' || session.mediaItem.type === 'channel') {
+        // Plex media item
+        const plexItem = session.mediaItem as any;
+        return plexItem.summary;
+      }
+      return undefined;
+    })(),
     type: session.isExternal ? 'external' : 'plex',
     streamUrl: webSession?.streamUrl || session.streamUrl,
     duration: session.duration,
@@ -77,8 +93,30 @@ app.get('/api/stream/:guildId', (req: Request, res: Response) => {
     percentage: progress.percentage,
     isPaused: session.isPaused,
     volume: session.volume,
-    thumbnail: session.mediaItem.thumb,
-    year: session.mediaItem.year,
+    thumbnail: (() => {
+      if (session.mediaItem.type === 'movie' || session.mediaItem.type === 'show' || session.mediaItem.type === 'episode' || session.mediaItem.type === 'channel') {
+        // Plex media item
+        const plexItem = session.mediaItem as any;
+        return plexItem.thumb;
+      } else if (session.mediaItem.type === 'youtube') {
+        // YouTube item
+        const ytItem = session.mediaItem as any;
+        return ytItem.thumb;
+      }
+      return undefined;
+    })(),
+    year: (() => {
+      if (session.mediaItem.type === 'movie' || session.mediaItem.type === 'show' || session.mediaItem.type === 'episode' || session.mediaItem.type === 'channel') {
+        // Plex media item
+        const plexItem = session.mediaItem as any;
+        return plexItem.year;
+      } else if (session.mediaItem.type === 'youtube') {
+        // YouTube item
+        const ytItem = session.mediaItem as any;
+        return ytItem.uploadDate;
+      }
+      return undefined;
+    })(),
   });
 });
 

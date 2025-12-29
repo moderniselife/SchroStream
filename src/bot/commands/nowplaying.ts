@@ -42,8 +42,19 @@ export async function nowPlayingCommand(message: Message, _args: string[]): Prom
     `⏱️ ${progress} (${percentage.toFixed(1)}%)`,
   ];
 
-  if (session.mediaItem.year) {
-    info.push(`📅 ${session.mediaItem.year}`);
+  // Add date/year info based on media type
+  if (session.mediaItem.type === 'movie' || session.mediaItem.type === 'show' || session.mediaItem.type === 'episode' || session.mediaItem.type === 'channel') {
+    // Plex media item
+    const plexItem = session.mediaItem as any;
+    if (plexItem.year) {
+      info.push(`📅 ${plexItem.year}`);
+    }
+  } else if (session.mediaItem.type === 'youtube') {
+    // YouTube item
+    const ytItem = session.mediaItem as any;
+    if (ytItem.uploadDate) {
+      info.push(`📅 ${ytItem.uploadDate}`);
+    }
   }
 
   await message.channel.send(info.join('\n'));
