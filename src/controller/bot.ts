@@ -2508,7 +2508,7 @@ async function handleQueue(interaction: ChatInputCommandInteraction): Promise<vo
           // Check if there's a downloaded file available
           if (!ytItem.filePath && ytItem.url) {
             // Try to find downloaded file for this YouTube video
-            const { getVideoMetadata } = await import('../youtube/downloader.js');
+            const { getVideoMetadata, downloadYouTubeVideo } = await import('../youtube/downloader.js');
             const { readdirSync, statSync } = await import('fs');
             const { join } = await import('path');
             
@@ -2531,8 +2531,31 @@ async function handleQueue(interaction: ChatInputCommandInteraction): Promise<vo
                   break;
                 }
               }
+              
+              // If no downloaded file found, download it now
+              if (!ytItem.filePath) {
+                await interaction.editReply('📥 Downloading YouTube video from queue...');
+                
+                const downloadedVideo = await downloadYouTubeVideo(ytItem.url, {
+                  onProgress: (progress) => {
+                    // Could update embed with progress here if needed
+                    console.log(`[Controller] Download progress: ${progress}%`);
+                  },
+                  onComplete: () => {
+                    console.log('[Controller] Download complete');
+                  },
+                  onError: (error) => {
+                    console.error('[Controller] Download error:', error);
+                  }
+                });
+                
+                if (downloadedVideo) {
+                  ytItem.filePath = downloadedVideo.filePath;
+                  await interaction.editReply(`✅ Downloaded: **${downloadedVideo.title}**`);
+                }
+              }
             } catch (error) {
-              console.error('[Controller] Error checking for downloaded YouTube file:', error);
+              console.error('[Controller] Error checking/downloading YouTube file:', error);
             }
           }
           
@@ -2546,7 +2569,7 @@ async function handleQueue(interaction: ChatInputCommandInteraction): Promise<vo
               interaction.user.id
             );
           } else if (ytItem.url) {
-            // Stream YouTube video directly
+            // Stream YouTube video directly (fallback)
             await videoStreamer.startExternalStream(
               guildId,
               voiceChannel.id,
@@ -2555,7 +2578,7 @@ async function handleQueue(interaction: ChatInputCommandInteraction): Promise<vo
               interaction.user.id
             );
           } else {
-            await interaction.editReply('❌ No URL or file path available for YouTube video');
+            await interaction.editReply('❌ No URL available for YouTube video');
             return;
           }
         } else if (first.type === 'external') {
