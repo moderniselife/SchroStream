@@ -22,7 +22,7 @@ import { formatDuration as formatPlexDuration, parseTimeString, getNextEpisode }
 import type { MediaItem } from '../types/index.js';
 import { client as selfbotClient } from '../bot/client.js';
 import { getQueue, addToQueue, removeFromQueue, clearQueue, popQueue, peekQueue, formatQueueEntry } from '../data/queue.js';
-import { getWatchDeck, formatDeckEntry } from '../data/watch-deck.js';
+import { getWatchDeck, formatDeckEntry, markVideoAsFullyWatched, cleanupFullyWatchedVideos } from '../data/watch-deck.js';
 
 // Store search results per user
 const searchSessions = new Map<string, { results: MediaItem[], timestamp: number }>();
@@ -277,6 +277,18 @@ const commands = [
         .setRequired(false)
         .setMinValue(1)
     ),
+  new SlashCommandBuilder()
+    .setName('watched')
+    .setDescription('Mark a video as fully watched and clean it up')
+    .addIntegerOption(option =>
+      option.setName('number')
+        .setDescription('Watch deck item number to mark as watched')
+        .setRequired(true)
+        .setMinValue(1)
+    ),
+  new SlashCommandBuilder()
+    .setName('cleanup')
+    .setDescription('Clean up all fully watched videos'),
 ].map(cmd => cmd.toJSON());
 
 export async function initControllerBot(): Promise<Client | null> {
@@ -287,6 +299,14 @@ export async function initControllerBot(): Promise<Client | null> {
     return null;
   }
 
+  // Clean up fully watched videos on startup
+  try {
+    cleanupFullyWatchedVideos();
+    console.log('[Controller] Startup cleanup completed');
+  } catch (error) {
+    console.error('[Controller] Failed to cleanup on startup:', error);
+  }
+  
   controllerBot = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -468,6 +488,12 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'ondeck':
       await handleOnDeck(interaction);
+      break;
+    case 'watched':
+      await handleWatched(interaction);
+      break;
+    case 'cleanup':
+      await handleCleanup(interaction);
       break;
   }
 }
@@ -3186,6 +3212,62 @@ async function handleDeleteDownload(interaction: ChatInputCommandInteraction): P
   } catch (error) {
     console.error('[Controller] Error in handleDeleteDownload:', error);
     await interaction.editReply('❌ Failed to delete downloaded video');
+  }
+}
+
+async function handleWatched(interaction: ChatInputCommandInteraction): Promise<void> {
+  const number = interaction.options.getInteger('number', true);
+  
+  await interaction.deferReply();
+
+  const deck = getWatchDeck();
+  
+  if (deck.length === 0) {
+    await interaction.editReply('📺 Watch deck is empty');
+    return;
+  }
+
+  if (number < 1 || number > deck.length) {
+    await interaction.editReply('❌ Invalid item number');
+    return;
+  }
+
+  const entry = deck[number - 1];
+  
+  // Mark as fully watched
+  markVideoAsFullyWatched(entry.ratingKey);
+  
+  const embed = new EmbedBuilder()
+    .setTitle('✅ Marked as Fully Watched')
+    .setDescription(`**${entry.title}**`)
+    .addFields(
+      { name: 'Status', value: '🎬 Video marked as fully watched' },
+      { name: 'Cleanup', value: 'Will be automatically cleaned up on next restart or manual cleanup' }
+    )
+    .setColor(0x00ff00);
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
+async function handleCleanup(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply();
+  
+  try {
+    cleanupFullyWatchedVideos();
+    
+    const embed = new EmbedBuilder()
+      .setTitle('🧹 Cleanup Complete')
+      .setDescription('All fully watched videos have been cleaned up')
+      .addFields(
+        { name: 'Files Deleted', value: 'Video files and metadata removed' },
+        { name: 'Watch Deck', value: 'Updated to remove watched items' }
+      )
+      .setColor(0x00ff00);
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    console.error('[Controller] Error in handleCleanup:', error);
+    await interaction.editReply('❌ Failed to cleanup watched videos');
   }
 }
 
