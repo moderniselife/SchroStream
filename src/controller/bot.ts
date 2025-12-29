@@ -2536,16 +2536,64 @@ async function handleQueue(interaction: ChatInputCommandInteraction): Promise<vo
               if (!ytItem.filePath) {
                 await interaction.editReply('📥 Downloading YouTube video from queue...');
                 
+                // Create initial download embed
+                const downloadEmbed = new EmbedBuilder()
+                  .setTitle('📥 Downloading YouTube Video')
+                  .setDescription(`**${first.title}**`)
+                  .setColor(0x0099ff)
+                  .addFields(
+                    { name: 'Progress', value: '⏳ 0% - Starting download...' }
+                  );
+
+                const progressMessage = await interaction.followUp({ embeds: [downloadEmbed] });
+                
                 const downloadedVideo = await downloadYouTubeVideo(ytItem.url, {
                   onProgress: (progress) => {
-                    // Could update embed with progress here if needed
-                    console.log(`[Controller] Download progress: ${progress}%`);
+                    // Update progress embed
+                    const progressBar = '█'.repeat(Math.floor(progress.percent / 5)) + '░'.repeat(20 - Math.floor(progress.percent / 5));
+                    const updatedEmbed = new EmbedBuilder()
+                      .setTitle('📥 Downloading YouTube Video')
+                      .setDescription(`**${first.title}**`)
+                      .setColor(0x0099ff)
+                      .addFields(
+                        { name: 'Progress', value: `${progressBar} ${progress.percent.toFixed(1)}% - ${progress.speed}` },
+                        { name: 'ETA', value: progress.eta || 'Calculating...' }
+                      );
+
+                    // Update the progress message
+                    progressMessage.edit({ embeds: [updatedEmbed] }).catch(err => {
+                      // Ignore rate limit errors
+                      if (!err.toString().includes('rate')) {
+                        console.error('[Controller] Failed to update download progress:', err);
+                      }
+                    });
                   },
-                  onComplete: () => {
+                  onComplete: async () => {
                     console.log('[Controller] Download complete');
+                    // Update to completion message
+                    const completeEmbed = new EmbedBuilder()
+                      .setTitle('✅ Download Complete')
+                      .setDescription(`**${first.title}**`)
+                      .setColor(0x00ff00)
+                      .addFields(
+                        { name: 'Status', value: '🎬 Ready to play!' }
+                      );
+
+                    await progressMessage.edit({ embeds: [completeEmbed] });
                   },
                   onError: (error) => {
                     console.error('[Controller] Download error:', error);
+                    const errorEmbed = new EmbedBuilder()
+                      .setTitle('❌ Download Failed')
+                      .setDescription(`**${first.title}**`)
+                      .setColor(0xff0000)
+                      .addFields(
+                        { name: 'Error', value: error }
+                      );
+
+                    progressMessage.edit({ embeds: [errorEmbed] }).catch(err => {
+                      console.error('[Controller] Failed to update error message:', err);
+                    });
                   }
                 });
                 
