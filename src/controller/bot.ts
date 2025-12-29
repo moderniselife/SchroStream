@@ -2547,8 +2547,21 @@ async function handleQueue(interaction: ChatInputCommandInteraction): Promise<vo
 
                 const progressMessage = await interaction.followUp({ embeds: [downloadEmbed] });
                 
+                // Rate limiting for progress updates
+                let lastUpdateTime = 0;
+                const UPDATE_COOLDOWN = 2000; // Update at most every 2 seconds
+                
                 const downloadedVideo = await downloadYouTubeVideo(ytItem.url, {
                   onProgress: (progress) => {
+                    const now = Date.now();
+                    
+                    // Rate limit updates to prevent Discord API issues
+                    if (now - lastUpdateTime < UPDATE_COOLDOWN) {
+                      return;
+                    }
+                    
+                    lastUpdateTime = now;
+                    
                     // Update progress embed
                     const progressBar = '█'.repeat(Math.floor(progress.percent / 5)) + '░'.repeat(20 - Math.floor(progress.percent / 5));
                     const updatedEmbed = new EmbedBuilder()
