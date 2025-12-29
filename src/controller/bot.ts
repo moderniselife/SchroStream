@@ -178,6 +178,29 @@ const commands = [
     .setName('clear')
     .setDescription('Clear all SchroStream and Co\'s messages'),
   new SlashCommandBuilder()
+    .setName('downloads')
+    .setDescription('Show downloaded YouTube videos with options to play or delete'),
+  new SlashCommandBuilder()
+    .setName('play-download')
+    .setDescription('Play a downloaded video by number')
+    .addIntegerOption(option =>
+      option.setName('number')
+        .setDescription('Video number from /downloads list')
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(50)
+    ),
+  new SlashCommandBuilder()
+    .setName('delete-download')
+    .setDescription('Delete a downloaded video by number')
+    .addIntegerOption(option =>
+      option.setName('number')
+        .setDescription('Video number from /downloads list')
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(50)
+    ),
+  new SlashCommandBuilder()
     .setName('channels')
     .setDescription('List available Live TV channels'),
   new SlashCommandBuilder()
@@ -397,6 +420,15 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'clear':
       await handleClear(interaction);
+      break;
+    case 'downloads':
+      await handleDownloads(interaction);
+      break;
+    case 'play-download':
+      await handlePlayDownload(interaction);
+      break;
+    case 'delete-download':
+      await handleDeleteDownload(interaction);
       break;
     case 'channels':
       await handleChannels(interaction);
@@ -2435,6 +2467,234 @@ async function handleClear(interaction: ChatInputCommandInteraction): Promise<vo
   } catch (error) {
     console.error('[Controller] Error in handleClear:', error);
     await interaction.editReply('❌ An error occurred while clearing messages');
+  }
+}
+
+async function handleDownloads(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply();
+
+  try {
+    const { readdirSync, statSync, unlinkSync } = await import('fs');
+    const { join } = await import('path');
+    
+    const downloadsDir = join(process.cwd(), 'downloads');
+    
+    // Check if downloads directory exists
+    try {
+      readdirSync(downloadsDir);
+    } catch {
+      await interaction.editReply('📁 No downloads directory found');
+      return;
+    }
+
+    // Get all video files in downloads directory
+    const files = readdirSync(downloadsDir);
+    const videoFiles = files.filter(file => 
+      file.endsWith('.mp4') || 
+      file.endsWith('.webm') || 
+      file.endsWith('.mkv') || 
+      file.endsWith('.avi')
+    );
+
+    if (videoFiles.length === 0) {
+      await interaction.editReply('📁 No downloaded videos found');
+      return;
+    }
+
+    // Get file info for each video
+    const videoInfo = videoFiles.map(file => {
+      const filePath = join(downloadsDir, file);
+      const stats = statSync(filePath);
+      const sizeInMB = (stats.size / (1024 * 1024)).toFixed(1);
+      const modifiedDate = new Date(stats.mtime).toLocaleDateString();
+      
+      // Extract timestamp from filename (video-1234567890.mp4)
+      const timestampMatch = file.match(/video-(\d+)\./);
+      const timestamp = timestampMatch ? parseInt(timestampMatch[1]) : 0;
+      
+      return {
+        file,
+        filePath,
+        size: `${sizeInMB} MB`,
+        modified: modifiedDate,
+        timestamp
+      };
+    }).sort((a, b) => b.timestamp - a.timestamp); // Sort by newest first
+
+    // Create embed with video list
+    const embed = new EmbedBuilder()
+      .setTitle('📥 Downloaded Videos')
+      .setDescription(`Found ${videoInfo.length} downloaded video(s)`)
+      .setColor(0x00ff00)
+      .addFields(
+        videoInfo.map((video, index) => ({
+          name: `${index + 1}. ${video.file}`,
+          value: `📁 Size: ${video.size} | 📅 ${video.modified}\n\`/play-download ${index + 1}\` to play | \`/delete-download ${index + 1}\` to delete`,
+          inline: false
+        }))
+      )
+      .setFooter({ text: 'Use /play-download <number> to play or /delete-download <number> to delete' });
+
+    await interaction.editReply({ embeds: [embed] });
+
+  } catch (error) {
+    console.error('[Controller] Error in handleDownloads:', error);
+    await interaction.editReply('❌ Failed to list downloads');
+  }
+}
+
+async function handlePlayDownload(interaction: ChatInputCommandInteraction): Promise<void> {
+  const videoNumber = interaction.options.getInteger('number', true);
+  await interaction.deferReply();
+
+  try {
+    const { readdirSync, statSync } = await import('fs');
+    const { join } = await import('path');
+    
+    const downloadsDir = join(process.cwd(), 'downloads');
+    
+    // Get all video files
+    const files = readdirSync(downloadsDir);
+    const videoFiles = files.filter(file => 
+      file.endsWith('.mp4') || 
+      file.endsWith('.webm') || 
+      file.endsWith('.mkv') || 
+      file.endsWith('.avi')
+    ).sort((a, b) => {
+      // Sort by timestamp (newest first)
+      const aTimestamp = a.match(/video-(\d+)\./);
+      const bTimestamp = b.match(/video-(\d+)\./);
+      const aTime = aTimestamp ? parseInt(aTimestamp[1]) : 0;
+      const bTime = bTimestamp ? parseInt(bTimestamp[1]) : 0;
+      return bTime - aTime;
+    });
+
+    // Check if video number is valid
+    if (videoNumber < 1 || videoNumber > videoFiles.length) {
+      await interaction.editReply(`❌ Invalid video number. Please use a number between 1 and ${videoFiles.length}`);
+      return;
+    }
+
+    const selectedFile = videoFiles[videoNumber - 1];
+    const filePath = join(downloadsDir, selectedFile);
+    const stats = statSync(filePath);
+    const sizeInMB = (stats.size / (1024 * 1024)).toFixed(1);
+
+    // Check if user is in voice channel
+    const guildId = interaction.guildId;
+    if (!guildId) {
+      await interaction.editReply('❌ This command can only be used in a server');
+      return;
+    }
+
+    const guild = selfbotClient.guilds.cache.get(guildId);
+    const member = guild?.members.cache.get(interaction.user.id);
+    const voiceChannel = member?.voice?.channel;
+
+    if (!voiceChannel) {
+      await interaction.editReply('❌ You must be in a voice channel to play a video');
+      return;
+    }
+
+    // Get video info from filename or try to extract from metadata
+    const videoStreamer = getVideoStreamer();
+    
+    const mediaItem = {
+      ratingKey: `download-${Date.now()}`,
+      key: filePath,
+      title: selectedFile.replace(/video-\d+\./, '').replace(/\.[^.]+$/, '') || 'Downloaded Video',
+      type: 'movie' as const,
+      duration: 0, // Unknown duration for downloaded files
+    };
+
+    const embed = new EmbedBuilder()
+      .setTitle('📺 Starting Downloaded Video')
+      .setDescription(`**${mediaItem.title}**`)
+      .addFields(
+        { name: 'File', value: selectedFile, inline: true },
+        { name: 'Size', value: `${sizeInMB} MB`, inline: true },
+        { name: 'Source', value: '📥 Local file', inline: true }
+      )
+      .setColor(0x00ff00);
+
+    const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
+    );
+
+    await interaction.editReply({ embeds: [embed], components: [controlRow] });
+
+    // Start streaming the downloaded file
+    videoStreamer.startLocalFile(
+      guildId,
+      voiceChannel.id,
+      mediaItem,
+      filePath,
+      interaction.user.id
+    ).catch(err => console.error('[Controller] Download play error:', err));
+
+  } catch (error) {
+    console.error('[Controller] Error in handlePlayDownload:', error);
+    await interaction.editReply('❌ Failed to play downloaded video');
+  }
+}
+
+async function handleDeleteDownload(interaction: ChatInputCommandInteraction): Promise<void> {
+  const videoNumber = interaction.options.getInteger('number', true);
+  await interaction.deferReply();
+
+  try {
+    const { readdirSync, statSync, unlinkSync } = await import('fs');
+    const { join } = await import('path');
+    
+    const downloadsDir = join(process.cwd(), 'downloads');
+    
+    // Get all video files
+    const files = readdirSync(downloadsDir);
+    const videoFiles = files.filter(file => 
+      file.endsWith('.mp4') || 
+      file.endsWith('.webm') || 
+      file.endsWith('.mkv') || 
+      file.endsWith('.avi')
+    ).sort((a, b) => {
+      // Sort by timestamp (newest first)
+      const aTimestamp = a.match(/video-(\d+)\./);
+      const bTimestamp = b.match(/video-(\d+)\./);
+      const aTime = aTimestamp ? parseInt(aTimestamp[1]) : 0;
+      const bTime = bTimestamp ? parseInt(bTimestamp[1]) : 0;
+      return bTime - aTime;
+    });
+
+    // Check if video number is valid
+    if (videoNumber < 1 || videoNumber > videoFiles.length) {
+      await interaction.editReply(`❌ Invalid video number. Please use a number between 1 and ${videoFiles.length}`);
+      return;
+    }
+
+    const selectedFile = videoFiles[videoNumber - 1];
+    const filePath = join(downloadsDir, selectedFile);
+    const stats = statSync(filePath);
+    const sizeInMB = (stats.size / (1024 * 1024)).toFixed(1);
+
+    // Delete the file
+    unlinkSync(filePath);
+    
+    const embed = new EmbedBuilder()
+      .setTitle('🗑️ Video Deleted')
+      .setDescription(`Successfully deleted **${selectedFile}**`)
+      .addFields(
+        { name: 'Size Freed', value: `${sizeInMB} MB`, inline: true },
+        { name: 'File', value: selectedFile, inline: true }
+      )
+      .setColor(0xff0000);
+
+    await interaction.editReply({ embeds: [embed] });
+
+  } catch (error) {
+    console.error('[Controller] Error in handleDeleteDownload:', error);
+    await interaction.editReply('❌ Failed to delete downloaded video');
   }
 }
 
