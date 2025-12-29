@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import config from '../config.js';
 
@@ -226,17 +226,16 @@ async function getYouTubeInfo(url: string): Promise<{ title: string; duration: n
 // Clean up old downloaded files (older than 24 hours)
 export function cleanupOldDownloads(): void {
   try {
-    const fs = require('fs');
-    const files = fs.readdirSync(DOWNLOADS_DIR);
+    const files = readdirSync(DOWNLOADS_DIR);
     const now = Date.now();
     const maxAge = 24 * 60 * 60 * 1000; // 24 hours
 
     for (const file of files) {
       const filePath = join(DOWNLOADS_DIR, file);
-      const stats = fs.statSync(filePath);
+      const stats = statSync(filePath);
       
       if (now - stats.mtime.getTime() > maxAge) {
-        fs.unlinkSync(filePath);
+        unlinkSync(filePath);
         console.log(`[YouTubeDownloader] Cleaned up old file: ${file}`);
       }
     }
