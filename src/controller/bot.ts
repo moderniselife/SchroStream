@@ -953,25 +953,55 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
   try {
     let downloadComplete = false;
     let currentProgress: DownloadProgress | null = null;
+    let lastUpdateTime = 0;
+    const UPDATE_COOLDOWN = 2000; // Update at most every 2 seconds
 
     // Start download with progress tracking
     const downloadPromise = downloadYouTubeVideo(url, {
       onProgress: async (progress: DownloadProgress) => {
         currentProgress = progress;
+        const now = Date.now();
+        
+        // Rate limit updates to prevent Discord API issues
+        if (now - lastUpdateTime < UPDATE_COOLDOWN) {
+          return;
+        }
+        
+        lastUpdateTime = now;
         const progressBar = createProgressBar(progress.percent);
         
-        await interaction.editReply(
-          `📥 **Downloading Video**\n` +
-          `${progressBar}\n` +
-          `📊 ${progress.speed} | ⏱️ ETA: ${progress.eta}\n` +
-          `📁 Total: ${progress.total}\n\n` +
-          `*Download will auto-start streaming when complete...*`
-        );
+        try {
+          await interaction.editReply(
+            `📥 **Downloading Video**\n` +
+            `${progressBar}\n` +
+            `📊 ${progress.speed} | ⏱️ ETA: ${progress.eta}\n` +
+            `📁 Total: ${progress.total}\n\n` +
+            `*Download will auto-start streaming when complete...*`
+          );
+          console.log(`[Controller] Updated interaction with progress: ${progress.percent.toFixed(1)}%`);
+        } catch (updateError) {
+          // Log but don't fail the download if interaction updates fail
+          console.error('[Controller] Failed to update progress embed:', updateError);
+        }
       },
       onComplete: async () => {
         console.log('[Controller] YouTube download completion callback triggered');
         downloadComplete = true;
+        
+        // Show final progress as 100% before showing completion message
         try {
+          await interaction.editReply(
+            `📥 **Downloading Video**\n` +
+            `[████████████████████] 100.0%\n` +
+            `📊 Complete | ⏱️ Done\n` +
+            `📁 Total: ${currentProgress?.total || 'Unknown'}\n\n` +
+            `🎬 *Starting stream automatically...*`
+          );
+          console.log('[Controller] Updated interaction with final 100% progress');
+          
+          // Small delay then show completion message
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
           await interaction.editReply(
             `📥 **Download Complete!**\n` +
             `✅ Video downloaded successfully\n\n` +
