@@ -222,9 +222,16 @@ async function getYouTubeInfo(url: string): Promise<{ title: string; duration: n
 
       try {
         const info = JSON.parse(output);
+        const durationSeconds = info.duration || 0;
+        const durationMs = durationSeconds * 1000;
+        
+        console.log('[YouTubeDownloader] Raw duration from yt-dlp:', durationSeconds, 'seconds');
+        console.log('[YouTubeDownloader] Converted to ms:', durationMs);
+        console.log('[YouTubeDownloader] Formatted duration:', durationMs > 0 ? new Date(durationMs).toISOString().substr(11, 8) : '0');
+        
         resolve({
           title: info.title || 'Unknown',
-          duration: (info.duration || 0) * 1000,
+          duration: durationMs,
           thumbnail: info.thumbnail,
           uploader: info.uploader || info.channel,
         });
