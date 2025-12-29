@@ -205,6 +205,40 @@ class VideoStreamer {
     }
   }
 
+  async startLocalFile(
+    guildId: string,
+    channelId: string,
+    mediaItem: PlexMediaItem,
+    filePath: string,
+    userId?: string
+  ): Promise<void> {
+    await this.stopStream(guildId);
+
+    await this.streamer.joinVoice(guildId, channelId);
+
+    const session: VideoStreamSession = {
+      guildId,
+      channelId,
+      mediaItem,
+      streamUrl: filePath, // Use file path as stream URL
+      isPaused: false,
+      isStopping: false,
+      isPlaying: false,
+      startedAt: Date.now(),
+      currentTime: 0,
+      duration: mediaItem.duration || 0,
+      volume: 100,
+      ffmpegCommand: null,
+      userId,
+      isExternal: true, // Treat local files as external streams
+      audioUrl: undefined,
+    };
+
+    this.sessions.set(guildId, session);
+
+    await this.playLocalFile(session);
+  }
+
   async startExternalStream(
     guildId: string,
     channelId: string,
@@ -244,6 +278,115 @@ class VideoStreamer {
     this.sessions.set(guildId, session);
 
     this.playExternalStream(session);
+  }
+
+  private async playLocalFile(session: VideoStreamSession, startTimeMs: number = 0): Promise<void> {
+    const height = config.stream.defaultQuality;
+    const width = Math.round(height * (16 / 9));
+
+    try {
+      const startTimeSec = Math.floor(startTimeMs / 1000);
+      console.log('[VideoStreamer] Playing local file:', session.streamUrl);
+      if (startTimeSec > 0) {
+        console.log(`[VideoStreamer] Starting local file at ${startTimeSec}s`);
+      }
+
+      const volumeMultiplier = (session.volume / 100).toFixed(2);
+
+      // Build FFmpeg args for local file input
+      const ffmpegArgs = [
+        '-hide_banner',
+        '-loglevel', 'error',
+      ];
+
+      // Add seek before input for better performance with local files
+      if (startTimeSec > 0) {
+        ffmpegArgs.push('-ss', startTimeSec.toString());
+      }
+
+      ffmpegArgs.push('-i', session.streamUrl);
+
+      // Video and audio output settings
+      ffmpegArgs.push(
+        '-map', '0:v:0?',
+        '-map', '0:a:0?',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-tune', 'zerolatency',
+        '-pix_fmt', 'yuv420p',
+        '-r', String(config.stream.frameRate),
+        '-g', String(config.stream.frameRate * 2),
+        '-b:v', `${config.stream.maxBitrate}k`,
+        '-maxrate', `${config.stream.maxBitrate * 1.5}k`,
+        '-bufsize', `${config.stream.maxBitrate * 2}k`,
+        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+        '-c:a', 'libopus',
+        '-b:a', '320k',
+        '-ar', '48000',
+        '-ac', '2',
+        '-af', `volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`,
+        '-f', 'matroska',
+        '-'
+      );
+
+      console.log('[VideoStreamer] Starting FFmpeg for local file...');
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+      session.ffmpegCommand = ffmpeg;
+
+      ffmpeg.stderr.on('data', (data) => {
+        const msg = data.toString();
+        // Always show errors, but only show other logs if enabled
+        if (msg.includes('Error') || msg.includes('error') || msg.includes('Fatal')) {
+          console.error('[FFmpeg]', msg);
+        } else if (config.stream.showFFmpegLogs && !msg.includes('frame=') && !msg.includes('size=')) {
+          console.error('[FFmpeg]', msg);
+        }
+      });
+
+      ffmpeg.on('error', (err) => {
+        console.error('[VideoStreamer] FFmpeg spawn error:', err.message);
+      });
+
+      ffmpeg.on('exit', (code) => {
+        if (code !== 0 && code !== null) {
+          console.log('[VideoStreamer] FFmpeg exited with code:', code);
+        }
+      });
+
+      console.log('[VideoStreamer] Starting Go Live stream (local file)...');
+      
+      session.isPlaying = true;
+      session.startedAt = Date.now();
+      
+      if (session.userId) {
+        updateWatchDeck(session.mediaItem, 0, session.userId);
+      }
+
+      // Register stream for web viewing
+      const { registerWebStream } = await import('../web/server.js');
+      registerWebStream(session.guildId, session, session.streamUrl);
+
+      await playStream(ffmpeg.stdout, this.streamer, {
+        type: 'go-live',
+      });
+
+      console.log('[VideoStreamer] Local file playback finished');
+      
+      if (!session.isStopping) {
+        this.sessions.delete(session.guildId);
+        
+        // Auto-play next item in queue
+        await this.playNextInQueue(session.guildId, session.channelId, session.userId);
+      }
+    } catch (error) {
+      if (!session.isStopping && error instanceof Error && !error.message.includes('abort')) {
+        console.error('[VideoStreamer] Local file error:', error);
+      }
+      
+      if (!session.isStopping) {
+        this.sessions.delete(session.guildId);
+      }
+    }
   }
 
   private async playExternalStream(session: VideoStreamSession, startTimeMs: number = 0): Promise<void> {

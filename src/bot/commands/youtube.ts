@@ -1,110 +1,7 @@
 import type { Message, VoiceChannel } from 'discord.js-selfbot-v13';
 import { getVideoStreamer } from '../../stream/video-streamer.js';
-import { spawn } from 'child_process';
 import { formatDuration } from '../../plex/library.js';
-
-interface YouTubeInfo {
-  title: string;
-  duration: number;
-  url: string;
-  thumbnail?: string;
-  uploader?: string;
-}
-
-async function getYouTubeInfo(url: string): Promise<YouTubeInfo | null> {
-  return new Promise((resolve) => {
-    const ytdlp = spawn('yt-dlp', [
-      '--dump-json',
-      '--no-playlist',
-      '--no-warnings',
-      url
-    ]);
-
-    let output = '';
-    let error = '';
-
-    ytdlp.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-
-    ytdlp.stderr.on('data', (data) => {
-      error += data.toString();
-    });
-
-    ytdlp.on('close', (code) => {
-      if (code !== 0 || !output) {
-        console.error('[YouTube] yt-dlp error:', error);
-        resolve(null);
-        return;
-      }
-
-      try {
-        const info = JSON.parse(output);
-        resolve({
-          title: info.title || 'Unknown',
-          duration: (info.duration || 0) * 1000,
-          url: info.url || info.webpage_url,
-          thumbnail: info.thumbnail,
-          uploader: info.uploader || info.channel,
-        });
-      } catch (e) {
-        console.error('[YouTube] Failed to parse yt-dlp output:', e);
-        resolve(null);
-      }
-    });
-
-    ytdlp.on('error', (err) => {
-      console.error('[YouTube] yt-dlp spawn error:', err);
-      resolve(null);
-    });
-  });
-}
-
-interface StreamUrls {
-  video: string;
-  audio: string | null;
-}
-
-async function getStreamUrls(url: string): Promise<StreamUrls | null> {
-  return new Promise((resolve) => {
-    const ytdlp = spawn('yt-dlp', [
-      '-g',
-      '-f', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
-      '--no-playlist',
-      '--no-warnings',
-      url
-    ]);
-
-    let output = '';
-    let error = '';
-
-    ytdlp.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-
-    ytdlp.stderr.on('data', (data) => {
-      error += data.toString();
-    });
-
-    ytdlp.on('close', (code) => {
-      if (code !== 0 || !output.trim()) {
-        console.error('[YouTube] yt-dlp stream URL error:', error);
-        resolve(null);
-        return;
-      }
-      const urls = output.trim().split('\n');
-      resolve({
-        video: urls[0],
-        audio: urls[1] || null, // YouTube returns video first, then audio
-      });
-    });
-
-    ytdlp.on('error', (err) => {
-      console.error('[YouTube] yt-dlp spawn error:', err);
-      resolve(null);
-    });
-  });
-}
+import { downloadYouTubeVideo } from '../../youtube/downloader.js';
 
 export async function youtubeCommand(message: Message, args: string[]): Promise<void> {
   if (!message.guild) {
@@ -132,17 +29,12 @@ export async function youtubeCommand(message: Message, args: string[]): Promise<
   const statusMsg = await message.channel.send('🔍 Fetching video info...');
 
   try {
-    const info = await getYouTubeInfo(url);
-    if (!info) {
-      await statusMsg.edit('❌ Failed to get video info. Make sure yt-dlp is installed and the URL is valid.');
-      return;
-    }
+    await statusMsg.edit(`📥 **Downloading:** ${url}\n⏳ Using yt-dlp accelerated download...`);
 
-    await statusMsg.edit(`📺 Loading: **${info.title}**\n⏳ Getting stream URL...`);
-
-    const streamUrls = await getStreamUrls(url);
-    if (!streamUrls) {
-      await statusMsg.edit('❌ Failed to get stream URL');
+    // Download the video using yt-dlp
+    const downloadedVideo = await downloadYouTubeVideo(url);
+    if (!downloadedVideo) {
+      await statusMsg.edit('❌ Failed to download video. Make sure yt-dlp is installed and the URL is valid.');
       return;
     }
 
@@ -151,37 +43,39 @@ export async function youtubeCommand(message: Message, args: string[]): Promise<
     const mediaItem = {
       ratingKey: `yt-${Date.now()}`,
       key: url,
-      title: info.title,
+      title: downloadedVideo.title,
       type: 'movie' as const,
-      duration: info.duration,
-      thumb: info.thumbnail,
-      summary: info.uploader ? `By ${info.uploader}` : undefined,
+      duration: downloadedVideo.duration,
+      thumb: downloadedVideo.thumbnail,
+      summary: downloadedVideo.uploader ? `By ${downloadedVideo.uploader}` : undefined,
     };
 
-    const duration = info.duration ? formatDuration(info.duration) : 'Live/Unknown';
+    const duration = downloadedVideo.duration ? formatDuration(downloadedVideo.duration) : 'Live/Unknown';
 
     await statusMsg.edit(
-      `📺 **Starting:** ${info.title}\n` +
-      `${info.uploader ? `👤 ${info.uploader}\n` : ''}` +
-      `⏱️ Duration: ${duration}\n\n` +
+      `📺 **Starting:** ${downloadedVideo.title}\n` +
+      `${downloadedVideo.uploader ? `👤 ${downloadedVideo.uploader}\n` : ''}` +
+      `⏱️ Duration: ${duration}\n` +
+      `📥 Downloaded locally for better performance\n\n` +
       `*Connecting to voice channel...*`
     );
 
-    await videoStreamer.startExternalStream(
+    // Start streaming the downloaded file
+    await videoStreamer.startLocalFile(
       message.guild.id,
       voiceChannel.id,
       mediaItem,
-      streamUrls.video,
-      message.author.id,
-      streamUrls.audio
+      downloadedVideo.filePath,
+      message.author.id
     );
 
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
     await statusMsg.edit(
-      `📺 **Now Streaming:** ${info.title}\n` +
-      `${info.uploader ? `👤 ${info.uploader}\n` : ''}` +
-      `⏱️ Duration: ${duration}`
+      `📺 **Now Streaming:** ${downloadedVideo.title}\n` +
+      `${downloadedVideo.uploader ? `👤 ${downloadedVideo.uploader}\n` : ''}` +
+      `⏱️ Duration: ${duration}\n` +
+      `📥 Playing from local file (no buffering!)`
     );
   } catch (error) {
     console.error('[YouTube] Error:', error);

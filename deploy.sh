@@ -74,7 +74,7 @@ fi
 
 # Create remote directory and clean up old files
 info "Preparing remote directory..."
-ssh -p $SSH_PORT $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_DIR && cd $REMOTE_DIR && rm -rf bot controller data netflix plex stream types youtube web index.ts config.ts *.md *.lock *.html tsconfig.node.json vite.config.ts tailwind.config.js postcss.config.js public scripts docs .github assets bun.lock www.netflix.com.har" && 
+ssh -p $SSH_PORT $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_DIR && cd $REMOTE_DIR && sudo -S rm -rf bot controller data netflix plex stream types youtube web index.ts config.ts *.md *.lock *.html tsconfig.node.json vite.config.ts tailwind.config.js postcss.config.js public scripts docs .github assets bun.lock www.netflix.com.har" && 
     success "Remote directory ready" || 
     { error "Failed to prepare remote directory"; exit 1; }
 
