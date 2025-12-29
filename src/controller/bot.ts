@@ -960,7 +960,7 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
       .setDescription(`**${downloadedVideo.title}**`)
       .addFields(
         { name: 'Channel', value: downloadedVideo.uploader || 'Unknown', inline: true },
-        { name: 'Duration', value: downloadedVideo.duration ? formatDuration(downloadedVideo.duration) : 'Live', inline: true },
+        { name: 'Duration', value: downloadedVideo.duration ? formatPlexDuration(downloadedVideo.duration) : 'Live', inline: true },
         { name: 'Source', value: '📥 Local file (no buffering!)', inline: true }
       )
       .setColor(0x00ff00)
