@@ -312,10 +312,22 @@ export async function initControllerBot(): Promise<Client | null> {
       console.error('[Controller] Interaction error:', error);
       if (interaction.isRepliable()) {
         const reply = { content: '❌ An error occurred', ephemeral: true };
-        if (interaction.replied || interaction.deferred) {
-          await interaction.followUp(reply);
-        } else {
-          await interaction.reply(reply);
+        try {
+          if (interaction.replied || interaction.deferred) {
+            await interaction.followUp(reply);
+          } else {
+            await interaction.reply(reply);
+          }
+        } catch (followUpError) {
+          // Handle "Unknown Message" error - this happens when the original interaction message
+          // has been deleted or expired (15 minute timeout)
+          if (followUpError instanceof Error && 
+              (followUpError.message.includes('Unknown Message') || 
+               (followUpError as any).code === 10008)) {
+            console.log('[Controller] Original interaction message expired or deleted, skipping error response');
+          } else {
+            console.error('[Controller] Failed to send error response:', followUpError);
+          }
         }
       }
     }
@@ -2414,9 +2426,15 @@ async function handleClear(interaction: ChatInputCommandInteraction): Promise<vo
     // Fetch messages in the channel
     const messages = await channel.messages.fetch({ limit: 100 });
     
+    // Get the interaction message ID to avoid deleting it
+    const interactionMessageId = interaction.replied ? 
+      (await interaction.fetchReply()).id : null;
+    
     // Filter messages from the self bot and controller bot
     const botMessages = messages.filter(msg => 
-      msg.author.bot && (
+      msg.author.bot && 
+      msg.id !== interactionMessageId && // Don't delete the interaction's own message
+      (
         msg.author.username === 'SchroStream' || // Controller bot
         msg.author.username === 'bob_psyketek' || // Self bot
         msg.author.id === '1348700495342207066' || // Self bot user ID
