@@ -781,8 +781,23 @@ async function handleStop(interaction: ChatInputCommandInteraction): Promise<voi
     return;
   }
   
+  const session = videoStreamer.getSession(guildId);
+  
+  if (session) {
+    // Set stopping flag to prevent auto-play
+    session.isStopping = true;
+    
+    // Remove current item from queue if it exists
+    const queue = getQueue();
+    const currentInQueue = queue.find(item => item.ratingKey === session.mediaItem.ratingKey);
+    if (currentInQueue) {
+      removeFromQueue(currentInQueue.id);
+      console.log(`[Controller] Removed current item from queue: ${session.mediaItem.title}`);
+    }
+  }
+  
   await videoStreamer.stopStream(guildId);
-  await interaction.reply('⏹️ Stopped playback');
+  await interaction.reply('⏹️ Stopped playback and removed from queue');
 }
 
 async function handlePause(interaction: ChatInputCommandInteraction): Promise<void> {
