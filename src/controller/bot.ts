@@ -889,81 +889,99 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  // Import YouTube functions
-  const { spawn } = await import('child_process');
+  // Import YouTube downloader
+  const { downloadYouTubeVideo } = await import('../youtube/downloader.js');
+  type DownloadProgress = import('../youtube/downloader.js').DownloadProgress;
 
-  // Get video info
-  const info = await new Promise<any>((resolve) => {
-    const ytdlp = spawn('yt-dlp', ['--dump-json', '--no-playlist', '--no-warnings', url]);
-    let output = '';
-    ytdlp.stdout.on('data', (data) => output += data.toString());
-    ytdlp.on('close', (code) => {
-      if (code !== 0 || !output) { resolve(null); return; }
-      try { resolve(JSON.parse(output)); } catch { resolve(null); }
-    });
-    ytdlp.on('error', () => resolve(null));
-  });
-
-  if (!info) {
-    await interaction.editReply('❌ Failed to get video info');
-    return;
+  function createProgressBar(percent: number): string {
+    const barLength = 20;
+    const filledLength = Math.round((percent / 100) * barLength);
+    const bar = '█'.repeat(filledLength) + '░'.repeat(barLength - filledLength);
+    return `[${bar}] ${percent.toFixed(1)}%`;
   }
 
-  // Get stream URLs
-  const urls = await new Promise<{ video: string; audio: string | null } | null>((resolve) => {
-    const ytdlp = spawn('yt-dlp', ['-g', '-f', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best', '--no-playlist', '--no-warnings', url]);
-    let output = '';
-    ytdlp.stdout.on('data', (data) => output += data.toString());
-    ytdlp.on('close', (code) => {
-      if (code !== 0 || !output.trim()) { resolve(null); return; }
-      const lines = output.trim().split('\n');
-      resolve({ video: lines[0], audio: lines[1] || null });
+  try {
+    let downloadComplete = false;
+    let currentProgress: DownloadProgress | null = null;
+
+    // Start download with progress tracking
+    const downloadPromise = downloadYouTubeVideo(url, {
+      onProgress: async (progress: DownloadProgress) => {
+        currentProgress = progress;
+        const progressBar = createProgressBar(progress.percent);
+        
+        await interaction.editReply(
+          `📥 **Downloading Video**\n` +
+          `${progressBar}\n` +
+          `📊 ${progress.speed} | ⏱️ ETA: ${progress.eta}\n` +
+          `📁 Total: ${progress.total}\n\n` +
+          `*Download will auto-start streaming when complete...*`
+        );
+      },
+      onComplete: async () => {
+        downloadComplete = true;
+        await interaction.editReply(
+          `📥 **Download Complete!**\n` +
+          `✅ Video downloaded successfully\n\n` +
+          `🎬 *Starting stream automatically...*`
+        );
+      },
+      onError: async (error: string) => {
+        await interaction.editReply(`❌ Download failed: ${error}`);
+      }
     });
-    ytdlp.on('error', () => resolve(null));
-  });
 
-  if (!urls) {
-    await interaction.editReply('❌ Failed to get stream URL');
-    return;
+    // Wait for download to complete
+    const downloadedVideo = await downloadPromise;
+    
+    if (!downloadedVideo) {
+      return; // Error already handled by onError callback
+    }
+
+    const videoStreamer = getVideoStreamer();
+    
+    const mediaItem = {
+      ratingKey: `yt-${Date.now()}`,
+      key: url,
+      title: downloadedVideo.title,
+      type: 'movie' as const,
+      duration: downloadedVideo.duration,
+      thumb: downloadedVideo.thumbnail,
+    };
+
+    const embed = new EmbedBuilder()
+      .setTitle('📺 Starting Stream')
+      .setDescription(`**${downloadedVideo.title}**`)
+      .addFields(
+        { name: 'Channel', value: downloadedVideo.uploader || 'Unknown', inline: true },
+        { name: 'Duration', value: downloadedVideo.duration ? formatDuration(downloadedVideo.duration) : 'Live', inline: true },
+        { name: 'Source', value: '📥 Local file (no buffering!)', inline: true }
+      )
+      .setColor(0x00ff00)
+      .setThumbnail(downloadedVideo.thumbnail || null);
+
+    const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
+    );
+
+    await interaction.editReply({ embeds: [embed], components: [controlRow] });
+
+    // Start streaming the downloaded file
+    videoStreamer.startLocalFile(
+      guildId,
+      voiceChannel.id,
+      mediaItem,
+      downloadedVideo.filePath,
+      interaction.user.id
+    ).catch(err => console.error('[Controller] YouTube stream error:', err));
+
+  } catch (error) {
+    console.error('[Controller] YouTube error:', error);
+    await interaction.editReply(`❌ Failed to play: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-
-  const mediaItem = {
-    ratingKey: `yt-${Date.now()}`,
-    key: url,
-    title: info.title || 'Unknown',
-    type: 'movie' as const,
-    duration: (info.duration || 0) * 1000,
-    thumb: info.thumbnail,
-  };
-
-  const embed = new EmbedBuilder()
-    .setTitle('📺 Now Playing')
-    .setDescription(`**${info.title}**`)
-    .addFields(
-      { name: 'Channel', value: info.uploader || info.channel || 'Unknown', inline: true },
-      { name: 'Duration', value: info.duration ? formatDuration(info.duration * 1000) : 'Live', inline: true }
-    )
-    .setColor(0xff0000)
-    .setThumbnail(info.thumbnail || null);
-
-  const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
-  );
-
-  await interaction.editReply({ embeds: [embed], components: [controlRow] });
-
-  const videoStreamer = getVideoStreamer();
-  videoStreamer.startExternalStream(
-    guildId,
-    voiceChannel.id,
-    mediaItem,
-    urls.video,
-    interaction.user.id,
-    urls.audio
-  ).catch(err => console.error('[Controller] YouTube stream error:', err));
 }
 
 async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void> {

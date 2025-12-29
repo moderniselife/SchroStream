@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import config from '../config.js';
+import config from '../config';
 
 export interface DownloadedVideo {
   filePath: string;
