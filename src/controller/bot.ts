@@ -175,6 +175,9 @@ const commands = [
         .setRequired(false)
     ),
   new SlashCommandBuilder()
+    .setName('clear')
+    .setDescription('Clear all SchroStream and Co\'s messages'),
+  new SlashCommandBuilder()
     .setName('channels')
     .setDescription('List available Live TV channels'),
   new SlashCommandBuilder()
@@ -391,6 +394,9 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'url':
       await handleUrl(interaction);
+      break;
+    case 'clear':
+      await handleClear(interaction);
       break;
     case 'channels':
       await handleChannels(interaction);
@@ -2360,6 +2366,73 @@ async function handleOnDeck(interaction: ChatInputCommandInteraction): Promise<v
     // Just show the watch deck
     const lines = deck.map((entry, i) => formatDeckEntry(entry, i));
     await interaction.editReply(`📺 **On Deck** (Recently Watched)\n\n${lines.join('\n')}\n\nUse \`/ondeck <number>\` to resume watching`);
+  }
+}
+
+async function handleClear(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: false });
+
+  try {
+    const channel = interaction.channel;
+    if (!channel) {
+      await interaction.editReply('❌ This command can only be used in a channel');
+      return;
+    }
+
+    // Fetch messages in the channel
+    const messages = await channel.messages.fetch({ limit: 100 });
+    
+    // Filter messages from the self bot and controller bot
+    const botMessages = messages.filter(msg => 
+      msg.author.bot && (
+        msg.author.username === 'SchroStream' || 
+        msg.author.discriminator === '6371' || // Self bot discriminator
+        msg.content.includes('📺') || 
+        msg.content.includes('⏸️') ||
+        msg.content.includes('⏹️') ||
+        msg.content.includes('⏪') ||
+        msg.content.includes('⏩') ||
+        msg.content.includes('📥') ||
+        msg.embeds.some(embed => 
+          embed.title?.includes('Now Playing') ||
+          embed.title?.includes('Starting') ||
+          embed.title?.includes('Download')
+        )
+      )
+    );
+
+    if (botMessages.size === 0) {
+      await interaction.editReply('✅ No bot messages found to clear');
+      return;
+    }
+
+    // Delete the bot messages (bulk delete for efficiency)
+    try {
+      if (botMessages.size > 0) {
+        // Convert Collection to Array for bulkDelete
+        const messagesToDelete = Array.from(botMessages.values());
+        
+        // Discord allows bulk deleting up to 100 messages at once
+        if (messagesToDelete.length <= 100) {
+          await (channel as any).bulkDelete(messagesToDelete);
+        } else {
+          // If somehow more than 100, delete in batches
+          for (let i = 0; i < messagesToDelete.length; i += 100) {
+            const batch = messagesToDelete.slice(i, i + 100);
+            await (channel as any).bulkDelete(batch);
+          }
+        }
+      }
+
+      await interaction.editReply(`✅ Cleared ${botMessages.size} bot messages`);
+    } catch (error) {
+      console.error('[Controller] Error clearing messages:', error);
+      await interaction.editReply('❌ Failed to clear some messages. I may not have permission to delete messages older than 14 days.');
+    }
+
+  } catch (error) {
+    console.error('[Controller] Error in handleClear:', error);
+    await interaction.editReply('❌ An error occurred while clearing messages');
   }
 }
 
