@@ -29,11 +29,15 @@ function getStreamType(url: string): string {
   if (lower.includes('.mp4')) return 'MP4';
   if (lower.includes('.webm')) return 'WebM';
   if (lower.includes('.mkv')) return 'MKV';
+  if (lower.includes('.avi')) return 'AVI';
+  if (lower.includes('.mov')) return 'MOV';
   if (lower.includes('.ts')) return 'MPEG-TS';
-  if (lower.includes('.flv')) return 'FLV';
+  if (lower.includes('.flv')) return 'Flash';
   if (lower.includes('rtmp://')) return 'RTMP';
-  return 'Stream';
+  return 'Unknown';
 }
+
+export { getStreamType };
 
 export async function urlCommand(message: Message, args: string[]): Promise<void> {
   if (!message.guild) {

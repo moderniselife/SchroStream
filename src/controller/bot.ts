@@ -178,6 +178,11 @@ const commands = [
       option.setName('title')
         .setDescription('Optional title for the stream')
         .setRequired(false)
+    )
+    .addBooleanOption(option =>
+      option.setName('queue')
+        .setDescription('Add to queue instead of playing immediately')
+        .setRequired(false)
     ),
   new SlashCommandBuilder()
     .setName('clear')
@@ -1179,6 +1184,7 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
 async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void> {
   const url = interaction.options.getString('url', true);
   const title = interaction.options.getString('title') || 'External Stream';
+  const queueOption = interaction.options.getBoolean('queue') || false;
 
   const guildId = interaction.guildId;
   if (!guildId) {
@@ -1186,6 +1192,39 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
+  // If queue option is selected, add to queue instead of playing
+  if (queueOption) {
+    try {
+      // Get stream type for better queue display
+      const { getStreamType } = await import('../bot/commands/url.js');
+      const streamType = getStreamType(url);
+      
+      const mediaItem: MediaItem = {
+        ratingKey: `url-${Date.now()}`,
+        key: url,
+        type: 'external',
+        title: title,
+        duration: 0, // Unknown for external streams
+        url: url,
+        streamType: streamType
+      };
+
+      const added = addToQueue(mediaItem, interaction.user.id);
+      if (!added) {
+        await interaction.reply({ content: '❌ This stream is already in the queue', ephemeral: true });
+        return;
+      }
+
+      await interaction.reply(`✅ Added to queue: **${title}** (${streamType})`);
+      return;
+    } catch (error) {
+      console.error('[Controller] Error adding URL to queue:', error);
+      await interaction.reply({ content: '❌ Failed to add stream to queue', ephemeral: true });
+      return;
+    }
+  }
+
+  // Original playback logic continues here...
   const guild = selfbotClient.guilds.cache.get(guildId);
   const member = guild?.members.cache.get(interaction.user.id);
   const voiceChannel = member?.voice?.channel;
