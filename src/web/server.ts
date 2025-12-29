@@ -60,6 +60,9 @@ app.get('/api/streams', (req: Request, res: Response) => {
         return undefined;
       })(),
     };
+  }).filter(Boolean);
+  
+  res.json({ streams });
 });
 
 // Get specific stream details

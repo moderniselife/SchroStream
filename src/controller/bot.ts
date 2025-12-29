@@ -21,7 +21,7 @@ import { getVideoStreamer, getPlaybackPosition } from '../stream/video-streamer.
 import { formatDuration as formatPlexDuration, parseTimeString, getNextEpisode } from '../plex/library.js';
 import type { MediaItem } from '../types/index.js';
 import { client as selfbotClient } from '../bot/client.js';
-import { getQueue, addToQueue, removeFromQueue, clearQueue, popQueue, formatQueueEntry } from '../data/queue.js';
+import { getQueue, addToQueue, removeFromQueue, clearQueue, popQueue, peekQueue, formatQueueEntry } from '../data/queue.js';
 import { getWatchDeck, formatDeckEntry } from '../data/watch-deck.js';
 
 // Store search results per user
@@ -257,6 +257,11 @@ const commands = [
       subcommand
         .setName('clear')
         .setDescription('Clear the entire queue')
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('start')
+        .setDescription('Start playing from the first item in the queue')
     )
     .addSubcommand(subcommand =>
       subcommand
@@ -2423,6 +2428,142 @@ async function handleQueue(interaction: ChatInputCommandInteraction): Promise<vo
     case 'clear': {
       clearQueue();
       await interaction.editReply('🗑️ Queue cleared');
+      break;
+    }
+
+    case 'start': {
+      const queue = getQueue();
+      if (queue.length === 0) {
+        await interaction.editReply('❌ Queue is empty');
+        return;
+      }
+
+      // Get user's voice channel
+      const member = interaction.member;
+      if (!member || !('voice' in member) || !member.voice.channel) {
+        await interaction.editReply('❌ You must be in a voice channel');
+        return;
+      }
+
+      const voiceChannel = member.voice.channel;
+      const guildId = interaction.guildId;
+
+      if (!guildId) {
+        await interaction.editReply('❌ Could not determine guild');
+        return;
+      }
+
+      // Get first item from queue but don't remove it yet (peek)
+      const first = peekQueue();
+      if (!first) {
+        await interaction.editReply('❌ Queue is empty');
+        return;
+      }
+
+      // Convert queue entry back to MediaItem
+      let mediaItem: MediaItem;
+      
+      if (first.type === 'youtube') {
+        mediaItem = {
+          ratingKey: first.ratingKey,
+          key: first.url || first.ratingKey,
+          type: 'youtube',
+          title: first.title,
+          duration: first.duration || 0,
+          thumb: undefined,
+          uploader: first.uploader,
+          viewCount: first.viewCount,
+          uploadDate: first.uploadDate,
+          url: first.url || '',
+          filePath: first.filePath
+        };
+      } else if (first.type === 'external') {
+        mediaItem = {
+          ratingKey: first.ratingKey,
+          key: first.url || first.ratingKey,
+          type: 'external',
+          title: first.title,
+          duration: first.duration || 0,
+          url: first.url || '',
+          streamType: first.streamType
+        };
+      } else {
+        // Plex media item
+        mediaItem = {
+          ratingKey: first.ratingKey,
+          key: first.ratingKey,
+          type: first.type as any, // movie, show, episode, channel
+          title: first.title,
+          duration: first.duration || 0
+        };
+      }
+
+      // Handle different media types
+      try {
+        const videoStreamer = getVideoStreamer();
+        
+        if (first.type === 'youtube') {
+          const ytItem = mediaItem as any;
+          if (ytItem.filePath) {
+            // Play downloaded YouTube video
+            await videoStreamer.startLocalFile(
+              guildId,
+              voiceChannel.id,
+              mediaItem,
+              ytItem.filePath,
+              interaction.user.id
+            );
+          } else if (ytItem.url) {
+            // Stream YouTube video directly
+            await videoStreamer.startExternalStream(
+              guildId,
+              voiceChannel.id,
+              mediaItem,
+              ytItem.url,
+              interaction.user.id
+            );
+          } else {
+            await interaction.editReply('❌ No URL or file path available for YouTube video');
+            return;
+          }
+        } else if (first.type === 'external') {
+          const extItem = mediaItem as any;
+          if (!extItem.url) {
+            await interaction.editReply('❌ No URL available for external stream');
+            return;
+          }
+          await videoStreamer.startExternalStream(
+            guildId,
+            voiceChannel.id,
+            mediaItem,
+            extItem.url,
+            interaction.user.id
+          );
+        } else {
+          // Plex media item
+          const streamInfo = await plexClient.getStreamUrl(first.ratingKey);
+          if (!streamInfo) {
+            await interaction.editReply('❌ Failed to get stream URL');
+            return;
+          }
+
+          await videoStreamer.startStream(
+            guildId,
+            voiceChannel.id,
+            mediaItem,
+            streamInfo.url,
+            0,
+            interaction.user.id
+          );
+        }
+
+        // Remove from queue after successfully starting
+        popQueue();
+        await interaction.editReply(`▶️ Now playing from queue: **${first.title}**`);
+      } catch (error) {
+        console.error('[Controller] Error starting queue playback:', error);
+        await interaction.editReply('❌ Failed to start playback');
+      }
       break;
     }
 
