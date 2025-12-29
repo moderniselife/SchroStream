@@ -834,7 +834,10 @@ class VideoStreamer {
     }
 
     // For external streams (YouTube, URLs), use FFmpeg -ss for seeking
-    if (session.isExternal) {
+    // But check if it's actually a local file first
+    const isLocalFile = session.streamUrl.startsWith('/') || session.streamUrl.startsWith('./') || session.streamUrl.includes('downloads/');
+    
+    if (session.isExternal && !isLocalFile) {
       console.log(`[VideoStreamer] Seeking external stream to ${Math.floor(timeMs / 1000)}s`);
       session.currentTime = timeMs;
       session.startedAt = Date.now();
@@ -860,6 +863,36 @@ class VideoStreamer {
       
       session.isStopping = false;
       await this.playExternalStream(session, timeMs);
+      return true;
+    }
+
+    // For local files, use playLocalFile
+    if (isLocalFile) {
+      console.log(`[VideoStreamer] Seeking local file to ${Math.floor(timeMs / 1000)}s`);
+      session.currentTime = timeMs;
+      session.startedAt = Date.now();
+      session.isStopping = true;
+
+      if (session.ffmpegCommand) {
+        try {
+          session.ffmpegCommand.kill('SIGTERM');
+        } catch {
+          // Ignore
+        }
+      }
+
+      // Stop the current stream
+      try {
+        this.streamer.stopStream();
+      } catch {
+        // Ignore
+      }
+
+      // Wait for FFmpeg to stop
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      session.isStopping = false;
+      await this.playLocalFile(session, timeMs);
       return true;
     }
 
@@ -1060,8 +1093,13 @@ class VideoStreamer {
     session.isStopping = false;
     session.startedAt = Date.now();
 
-    // Resume from saved position for both external and Plex streams
-    if (session.isExternal) {
+    // Check if this is a local file
+    const isLocalFile = session.streamUrl.startsWith('/') || session.streamUrl.startsWith('./') || session.streamUrl.includes('downloads/');
+
+    // Resume from saved position
+    if (isLocalFile) {
+      await this.playLocalFile(session, session.currentTime);
+    } else if (session.isExternal) {
       await this.playExternalStream(session, session.currentTime);
     } else {
       await this.playVideoStream(session, session.currentTime);
