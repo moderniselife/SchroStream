@@ -2538,7 +2538,7 @@ async function handleDownloads(interaction: ChatInputCommandInteraction): Promis
   await interaction.deferReply();
 
   try {
-    const { readdirSync, statSync, unlinkSync } = await import('fs');
+    const { readdirSync, statSync } = await import('fs');
     const { join } = await import('path');
     
     const downloadsDir = join(process.cwd(), 'downloads');
@@ -2565,7 +2565,10 @@ async function handleDownloads(interaction: ChatInputCommandInteraction): Promis
       return;
     }
 
-    // Get file info for each video
+    // Import metadata functions
+    const { getVideoMetadata } = await import('../youtube/downloader.js');
+
+    // Get file info for each video with metadata
     const videoInfo = videoFiles.map(file => {
       const filePath = join(downloadsDir, file);
       const stats = statSync(filePath);
@@ -2576,26 +2579,47 @@ async function handleDownloads(interaction: ChatInputCommandInteraction): Promis
       const timestampMatch = file.match(/video-(\d+)\./);
       const timestamp = timestampMatch ? parseInt(timestampMatch[1]) : 0;
       
+      // Get metadata if available
+      const metadata = getVideoMetadata(filePath);
+      
       return {
         file,
         filePath,
         size: `${sizeInMB} MB`,
         modified: modifiedDate,
-        timestamp
+        timestamp,
+        metadata
       };
     }).sort((a, b) => b.timestamp - a.timestamp); // Sort by newest first
 
-    // Create embed with video list
+    // Create embed with video list and metadata
     const embed = new EmbedBuilder()
       .setTitle('📥 Downloaded Videos')
       .setDescription(`Found ${videoInfo.length} downloaded video(s)`)
       .setColor(0x00ff00)
       .addFields(
-        videoInfo.map((video, index) => ({
-          name: `${index + 1}. ${video.file}`,
-          value: `📁 Size: ${video.size} | 📅 ${video.modified}\n\`/play-download ${index + 1}\` to play | \`/delete-download ${index + 1}\` to delete`,
-          inline: false
-        }))
+        videoInfo.map((video, index) => {
+          const metadata = video.metadata;
+          const title = metadata?.title || video.file.replace(/video-\d+\./, '').replace(/\.[^.]+$/, '') || 'Unknown';
+          const channel = metadata?.uploader || 'Unknown Channel';
+          const views = metadata?.viewCount ? `👁 ${metadata.viewCount}` : '';
+          const date = metadata?.uploadDate ? `📅 ${metadata.uploadDate}` : '';
+          const description = metadata?.description ? metadata.description.substring(0, 50) + (metadata.description.length > 50 ? '...' : '') : '';
+          
+          const fieldValue = [
+            `📁 Size: ${video.size} | 📅 ${video.modified}`,
+            channel && views ? `${channel} | ${views}` : channel,
+            date,
+            description ? `\n📝 ${description}` : '',
+            `\`/play-download ${index + 1}\` to play | \`/delete-download ${index + 1}\` to delete`
+          ].filter(Boolean).join('\n');
+          
+          return {
+            name: `${index + 1}. ${title}`,
+            value: fieldValue,
+            inline: false
+          };
+        })
       )
       .setFooter({ text: 'Use /play-download <number> to play or /delete-download <number> to delete' });
 
@@ -2660,26 +2684,31 @@ async function handlePlayDownload(interaction: ChatInputCommandInteraction): Pro
       return;
     }
 
-    // Get video info from filename or try to extract from metadata
+    // Get video info from metadata
+    const { getVideoMetadata } = await import('../youtube/downloader.js');
+    const metadata = getVideoMetadata(filePath);
     const videoStreamer = getVideoStreamer();
     
     const mediaItem = {
       ratingKey: `download-${Date.now()}`,
       key: filePath,
-      title: selectedFile.replace(/video-\d+\./, '').replace(/\.[^.]+$/, '') || 'Downloaded Video',
+      title: metadata?.title || selectedFile.replace(/video-\d+\./, '').replace(/\.[^.]+$/, '') || 'Downloaded Video',
       type: 'movie' as const,
-      duration: 0, // Unknown duration for downloaded files
+      duration: metadata?.duration || 0,
+      thumb: metadata?.thumbnail,
     };
 
     const embed = new EmbedBuilder()
       .setTitle('📺 Starting Downloaded Video')
       .setDescription(`**${mediaItem.title}**`)
       .addFields(
-        { name: 'File', value: selectedFile, inline: true },
-        { name: 'Size', value: `${sizeInMB} MB`, inline: true },
+        { name: 'Channel', value: metadata?.uploader || 'Unknown', inline: true },
+        { name: 'Duration', value: metadata?.duration ? formatPlexDuration(metadata.duration) : 'Unknown', inline: true },
+        { name: 'Views', value: metadata?.viewCount || 'Unknown', inline: true },
         { name: 'Source', value: '📥 Local file', inline: true }
       )
-      .setColor(0x00ff00);
+      .setColor(0x00ff00)
+      .setThumbnail(metadata?.thumbnail || null);
 
     const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
@@ -2742,8 +2771,20 @@ async function handleDeleteDownload(interaction: ChatInputCommandInteraction): P
     const stats = statSync(filePath);
     const sizeInMB = (stats.size / (1024 * 1024)).toFixed(1);
 
-    // Delete the file
+    // Delete the file and metadata
     unlinkSync(filePath);
+    
+    // Also delete the metadata file if it exists
+    const metadataPath = filePath.replace(/\.(mp4|webm|mkv|avi)$/, '.json');
+    try {
+      const { existsSync, unlinkSync: fsUnlinkSync } = await import('fs');
+      if (existsSync(metadataPath)) {
+        fsUnlinkSync(metadataPath);
+        console.log(`[Controller] Deleted metadata file: ${metadataPath.replace(/^.*[\/\\]/, '')}`);
+      }
+    } catch (metaError) {
+      console.error('[Controller] Failed to delete metadata file:', metaError);
+    }
     
     const embed = new EmbedBuilder()
       .setTitle('🗑️ Video Deleted')

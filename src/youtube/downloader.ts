@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import config from '../config';
 
@@ -9,6 +9,21 @@ export interface DownloadedVideo {
   duration: number;
   thumbnail?: string;
   uploader?: string;
+  viewCount?: string;
+  uploadDate?: string;
+  description?: string;
+}
+
+export interface VideoMetadata {
+  title: string;
+  duration: number;
+  thumbnail?: string;
+  uploader?: string;
+  viewCount?: string;
+  uploadDate?: string;
+  description?: string;
+  url: string;
+  downloadedAt: number;
 }
 
 export interface DownloadProgress {
@@ -163,12 +178,36 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
           return;
         }
 
+        // Save metadata file alongside video
+        const metadataPath = outputPath.replace('.mp4', '.json');
+        const metadata: VideoMetadata = {
+          title: info.title,
+          duration: info.duration,
+          thumbnail: info.thumbnail,
+          uploader: info.uploader,
+          viewCount: info.view_count ? formatNumber(info.view_count) : undefined,
+          uploadDate: info.upload_date ? new Date(info.upload_date).toLocaleDateString() : undefined,
+          description: info.description ? (info.description.length > 100 ? info.description.substring(0, 100) + '...' : info.description) : undefined,
+          url: url,
+          downloadedAt: Date.now()
+        };
+
+        try {
+          writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+          console.log('[YouTubeDownloader] Saved metadata to:', metadataPath);
+        } catch (metaError) {
+          console.error('[YouTubeDownloader] Failed to save metadata:', metaError);
+        }
+
         resolve({
           filePath: outputPath,
           title: info.title,
           duration: info.duration,
           thumbnail: info.thumbnail,
           uploader: info.uploader,
+          viewCount: info.view_count ? formatNumber(info.view_count) : undefined,
+          uploadDate: info.upload_date ? new Date(info.upload_date).toLocaleDateString() : undefined,
+          description: info.description ? (info.description.length > 100 ? info.description.substring(0, 100) + '...' : info.description) : undefined,
         });
       } catch (e) {
         console.error('[YouTubeDownloader] Error getting video info:', e);
@@ -198,7 +237,7 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
   });
 }
 
-async function getYouTubeInfo(url: string): Promise<{ title: string; duration: number; thumbnail?: string; uploader?: string } | null> {
+async function getYouTubeInfo(url: string): Promise<{ title: string; duration: number; thumbnail?: string; uploader?: string; view_count?: number; upload_date?: string; description?: string } | null> {
   return new Promise((resolve) => {
     const ytdlp = spawn('yt-dlp', [
       '--dump-json',
@@ -227,18 +266,14 @@ async function getYouTubeInfo(url: string): Promise<{ title: string; duration: n
 
       try {
         const info = JSON.parse(output);
-        const durationSeconds = info.duration || 0;
-        const durationMs = durationSeconds * 1000;
-        
-        console.log('[YouTubeDownloader] Raw duration from yt-dlp:', durationSeconds, 'seconds');
-        console.log('[YouTubeDownloader] Converted to ms:', durationMs);
-        console.log('[YouTubeDownloader] Formatted duration:', durationMs > 0 ? new Date(durationMs).toISOString().substr(11, 8) : '0');
-        
         resolve({
           title: info.title || 'Unknown',
-          duration: durationMs,
+          duration: (info.duration || 0) * 1000,
           thumbnail: info.thumbnail,
           uploader: info.uploader || info.channel,
+          view_count: info.view_count,
+          upload_date: info.upload_date,
+          description: info.description,
         });
       } catch (e) {
         console.error('[YouTubeDownloader] Failed to parse yt-dlp output:', e);
@@ -251,6 +286,12 @@ async function getYouTubeInfo(url: string): Promise<{ title: string; duration: n
       resolve(null);
     });
   });
+}
+
+function formatNumber(num: number): string {
+  if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+  if (num >= 1000) return `${(num / 1000).toFixed(0)}K`;
+  return num.toString();
 }
 
 // Clean up old downloaded files (older than 24 hours)
@@ -271,6 +312,22 @@ export function cleanupOldDownloads(): void {
     }
   } catch (error) {
     console.error('[YouTubeDownloader] Error during cleanup:', error);
+  }
+}
+
+// Get metadata for a video file
+export function getVideoMetadata(videoFile: string): VideoMetadata | null {
+  try {
+    const metadataPath = videoFile.replace(/\.(mp4|webm|mkv|avi)$/, '.json');
+    if (!existsSync(metadataPath)) {
+      return null;
+    }
+    
+    const metadataContent = require(metadataPath);
+    return metadataContent as VideoMetadata;
+  } catch (error) {
+    console.error('[YouTubeDownloader] Failed to read metadata:', error);
+    return null;
   }
 }
 
