@@ -56,11 +56,15 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
     let output = '';
     let error = '';
     let completionTriggered = false;
+    let reached100Percent = false;
 
     const triggerCompletion = () => {
-      if (!completionTriggered && options.onComplete) {
+      if (!completionTriggered && reached100Percent) {
         completionTriggered = true;
-        options.onComplete();
+        console.log('[YouTubeDownloader] Both 100% and DOWNLOAD_COMPLETE detected, triggering completion');
+        if (options.onComplete) {
+          options.onComplete();
+        }
       }
     };
 
@@ -87,9 +91,10 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
             }
 
             // Trigger completion when reaching 100%
-            if (progress.percent >= 100.0 && !completionTriggered) {
-              console.log('[YouTubeDownloader] Download reached 100%, triggering completion');
-              setTimeout(triggerCompletion, 500); // Small delay to ensure file is fully written
+            if (progress.percent >= 100.0 && !reached100Percent) {
+              console.log('[YouTubeDownloader] Download reached 100%, marking as complete');
+              reached100Percent = true;
+              setTimeout(triggerCompletion, 1000); // Wait a bit for DOWNLOAD_COMPLETE message
             }
           }
         } else if (line.includes('DOWNLOAD_COMPLETE')) {
@@ -139,8 +144,8 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
       console.log('[YouTubeDownloader] Download completed:', outputPath);
 
       // Trigger completion as a fallback if it hasn't been triggered yet
-      if (!completionTriggered) {
-        console.log('[YouTubeDownloader] Triggering completion from close event');
+      if (!completionTriggered && reached100Percent) {
+        console.log('[YouTubeDownloader] Triggering completion from close event (100% reached)');
         triggerCompletion();
       }
 
