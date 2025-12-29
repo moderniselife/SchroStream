@@ -816,16 +816,24 @@ async function handleFastForward(interaction: ChatInputCommandInteraction): Prom
   }
 
   const offsetMs = parseTimeString(timeStr) || 30000;
-
   const currentTime = videoStreamer.getCurrentTime(guildId);
   const newTime = Math.min(currentTime + offsetMs, session.duration);
 
+  // Acknowledge immediately to avoid Discord timeout
+  await interaction.reply(`⏩ Skipping forward ${formatDuration(offsetMs)}...`);
+
+  // Perform the seek operation (this can take several seconds)
   const success = await videoStreamer.seekStream(guildId, newTime);
 
-  if (success) {
-    await interaction.reply(`⏩ +${formatDuration(offsetMs)} → ${formatDuration(newTime)}`);
-  } else {
-    await interaction.reply({ content: '❌ Failed to skip forward', ephemeral: true });
+  // Follow up with the result
+  try {
+    if (success) {
+      await interaction.followUp(`⏩ Skipped to ${formatDuration(newTime)}`);
+    } else {
+      await interaction.followUp({ content: '❌ Failed to skip forward', ephemeral: true });
+    }
+  } catch (followUpError) {
+    console.error('[Controller] Failed to follow up after fast forward:', followUpError);
   }
 }
 
@@ -847,16 +855,24 @@ async function handleRewind(interaction: ChatInputCommandInteraction): Promise<v
   }
 
   const offsetMs = parseTimeString(timeStr) || 30000;
-
   const currentTime = videoStreamer.getCurrentTime(guildId);
   const newTime = Math.max(currentTime - offsetMs, 0);
 
+  // Acknowledge immediately to avoid Discord timeout
+  await interaction.reply(`⏪ Rewinding ${formatDuration(offsetMs)}...`);
+
+  // Perform the seek operation (this can take several seconds)
   const success = await videoStreamer.seekStream(guildId, newTime);
 
-  if (success) {
-    await interaction.reply(`⏪ -${formatDuration(offsetMs)} → ${formatDuration(newTime)}`);
-  } else {
-    await interaction.reply({ content: '❌ Failed to rewind', ephemeral: true });
+  // Follow up with the result
+  try {
+    if (success) {
+      await interaction.followUp(`⏪ Rewound to ${formatDuration(newTime)}`);
+    } else {
+      await interaction.followUp({ content: '❌ Failed to rewind', ephemeral: true });
+    }
+  } catch (followUpError) {
+    console.error('[Controller] Failed to follow up after rewind:', followUpError);
   }
 }
 
