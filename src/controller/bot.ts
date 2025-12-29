@@ -2504,6 +2504,38 @@ async function handleQueue(interaction: ChatInputCommandInteraction): Promise<vo
         
         if (first.type === 'youtube') {
           const ytItem = mediaItem as any;
+          
+          // Check if there's a downloaded file available
+          if (!ytItem.filePath && ytItem.url) {
+            // Try to find downloaded file for this YouTube video
+            const { getVideoMetadata } = await import('../youtube/downloader.js');
+            const { readdirSync, statSync } = await import('fs');
+            const { join } = await import('path');
+            
+            const downloadsDir = join(process.cwd(), 'downloads');
+            try {
+              const files = readdirSync(downloadsDir);
+              const videoFiles = files.filter(file => 
+                file.endsWith('.mp4') || file.endsWith('.webm') || file.endsWith('.mkv') || file.endsWith('.avi')
+              );
+              
+              // Look for a video file that might match this YouTube video
+              for (const file of videoFiles) {
+                const filePath = join(downloadsDir, file);
+                const metadata = getVideoMetadata(filePath);
+                
+                // Check if this metadata matches our YouTube video
+                if (metadata && metadata.url === ytItem.url) {
+                  ytItem.filePath = filePath;
+                  console.log(`[Controller] Found downloaded file for YouTube video: ${file}`);
+                  break;
+                }
+              }
+            } catch (error) {
+              console.error('[Controller] Error checking for downloaded YouTube file:', error);
+            }
+          }
+          
           if (ytItem.filePath) {
             // Play downloaded YouTube video
             await videoStreamer.startLocalFile(
