@@ -2385,8 +2385,10 @@ async function handleClear(interaction: ChatInputCommandInteraction): Promise<vo
     // Filter messages from the self bot and controller bot
     const botMessages = messages.filter(msg => 
       msg.author.bot && (
-        msg.author.username === 'SchroStream' || 
-        msg.author.discriminator === '6371' || // Self bot discriminator
+        msg.author.username === 'SchroStream' || // Controller bot
+        msg.author.username === 'bob_psyketek' || // Self bot
+        msg.author.id === '1348700495342207066' || // Self bot user ID
+        msg.author.id === '1451453212681834536' || // Controller bot app ID
         msg.content.includes('📺') || 
         msg.content.includes('⏸️') ||
         msg.content.includes('⏹️') ||
