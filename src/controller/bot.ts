@@ -19,13 +19,13 @@ import config from '../config.js';
 import plexClient from '../plex/client.js';
 import { getVideoStreamer, getPlaybackPosition } from '../stream/video-streamer.js';
 import { formatDuration as formatPlexDuration, parseTimeString, getNextEpisode } from '../plex/library.js';
-import type { PlexMediaItem } from '../types/index.js';
+import type { MediaItem } from '../types/index.js';
 import { client as selfbotClient } from '../bot/client.js';
 import { getQueue, addToQueue, removeFromQueue, clearQueue, popQueue, formatQueueEntry } from '../data/queue.js';
 import { getWatchDeck, formatDeckEntry } from '../data/watch-deck.js';
 
 // Store search results per user
-const searchSessions = new Map<string, { results: PlexMediaItem[], timestamp: number }>();
+const searchSessions = new Map<string, { results: MediaItem[], timestamp: number }>();
 const youtubeSearchSessions = new Map<string, { results: any[], timestamp: number }>();
 const youtubeSearchPages = new Map<string, { page: number }>();
 const SESSION_TIMEOUT = 10 * 60 * 1000; // 10 minutes
@@ -124,6 +124,11 @@ const commands = [
       option.setName('url')
         .setDescription('YouTube URL')
         .setRequired(true)
+    )
+    .addBooleanOption(option =>
+      option.setName('queue')
+        .setDescription('Add to queue instead of playing immediately')
+        .setRequired(false)
     ),
   new SlashCommandBuilder()
     .setName('yts')
@@ -559,7 +564,7 @@ async function handlePlay(interaction: ChatInputCommandInteraction): Promise<voi
 
 async function startPlayback(
   interaction: ChatInputCommandInteraction | StringSelectMenuInteraction,
-  mediaItem: PlexMediaItem,
+  mediaItem: MediaItem,
   episodeStr?: string | null
 ): Promise<void> {
   // Debug logging
@@ -651,8 +656,18 @@ async function startPlayback(
     .setDescription(`**${title}**`)
     .setColor(0x00ff00);
 
-  if (itemToPlay.thumb) {
-    embed.setThumbnail(`${config.plex.url}${itemToPlay.thumb}?X-Plex-Token=${config.plex.token}`);
+  if (itemToPlay.type === 'movie' || itemToPlay.type === 'show' || itemToPlay.type === 'episode' || itemToPlay.type === 'channel') {
+    // Plex media item
+    const plexItem = itemToPlay as any;
+    if (plexItem.thumb) {
+      embed.setThumbnail(`${config.plex.url}${plexItem.thumb}?X-Plex-Token=${config.plex.token}`);
+    }
+  } else if (itemToPlay.type === 'youtube') {
+    // YouTube item
+    const ytItem = itemToPlay as any;
+    if (ytItem.thumb) {
+      embed.setThumbnail(ytItem.thumb);
+    }
   }
 
   await interaction.editReply({ embeds: [embed], components: [controlRow] });
@@ -660,14 +675,47 @@ async function startPlayback(
   // Start stream
   const videoStreamer = getVideoStreamer();
   try {
-    await videoStreamer.startStream(
-      guildId,
-      voiceChannel.id,
-      itemToPlay,
-      streamInfo.url,
-      0,
-      interaction.user.id
-    );
+    if (itemToPlay.type === 'youtube') {
+      const ytItem = itemToPlay as any;
+      if (ytItem.filePath) {
+        // Play downloaded YouTube video
+        await videoStreamer.startLocalFile(
+          guildId,
+          voiceChannel.id,
+          itemToPlay,
+          ytItem.filePath,
+          interaction.user.id
+        );
+      } else {
+        // Stream YouTube video directly
+        await videoStreamer.startExternalStream(
+          guildId,
+          voiceChannel.id,
+          itemToPlay,
+          ytItem.url,
+          interaction.user.id
+        );
+      }
+    } else if (itemToPlay.type === 'external') {
+      const extItem = itemToPlay as any;
+      await videoStreamer.startExternalStream(
+        guildId,
+        voiceChannel.id,
+        itemToPlay,
+        extItem.url,
+        interaction.user.id
+      );
+    } else {
+      // Plex media item
+      await videoStreamer.startStream(
+        guildId,
+        voiceChannel.id,
+        itemToPlay,
+        streamInfo.url,
+        0,
+        interaction.user.id
+      );
+    }
   } catch (err: any) {
     console.error('[Controller] Stream error:', err);
     
@@ -938,6 +986,7 @@ async function handleVolume(interaction: ChatInputCommandInteraction): Promise<v
 
 async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<void> {
   const url = interaction.options.getString('url', true);
+  const queueOption = interaction.options.getBoolean('queue') || false;
   await interaction.deferReply();
 
   const guildId = interaction.guildId;
@@ -946,6 +995,47 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
+  // If queue option is selected, add to queue instead of playing
+  if (queueOption) {
+    try {
+      // Get YouTube info to create media item
+      const { getYouTubeInfo } = await import('../youtube/downloader.js');
+      const info = await getYouTubeInfo(url);
+      
+      if (!info) {
+        await interaction.editReply('❌ Failed to get YouTube video info');
+        return;
+      }
+
+      const mediaItem: MediaItem = {
+        ratingKey: `yt-${Date.now()}`,
+        key: url,
+        type: 'youtube',
+        title: info.title,
+        duration: info.duration,
+        thumb: info.thumbnail,
+        uploader: info.uploader,
+        viewCount: info.view_count ? formatNumber(info.view_count) : undefined,
+        uploadDate: info.upload_date ? new Date(info.upload_date).toLocaleDateString() : undefined,
+        url: url
+      };
+
+      const added = addToQueue(mediaItem, interaction.user.id);
+      if (!added) {
+        await interaction.editReply('❌ This video is already in the queue');
+        return;
+      }
+
+      await interaction.editReply(`✅ Added to queue: **${info.title}**`);
+      return;
+    } catch (error) {
+      console.error('[Controller] Error adding YouTube to queue:', error);
+      await interaction.editReply('❌ Failed to add video to queue');
+      return;
+    }
+  }
+
+  // Original playback logic continues here...
   const guild = selfbotClient.guilds.cache.get(guildId);
   const member = guild?.members.cache.get(interaction.user.id);
   const voiceChannel = member?.voice?.channel;
@@ -2058,7 +2148,7 @@ async function showChannelSelector(interaction: StringSelectMenuInteraction): Pr
 
 async function showEpisodeSelector(
   interaction: StringSelectMenuInteraction,
-  show: PlexMediaItem
+  show: MediaItem
 ): Promise<void> {
   const seasons = await plexClient.getSeasons(show.ratingKey);
 
@@ -2091,7 +2181,7 @@ async function showEpisodeSelector(
 
 async function showEpisodesForSeason(
   interaction: StringSelectMenuInteraction,
-  show: PlexMediaItem,
+  show: MediaItem,
   seasonRatingKey: string,
   seasonIndex: number
 ): Promise<void> {

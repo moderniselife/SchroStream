@@ -3,7 +3,7 @@ import { Client } from 'discord.js-selfbot-v13';
 import { spawn } from 'child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import type { PlexMediaItem } from '../types/index.js';
+import type { MediaItem } from '../types/index.js';
 import config from '../config.js';
 import plexClient from '../plex/client.js';
 import { updateWatchDeck } from '../data/watch-deck.js';
@@ -15,7 +15,7 @@ const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
 export interface VideoStreamSession {
   guildId: string;
   channelId: string;
-  mediaItem: PlexMediaItem;
+  mediaItem: MediaItem;
   streamUrl: string;
   isPaused: boolean;
   isStopping: boolean; // Flag to track intentional stop (pause/seek)
@@ -168,7 +168,7 @@ class VideoStreamer {
   async startStream(
     guildId: string,
     channelId: string,
-    mediaItem: PlexMediaItem,
+    mediaItem: MediaItem,
     streamUrl: string,
     startTimeMs = 0,
     userId?: string
@@ -208,7 +208,7 @@ class VideoStreamer {
   async startLocalFile(
     guildId: string,
     channelId: string,
-    mediaItem: PlexMediaItem,
+    mediaItem: MediaItem,
     filePath: string,
     userId?: string
   ): Promise<void> {
@@ -242,7 +242,7 @@ class VideoStreamer {
   async startExternalStream(
     guildId: string,
     channelId: string,
-    mediaItem: PlexMediaItem,
+    mediaItem: MediaItem,
     streamUrl: string,
     userId?: string,
     audioUrl?: string | null

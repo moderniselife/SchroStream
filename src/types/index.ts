@@ -19,6 +19,33 @@ export interface PlexMediaItem {
   childCount?: number;
 }
 
+export interface YouTubeMediaItem {
+  ratingKey: string;
+  key: string;
+  type: 'youtube';
+  title: string;
+  duration: number;
+  thumb?: string;
+  uploader?: string;
+  viewCount?: string;
+  uploadDate?: string;
+  description?: string;
+  url: string;
+  filePath?: string;
+}
+
+export interface ExternalStreamItem {
+  ratingKey: string;
+  key: string;
+  type: 'external';
+  title: string;
+  duration: number;
+  url: string;
+  streamType?: string;
+}
+
+export type MediaItem = PlexMediaItem | YouTubeMediaItem | ExternalStreamItem;
+
 export interface PlexSearchResult {
   items: PlexMediaItem[];
   totalSize: number;
