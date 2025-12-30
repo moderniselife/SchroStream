@@ -1,20 +1,13 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
-import { createHash } from 'crypto';
+import { Client } from 'discord.js-selfbot-v13';
 import { spawn } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { EventEmitter } from 'events';
-import { Client, GatewayIntentBits, VoiceStatus, Snowflake } from 'discord.js-selfbot-v13';
-import { VoiceConnection } from '@discordjs/voice';
-import prism from 'prism-media';
-import { Transcoder } from 'prism-media';
-import { Readable } from 'stream';
+import type { MediaItem } from '../types/index.js';
 import config from '../config.js';
 import plexClient from '../plex/client.js';
 import { updateWatchDeck } from '../data/watch-deck.js';
 import { popQueue, peekQueue } from '../data/queue.js';
-import { savePlaybackPosition, getPlaybackPosition, clearPlaybackPosition } from './playback-position.js';
-import type { MediaItem } from '../types/index.js';
 
 // Playback history file path
 const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
@@ -298,29 +291,6 @@ class VideoStreamer {
         console.log(`[VideoStreamer] Starting local file at ${startTimeSec}s`);
       }
 
-      // Check for SponsorBlock segments in metadata
-      let sponsorFilters: string[] = [];
-      const metadataPath = session.streamUrl.replace(/\.(mp4|webm|mkv|avi)$/, '.json');
-      
-      if (existsSync(metadataPath)) {
-        try {
-          const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
-          if (metadata.sponsorSegments && metadata.sponsorSegments.length > 0 && metadata.sponsorBlockEnabled !== false) {
-            console.log(`[VideoStreamer] Applying ${metadata.sponsorSegments.length} SponsorBlock segments`);
-            
-            // Import and generate filters
-            const { generateSkipFilter } = await import('../youtube/sponsorblock.js');
-            sponsorFilters = generateSkipFilter(metadata.sponsorSegments, metadata.duration / 1000);
-            
-            if (sponsorFilters.length > 0) {
-              console.log('[VideoStreamer] Generated SponsorBlock filters:', sponsorFilters);
-            }
-          }
-        } catch (error) {
-          console.error('[VideoStreamer] Failed to load SponsorBlock segments:', error);
-        }
-      }
-
       const volumeMultiplier = (session.volume / 100).toFixed(2);
 
       // Build FFmpeg args for local file input
@@ -336,7 +306,7 @@ class VideoStreamer {
 
       ffmpegArgs.push('-i', session.streamUrl);
 
-      // Video and audio output settings
+      // Video and audio output settings - optimized for streaming
       ffmpegArgs.push(
         '-map', '0:v:0?',
         '-map', '0:a:0?',
@@ -345,40 +315,18 @@ class VideoStreamer {
         '-tune', 'zerolatency',
         '-pix_fmt', 'yuv420p',
         '-r', String(config.stream.frameRate),
-        '-g', String(Math.max(config.stream.frameRate, 60)), // Use larger GOP for better compression
-        '-keyint_min', String(Math.max(config.stream.frameRate * 2, 120)), // Minimum keyframe interval
+        '-g', String(config.stream.frameRate), // Keyframe every 1 second (was 2)
+        '-keyint_min', String(config.stream.frameRate), // Minimum keyframe interval
         '-b:v', `${config.stream.maxBitrate}k`,
-        '-maxrate', `${config.stream.maxBitrate * 1.5}k`,
-        '-bufsize', `${config.stream.maxBitrate * 3}k`, // Larger buffer for smoother streaming
-        '-x264-params', 'nal-hrd=cbr:scenecut=0', // Force CBR and disable scene change detection
-        '-profile:v', 'baseline', // Use baseline profile for better compatibility
-        '-level', '4.0', // Set appropriate level
-        '-movflags', '+faststart', // Optimize for streaming
-        '-threads', '4', // Use multiple threads for encoding
-        '-slices', '4', // Slice encoding for parallelism
-      );
-
-      // Add SponsorBlock filters if available
-      if (sponsorFilters.length > 0) {
-        // Add video filter with optimized scaling
-        const optimizedFilter = sponsorFilters[0].replace('scale=', 'scale=fast_bilinear=');
-        ffmpegArgs.push('-vf', optimizedFilter);
-        // Add audio filter
-        ffmpegArgs.push('-af', `${sponsorFilters[1]},volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`);
-      } else {
-        // Normal scaling and filters with fast scaling
-        ffmpegArgs.push(
-          '-vf', `scale=fast_bilinear=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
-          '-af', `volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`
-        );
-      }
-      
-      // Audio and output settings
-      ffmpegArgs.push(
+        '-maxrate', `${config.stream.maxBitrate}k`, // Strict CBR (was 1.5x)
+        '-bufsize', `${Math.floor(config.stream.maxBitrate / 2)}k`, // Smaller buffer for more consistent frames
+        '-x264-params', 'nal-hrd=cbr:force-cfr=1', // Force constant bitrate and frame rate
+        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
         '-c:a', 'libopus',
-        '-b:a', '320k',
+        '-b:a', '128k', // Reduced from 320k (Discord limit is 128k anyway)
         '-ar', '48000',
         '-ac', '2',
+        '-af', `volume=${volumeMultiplier}`, // Removed speechnorm (CPU intensive)
         '-f', 'matroska',
         '-'
       );
@@ -527,23 +475,18 @@ class VideoStreamer {
         '-tune', 'zerolatency',
         '-pix_fmt', 'yuv420p',
         '-r', String(config.stream.frameRate),
-        '-g', String(Math.max(config.stream.frameRate, 60)), // Use larger GOP for better compression
-        '-keyint_min', String(Math.max(config.stream.frameRate * 2, 120)), // Minimum keyframe interval
+        '-g', String(config.stream.frameRate), // Keyframe every 1 second (was 2)
+        '-keyint_min', String(config.stream.frameRate), // Minimum keyframe interval
         '-b:v', `${config.stream.maxBitrate}k`,
-        '-maxrate', `${config.stream.maxBitrate * 1.5}k`,
-        '-bufsize', `${config.stream.maxBitrate * 3}k`, // Larger buffer for smoother streaming
-        '-x264-params', 'nal-hrd=cbr:scenecut=0', // Force CBR and disable scene change detection
-        '-profile:v', 'baseline', // Use baseline profile for better compatibility
-        '-level', '4.0', // Set appropriate level
-        '-movflags', '+faststart', // Optimize for streaming
-        '-threads', '4', // Use multiple threads for encoding
-        '-slices', '4', // Slice encoding for parallelism
-        '-vf', `scale=fast_bilinear=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+        '-maxrate', `${config.stream.maxBitrate}k`, // Strict CBR (was 1.5x)
+        '-bufsize', `${Math.floor(config.stream.maxBitrate / 2)}k`, // Smaller buffer for more consistent frames
+        '-x264-params', 'nal-hrd=cbr:force-cfr=1', // Force constant bitrate and frame rate
+        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
         '-c:a', 'libopus',
-        '-b:a', '320k',
+        '-b:a', '128k', // Reduced from 320k (Discord limit is 128k anyway)
         '-ar', '48000',
         '-ac', '2',
-        '-af', `volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`,
+        '-af', `volume=${volumeMultiplier}`, // Removed speechnorm (CPU intensive)
         '-f', 'matroska',
         '-'
       );
@@ -753,20 +696,14 @@ class VideoStreamer {
         '-i', actualStreamUrl,
         // Video output
         '-c:v', 'libx264',
-        '-preset', 'ultrafast', // Changed from veryfast to ultrafast
+        '-preset', 'veryfast',
         '-tune', 'zerolatency',
         '-b:v', `${config.stream.maxBitrate}k`,
         '-maxrate', `${Math.round(config.stream.maxBitrate * 1.5)}k`,
-        '-bufsize', `${config.stream.maxBitrate * 3}k`, // Larger buffer
-        '-x264-params', 'nal-hrd=cbr:scenecut=0', // Force CBR
-        '-profile:v', 'baseline', // Use baseline profile
-        '-level', '4.0',
-        '-threads', '4', // Use multiple threads
-        '-slices', '4', // Slice encoding
-        '-vf', `scale=fast_bilinear=${width}:${height}`, // Fast scaling
+        '-bufsize', `${config.stream.maxBitrate * 2}k`,
+        '-vf', `scale=${width}:${height}`,
         '-r', frameRate.toString(),
-        '-g', String(Math.max(frameRate, 60)), // Larger GOP
-        '-keyint_min', String(Math.max(frameRate * 2, 120)), // Min keyframe interval
+        '-g', gopSize.toString(),
         '-pix_fmt', 'yuv420p',
         // Audio output with volume filter
         '-af', `volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`,

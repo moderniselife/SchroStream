@@ -1,260 +1,153 @@
-import { createHash } from 'crypto';
-import { https } from 'follow-redirects';
-
-const SPONSORBLOCK_API = 'https://sponsor.ajay.app/api';
+// SponsorBlock API integration for YouTube videos
+// API Docs: https://wiki.sponsor.ajay.app/w/API_Docs
 
 export interface SponsorSegment {
-  segment: [number, number]; // [start, end] in seconds
+  segment: [number, number]; // [startTime, endTime] in seconds
   UUID: string;
   category: string;
+  videoDuration: number;
   actionType: string;
   locked: number;
   votes: number;
-  videoDuration: number;
   description: string;
 }
 
-export interface SponsorBlockResponse {
-  videoID: string;
+export interface SponsorBlockResult {
+  videoId: string;
   segments: SponsorSegment[];
+  totalSkipTime: number;
+  categories: string[];
 }
 
-// Categories to skip by default
-const DEFAULT_CATEGORIES = [
-  'sponsor',           // Sponsor
-  'intro',             // Intermission/Intro Animation
-  'outro',             // Endcards/Credits
-  'selfpromo',         // Unpaid/Self Promotion
-  'interaction',       // Interaction Reminder (Subscribe)
-  'music_offtopic',    // Non-Music Section
-  'preview',           // Preview/Recap
-  'filler'             // Filler Tangent
+const SPONSORBLOCK_API = 'https://sponsor.ajay.app/api';
+
+// Categories to skip
+export const SKIP_CATEGORIES = [
+  'sponsor',      // Paid promotions
+  'selfpromo',    // Self-promotion (merch, social media, etc.)
+  'interaction',  // Reminders to like, subscribe, etc.
+//   'intro',        // Intro animation
+//   'outro',        // Outro/credits
+  'preview',      // Preview of upcoming content
+  'filler',       // Filler content (off-topic tangents)
+  // 'music_offtopic' - Excluded as it's for music videos
 ];
 
-// Optional categories that users might want
-const OPTIONAL_CATEGORIES = [
-  'poi_highlight',     // Highlight
-  'exclusive_access'   // Exclusive Access
-];
+// Category display names
+export const CATEGORY_NAMES: Record<string, string> = {
+  sponsor: '💰 Sponsor',
+  selfpromo: '📢 Self-Promotion',
+  interaction: '👆 Interaction Reminder',
+//   intro: '🎬 Intro',
+//   outro: '🔚 Outro',
+  preview: '👀 Preview',
+  filler: '💬 Filler',
+  music_offtopic: '🎵 Non-Music',
+};
 
-/**
- * Get SHA256 hash of video ID for privacy
- */
-function getVideoHash(videoID: string, prefixLength: number = 4): string {
-  return createHash('sha256').update(videoID).digest('hex').substring(0, prefixLength);
+// Extract video ID from YouTube URL
+export function extractVideoId(url: string): string | null {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([a-zA-Z0-9_-]{11})/,
+    /^([a-zA-Z0-9_-]{11})$/, // Direct video ID
+  ];
+
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
 }
 
-/**
- * Fetch sponsor segments for a YouTube video
- */
-export async function getSponsorSegments(
-  videoID: string, 
-  categories: string[] = DEFAULT_CATEGORIES
-): Promise<SponsorSegment[]> {
-  return new Promise((resolve, reject) => {
-    const hash = getVideoHash(videoID);
-    const categoryParams = categories.map(cat => `category=${cat}`).join('&');
-    const url = `${SPONSORBLOCK_API}/skipSegments/${hash}?${categoryParams}&service=YouTube`;
+// Fetch sponsor segments from SponsorBlock API
+export async function fetchSponsorSegments(videoIdOrUrl: string): Promise<SponsorBlockResult | null> {
+  const videoId = extractVideoId(videoIdOrUrl) || videoIdOrUrl;
+  
+  if (!videoId || videoId.length !== 11) {
+    console.log('[SponsorBlock] Invalid video ID:', videoId);
+    return null;
+  }
+
+  try {
+    const categoriesParam = JSON.stringify(SKIP_CATEGORIES);
+    const url = `${SPONSORBLOCK_API}/skipSegments?videoID=${videoId}&categories=${encodeURIComponent(categoriesParam)}`;
     
-    console.log(`[SponsorBlock] Fetching segments for video ${videoID} (hash: ${hash})`);
+    console.log(`[SponsorBlock] Fetching segments for video: ${videoId}`);
     
-    const request = https.get(url, (response) => {
-      let data = '';
-      
-      response.on('data', (chunk) => {
-        data += chunk;
-      });
-      
-      response.on('end', () => {
-        try {
-          if (response.statusCode === 404) {
-            console.log(`[SponsorBlock] No segments found for video ${videoID}`);
-            resolve([]);
-            return;
-          }
-          
-          if (response.statusCode !== 200) {
-            throw new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`);
-          }
-          
-          const results: SponsorBlockResponse[] = JSON.parse(data);
-          
-          // Find the matching video result
-          const videoResult = results.find(result => result.videoID === videoID);
-          if (!videoResult) {
-            console.log(`[SponsorBlock] No exact match for video ${videoID}`);
-            resolve([]);
-            return;
-          }
-          
-          console.log(`[SponsorBlock] Found ${videoResult.segments.length} segments for video ${videoID}`);
-          
-          // Sort segments by start time
-          const sortedSegments = videoResult.segments.sort((a, b) => a.segment[0] - b.segment[0]);
-          resolve(sortedSegments);
-        } catch (error) {
-          console.error('[SponsorBlock] Error parsing response:', error);
-          reject(error);
-        }
-      });
-    });
+    const response = await fetch(url);
     
-    request.on('error', (error) => {
-      console.error('[SponsorBlock] Request failed:', error);
-      reject(error);
-    });
+    if (response.status === 404) {
+      console.log('[SponsorBlock] No segments found for this video');
+      return {
+        videoId,
+        segments: [],
+        totalSkipTime: 0,
+        categories: [],
+      };
+    }
     
-    request.setTimeout(5000, () => {
-      request.destroy();
-      reject(new Error('Request timeout'));
-    });
-  });
+    if (!response.ok) {
+      console.error('[SponsorBlock] API error:', response.status, response.statusText);
+      return null;
+    }
+    
+    const segments: SponsorSegment[] = await response.json();
+    
+    // Calculate total skip time
+    let totalSkipTime = 0;
+    const categoriesFound = new Set<string>();
+    
+    for (const segment of segments) {
+      const [start, end] = segment.segment;
+      totalSkipTime += end - start;
+      categoriesFound.add(segment.category);
+    }
+    
+    console.log(`[SponsorBlock] Found ${segments.length} segments to skip (${totalSkipTime.toFixed(1)}s total)`);
+    
+    // Log each segment
+    for (const segment of segments) {
+      const [start, end] = segment.segment;
+      const categoryName = CATEGORY_NAMES[segment.category] || segment.category;
+      console.log(`[SponsorBlock]   - ${categoryName}: ${formatTime(start)} → ${formatTime(end)} (${(end - start).toFixed(1)}s)`);
+    }
+    
+    return {
+      videoId,
+      segments,
+      totalSkipTime,
+      categories: Array.from(categoriesFound),
+    };
+  } catch (error) {
+    console.error('[SponsorBlock] Failed to fetch segments:', error);
+    return null;
+  }
 }
 
-/**
- * Generate FFmpeg filter complex to skip sponsor segments
- */
-export function generateSkipFilter(segments: SponsorSegment[], videoDuration: number): string[] {
-  if (segments.length === 0) {
-    return [];
+// Format seconds to MM:SS
+function formatTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Format sponsor block result for Discord embed
+export function formatSponsorBlockEmbed(result: SponsorBlockResult): string {
+  if (result.segments.length === 0) {
+    return '✅ No sponsor segments found';
   }
   
-  console.log(`[SponsorBlock] Generating skip filter for ${segments.length} segments`);
+  const lines = [`🚫 **${result.segments.length} segments removed** (${result.totalSkipTime.toFixed(1)}s saved)`];
   
-  // Merge overlapping or adjacent segments
-  const mergedSegments = mergeSegments(segments);
-  console.log(`[SponsorBlock] Merged to ${mergedSegments.length} segments`);
-  
-  // If segments cover the entire video, return empty
-  const totalSkipTime = mergedSegments.reduce((sum, seg) => sum + (seg.segment[1] - seg.segment[0]), 0);
-  if (totalSkipTime >= videoDuration * 0.95) {
-    console.log('[SponsorBlock] Segments cover entire video, skipping filter');
-    return [];
-  }
-  
-  // For better performance, limit the number of segments to process
-  const maxSegments = 20;
-  const processedSegments = mergedSegments.length > maxSegments ? 
-    mergedSegments.slice(0, maxSegments) : mergedSegments;
-  
-  if (mergedSegments.length > maxSegments) {
-    console.log(`[SponsorBlock] Limiting to ${maxSegments} segments for performance`);
-  }
-  
-  // Generate filter to skip segments - simplified approach
-  const filterParts: string[] = [];
-  let currentTime = 0;
-  
-  for (const segment of processedSegments) {
+  for (const segment of result.segments.slice(0, 5)) { // Limit to 5
     const [start, end] = segment.segment;
-    
-    // Add normal playback segment
-    if (start > currentTime) {
-      filterParts.push(`between(t,${currentTime},${start})`);
-    }
-    
-    currentTime = end;
+    const categoryName = CATEGORY_NAMES[segment.category] || segment.category;
+    lines.push(`  • ${categoryName}: ${formatTime(start)} → ${formatTime(end)}`);
   }
   
-  // Add final segment if there's remaining video
-  if (currentTime < videoDuration) {
-    filterParts.push(`between(t,${currentTime},${videoDuration})`);
-  }
-  
-  if (filterParts.length === 0) {
-    return [];
-  }
-  
-  // Simplify filter if too many conditions
-  let selectFilter: string;
-  if (filterParts.length > 10) {
-    // Use a simpler approach for many segments
-    selectFilter = `select='gt(t,0)',setpts=N/FRAME_RATE/TB`;
-    console.log('[SponsorBlock] Using simplified filter due to complexity');
-  } else {
-    // Combine all conditions with '+'
-    selectFilter = `select='${filterParts.join('+')}',setpts=N/FRAME_RATE/TB`;
-  }
-  
-  // For audio, we need to use aselect and asetpts
-  const audioFilter = filterParts.length > 10 ? 
-    `aselect='gt(t,0)',asetpts=N/SR/TB` :
-    `aselect='${filterParts.join('+')}',asetpts=N/SR/TB`;
-  
-  return [selectFilter, audioFilter];
-}
-
-/**
- * Merge overlapping or adjacent segments
- */
-function mergeSegments(segments: SponsorSegment[]): SponsorSegment[] {
-  if (segments.length === 0) {
-    return [];
-  }
-  
-  const merged: SponsorSegment[] = [];
-  let current = { ...segments[0] };
-  
-  for (let i = 1; i < segments.length; i++) {
-    const next = segments[i];
-    
-    // Check if segments overlap or are adjacent (within 0.5 seconds)
-    if (next.segment[0] <= current.segment[1] + 0.5) {
-      // Merge them
-      current.segment[1] = Math.max(current.segment[1], next.segment[1]);
-      current.votes = Math.max(current.votes, next.votes);
-    } else {
-      merged.push(current);
-      current = { ...next };
-    }
-  }
-  
-  merged.push(current);
-  return merged;
-}
-
-/**
- * Format segments for display
- */
-export function formatSegments(segments: SponsorSegment[]): string {
-  if (segments.length === 0) {
-    return 'No segments to skip';
-  }
-  
-  const lines: string[] = [];
-  const categoryNames: { [key: string]: string } = {
-    sponsor: 'Sponsor',
-    intro: 'Intro',
-    outro: 'Outro',
-    selfpromo: 'Self Promotion',
-    interaction: 'Subscribe Reminder',
-    music_offtopic: 'Non-Music',
-    preview: 'Preview/Recap',
-    filler: 'Filler',
-    poi_highlight: 'Highlight',
-    exclusive_access: 'Exclusive Access'
-  };
-  
-  for (const segment of segments) {
-    const start = formatTime(segment.segment[0]);
-    const end = formatTime(segment.segment[1]);
-    const duration = formatTime(segment.segment[1] - segment.segment[0]);
-    const category = categoryNames[segment.category] || segment.category;
-    const votes = segment.votes;
-    
-    lines.push(`${start} - ${end} (${duration}) | ${category} | ${votes} votes`);
+  if (result.segments.length > 5) {
+    lines.push(`  • ...and ${result.segments.length - 5} more`);
   }
   
   return lines.join('\n');
-}
-
-function formatTime(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-  
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  }
-  return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
