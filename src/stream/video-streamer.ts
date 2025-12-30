@@ -345,22 +345,30 @@ class VideoStreamer {
         '-tune', 'zerolatency',
         '-pix_fmt', 'yuv420p',
         '-r', String(config.stream.frameRate),
-        '-g', String(config.stream.frameRate * 2),
+        '-g', String(Math.max(config.stream.frameRate, 60)), // Use larger GOP for better compression
+        '-keyint_min', String(Math.max(config.stream.frameRate * 2, 120)), // Minimum keyframe interval
         '-b:v', `${config.stream.maxBitrate}k`,
         '-maxrate', `${config.stream.maxBitrate * 1.5}k`,
-        '-bufsize', `${config.stream.maxBitrate * 2}k`,
+        '-bufsize', `${config.stream.maxBitrate * 3}k`, // Larger buffer for smoother streaming
+        '-x264-params', 'nal-hrd=cbr:scenecut=0', // Force CBR and disable scene change detection
+        '-profile:v', 'baseline', // Use baseline profile for better compatibility
+        '-level', '4.0', // Set appropriate level
+        '-movflags', '+faststart', // Optimize for streaming
+        '-threads', '4', // Use multiple threads for encoding
+        '-slices', '4', // Slice encoding for parallelism
       );
 
       // Add SponsorBlock filters if available
       if (sponsorFilters.length > 0) {
-        // Add video filter
-        ffmpegArgs.push('-vf', sponsorFilters[0]);
+        // Add video filter with optimized scaling
+        const optimizedFilter = sponsorFilters[0].replace('scale=', 'scale=fast_bilinear=');
+        ffmpegArgs.push('-vf', optimizedFilter);
         // Add audio filter
         ffmpegArgs.push('-af', `${sponsorFilters[1]},volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`);
       } else {
-        // Normal scaling and filters
+        // Normal scaling and filters with fast scaling
         ffmpegArgs.push(
-          '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+          '-vf', `scale=fast_bilinear=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
           '-af', `volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`
         );
       }
@@ -519,11 +527,18 @@ class VideoStreamer {
         '-tune', 'zerolatency',
         '-pix_fmt', 'yuv420p',
         '-r', String(config.stream.frameRate),
-        '-g', String(config.stream.frameRate * 2),
+        '-g', String(Math.max(config.stream.frameRate, 60)), // Use larger GOP for better compression
+        '-keyint_min', String(Math.max(config.stream.frameRate * 2, 120)), // Minimum keyframe interval
         '-b:v', `${config.stream.maxBitrate}k`,
         '-maxrate', `${config.stream.maxBitrate * 1.5}k`,
-        '-bufsize', `${config.stream.maxBitrate * 2}k`,
-        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+        '-bufsize', `${config.stream.maxBitrate * 3}k`, // Larger buffer for smoother streaming
+        '-x264-params', 'nal-hrd=cbr:scenecut=0', // Force CBR and disable scene change detection
+        '-profile:v', 'baseline', // Use baseline profile for better compatibility
+        '-level', '4.0', // Set appropriate level
+        '-movflags', '+faststart', // Optimize for streaming
+        '-threads', '4', // Use multiple threads for encoding
+        '-slices', '4', // Slice encoding for parallelism
+        '-vf', `scale=fast_bilinear=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
         '-c:a', 'libopus',
         '-b:a', '320k',
         '-ar', '48000',
@@ -738,14 +753,20 @@ class VideoStreamer {
         '-i', actualStreamUrl,
         // Video output
         '-c:v', 'libx264',
-        '-preset', 'veryfast',
+        '-preset', 'ultrafast', // Changed from veryfast to ultrafast
         '-tune', 'zerolatency',
         '-b:v', `${config.stream.maxBitrate}k`,
         '-maxrate', `${Math.round(config.stream.maxBitrate * 1.5)}k`,
-        '-bufsize', `${config.stream.maxBitrate * 2}k`,
-        '-vf', `scale=${width}:${height}`,
+        '-bufsize', `${config.stream.maxBitrate * 3}k`, // Larger buffer
+        '-x264-params', 'nal-hrd=cbr:scenecut=0', // Force CBR
+        '-profile:v', 'baseline', // Use baseline profile
+        '-level', '4.0',
+        '-threads', '4', // Use multiple threads
+        '-slices', '4', // Slice encoding
+        '-vf', `scale=fast_bilinear=${width}:${height}`, // Fast scaling
         '-r', frameRate.toString(),
-        '-g', gopSize.toString(),
+        '-g', String(Math.max(frameRate, 60)), // Larger GOP
+        '-keyint_min', String(Math.max(frameRate * 2, 120)), // Min keyframe interval
         '-pix_fmt', 'yuv420p',
         // Audio output with volume filter
         '-af', `volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`,

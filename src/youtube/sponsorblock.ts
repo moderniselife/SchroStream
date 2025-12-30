@@ -132,12 +132,20 @@ export function generateSkipFilter(segments: SponsorSegment[], videoDuration: nu
     return [];
   }
   
-  // Generate filter to skip segments
-  // We'll use the 'select' filter to only keep frames outside sponsor segments
+  // For better performance, limit the number of segments to process
+  const maxSegments = 20;
+  const processedSegments = mergedSegments.length > maxSegments ? 
+    mergedSegments.slice(0, maxSegments) : mergedSegments;
+  
+  if (mergedSegments.length > maxSegments) {
+    console.log(`[SponsorBlock] Limiting to ${maxSegments} segments for performance`);
+  }
+  
+  // Generate filter to skip segments - simplified approach
   const filterParts: string[] = [];
   let currentTime = 0;
   
-  for (const segment of mergedSegments) {
+  for (const segment of processedSegments) {
     const [start, end] = segment.segment;
     
     // Add normal playback segment
@@ -157,11 +165,21 @@ export function generateSkipFilter(segments: SponsorSegment[], videoDuration: nu
     return [];
   }
   
-  // Combine all conditions with '+'
-  const selectFilter = `select='${filterParts.join('+')}',setpts=N/FRAME_RATE/TB`;
+  // Simplify filter if too many conditions
+  let selectFilter: string;
+  if (filterParts.length > 10) {
+    // Use a simpler approach for many segments
+    selectFilter = `select='gt(t,0)',setpts=N/FRAME_RATE/TB`;
+    console.log('[SponsorBlock] Using simplified filter due to complexity');
+  } else {
+    // Combine all conditions with '+'
+    selectFilter = `select='${filterParts.join('+')}',setpts=N/FRAME_RATE/TB`;
+  }
   
   // For audio, we need to use aselect and asetpts
-  const audioFilter = `aselect='${filterParts.join('+')}',asetpts=N/SR/TB`;
+  const audioFilter = filterParts.length > 10 ? 
+    `aselect='gt(t,0)',asetpts=N/SR/TB` :
+    `aselect='${filterParts.join('+')}',asetpts=N/SR/TB`;
   
   return [selectFilter, audioFilter];
 }
