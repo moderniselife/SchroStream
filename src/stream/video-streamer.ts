@@ -318,10 +318,16 @@ class VideoStreamer {
         '-map', '0:a:0?',
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
+        '-tune', 'fastdecode', // Better for playback performance
         '-pix_fmt', 'yuv420p',
         '-r', String(config.stream.frameRate),
+        '-g', '30', // Smaller GOP size for better resilience
+        '-keyint_min', '15', // Allow more frequent keyframes
         '-b:v', `${config.stream.maxBitrate}k`,
-        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+        '-maxrate', `${config.stream.maxBitrate * 1.5}k`, // More flexible bitrate
+        '-bufsize', `${config.stream.maxBitrate * 2}k`, // Larger buffer for stability
+        '-x264-params', 'scenecut=0:lookahead=0', // Disable lookahead to reduce CPU
+        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=fps=${config.stream.frameRate}:round=up`, // Force consistent frame rate
         '-c:a', 'libopus',
         '-b:a', '128k',
         '-ar', '48000',
@@ -340,7 +346,15 @@ class VideoStreamer {
         // Always show errors, but only show other logs if enabled
         if (msg.includes('Error') || msg.includes('error') || msg.includes('Fatal')) {
           console.error('[FFmpeg]', msg);
-        } else if (config.stream.showFFmpegLogs && !msg.includes('frame=') && !msg.includes('size=')) {
+        } else if (msg.includes('frame=') && msg.includes('fps=')) {
+          // Debug frame processing to detect video freezing
+          if (config.stream.showFFmpegLogs) {
+            console.log('[FFmpeg]', msg.trim());
+          }
+        } else if (msg.includes('dropping') || msg.includes('delay')) {
+          // Log frame drops or delays which could cause freezing
+          console.warn('[FFmpeg] Frame issue:', msg.trim());
+        } else if (config.stream.showFFmpegLogs && !msg.includes('size=')) {
           console.error('[FFmpeg]', msg);
         }
       });
