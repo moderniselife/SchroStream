@@ -90,7 +90,7 @@ for file in "${FILES[@]}"; do
         else
             info "Syncing directory: $file"
             # Remove trailing slash to preserve directory structure
-            local source_dir="${file%/}"
+            source_dir="${file%/}"
             rsync -avz --progress --exclude='.env' --exclude='.env.*' -e "ssh -p $SSH_PORT" "$source_dir" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR/" &&
                 success "  └─ Successfully synced $file" ||
                 { error "  └─ Failed to sync $file"; exit 1; }

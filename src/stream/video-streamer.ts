@@ -323,7 +323,7 @@ class VideoStreamer {
         '-x264-params', 'nal-hrd=cbr:force-cfr=1', // Force constant bitrate and frame rate
         '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
         '-c:a', 'libopus',
-        '-b:a', '128k', // Reduced from 320k (Discord limit is 128k anyway)
+        '-b:a', '320k', // Reduced from 320k (Discord limit is 128k anyway)
         '-ar', '48000',
         '-ac', '2',
         '-af', `volume=${volumeMultiplier}`, // Removed speechnorm (CPU intensive)
@@ -483,7 +483,7 @@ class VideoStreamer {
         '-x264-params', 'nal-hrd=cbr:force-cfr=1', // Force constant bitrate and frame rate
         '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
         '-c:a', 'libopus',
-        '-b:a', '128k', // Reduced from 320k (Discord limit is 128k anyway)
+        '-b:a', '320k', // Reduced from 320k (Discord limit is 128k anyway)
         '-ar', '48000',
         '-ac', '2',
         '-af', `volume=${volumeMultiplier}`, // Removed speechnorm (CPU intensive)
