@@ -1,28 +1,62 @@
 import {
   Client,
   GatewayIntentBits,
-  REST,
-  Routes,
   SlashCommandBuilder,
-  EmbedBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  StringSelectMenuBuilder,
-  ComponentType,
   ChatInputCommandInteraction,
-  ButtonInteraction,
-  StringSelectMenuInteraction,
-  ActivityType,
-} from 'discord.js';
-import config from '../config.js';
+  EmbedBuilder,
+  PermissionFlagsBits,
+  ChannelType,
+} from 'discord.js-selfbot-v13';
+import {
+  createReadStream,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+} from 'fs';
+import { join } from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import {
+  VoiceConnection,
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+} from '@discordjs/voice';
+import { Streamer, playStream, prepareStream } from '@dank074/discord-video-stream';
+import prism from 'prism-media';
+import { OpusEncoder } from '@discordjs/opus';
+import { promisify } from 'util';
+import ytdl from 'ytdl-core';
+import { search as youtubeSearch, Video as YouTubeVideo } from 'yt-search';
+import { getVideoStreamer } from '../stream/video-streamer.js';
 import plexClient from '../plex/client.js';
-import { getVideoStreamer, getPlaybackPosition } from '../stream/video-streamer.js';
-import { formatDuration as formatPlexDuration, parseTimeString, getNextEpisode } from '../plex/library.js';
+import {
+  getQueue,
+  addToQueue,
+  removeFromQueue,
+  clearQueue,
+  popQueue,
+  peekQueue,
+  formatQueueEntry,
+} from '../data/queue.js';
+import {
+  getWatchDeck,
+  formatDeckEntry,
+  markVideoAsFullyWatched,
+  cleanupFullyWatchedVideos,
+} from '../data/watch-deck.js';
+import {
+  getDownloads,
+  playDownload,
+  deleteDownload,
+} from '../youtube/downloader.js';
+import config from '../config.js';
 import type { MediaItem } from '../types/index.js';
-import { client as selfbotClient } from '../bot/client.js';
-import { getQueue, addToQueue, removeFromQueue, clearQueue, popQueue, peekQueue, formatQueueEntry } from '../data/queue.js';
-import { getWatchDeck, formatDeckEntry, markVideoAsFullyWatched, cleanupFullyWatchedVideos } from '../data/watch-deck.js';
 
 // Store search results per user
 const searchSessions = new Map<string, { results: MediaItem[], timestamp: number }>();
@@ -289,6 +323,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName('cleanup')
     .setDescription('Clean up all fully watched videos'),
+  new SlashCommandBuilder()
+    .setName('sponsorblock')
+    .setDescription('Show SponsorBlock segments for current video'),
 ].map(cmd => cmd.toJSON());
 
 export async function initControllerBot(): Promise<Client | null> {
@@ -494,6 +531,9 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'cleanup':
       await handleCleanup(interaction);
+      break;
+    case 'sponsorblock':
+      await handleSponsorBlock(interaction);
       break;
   }
 }
@@ -3283,6 +3323,64 @@ async function handleCleanup(interaction: ChatInputCommandInteraction): Promise<
   } catch (error) {
     console.error('[Controller] Error in handleCleanup:', error);
     await interaction.editReply('❌ Failed to cleanup watched videos');
+  }
+}
+
+async function handleSponsorBlock(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply();
+  
+  const videoStreamer = getVideoStreamer();
+  const guildId = interaction.guildId;
+  
+  if (!guildId) {
+    await interaction.editReply('❌ Guild not found');
+    return;
+  }
+  
+  const session = videoStreamer.getSession(guildId);
+  
+  if (!session) {
+    await interaction.editReply('❌ Nothing is currently playing');
+    return;
+  }
+  
+  // Check if it's a local YouTube file with metadata
+  const metadataPath = session.streamUrl.replace(/\.(mp4|webm|mkv|avi)$/, '.json');
+  
+  if (!existsSync(metadataPath)) {
+    await interaction.editReply('❌ No SponsorBlock data available for this video');
+    return;
+  }
+  
+  try {
+    const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
+    
+    if (!metadata.sponsorSegments || metadata.sponsorSegments.length === 0) {
+      await interaction.editReply('✅ No sponsor segments found for this video');
+      return;
+    }
+    
+    const { formatSegments } = await import('../youtube/sponsorblock.js');
+    const segmentList = formatSegments(metadata.sponsorSegments);
+    
+    const embed = new EmbedBuilder()
+      .setTitle('🚫 SponsorBlock Segments')
+      .setDescription(`**${metadata.title}**`)
+      .addFields(
+        { name: 'Video ID', value: metadata.videoID || 'Unknown', inline: true },
+        { name: 'Segments Found', value: `${metadata.sponsorSegments.length}`, inline: true },
+        { name: 'Status', value: metadata.sponsorBlockEnabled ? '✅ Enabled' : '❌ Disabled', inline: true }
+      )
+      .addFields(
+        { name: 'Skip Segments', value: `\`\`\`\n${segmentList}\n\`\`\`` }
+      )
+      .setColor(0xff6b6b)
+      .setFooter({ text: 'SponsorBlock data provided by the community' });
+    
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    console.error('[Controller] Error in handleSponsorBlock:', error);
+    await interaction.editReply('❌ Failed to load SponsorBlock data');
   }
 }
 

@@ -1,13 +1,20 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
-import { Client } from 'discord.js-selfbot-v13';
+import { createHash } from 'crypto';
 import { spawn } from 'child_process';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import type { MediaItem } from '../types/index.js';
+import { EventEmitter } from 'events';
+import { Client, GatewayIntentBits, VoiceStatus, Snowflake } from 'discord.js-selfbot-v13';
+import { VoiceConnection } from '@discordjs/voice';
+import prism from 'prism-media';
+import { Transcoder } from 'prism-media';
+import { Readable } from 'stream';
 import config from '../config.js';
 import plexClient from '../plex/client.js';
 import { updateWatchDeck } from '../data/watch-deck.js';
 import { popQueue, peekQueue } from '../data/queue.js';
+import { savePlaybackPosition, getPlaybackPosition, clearPlaybackPosition } from './playback-position.js';
+import type { MediaItem } from '../types/index.js';
 
 // Playback history file path
 const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
@@ -291,6 +298,29 @@ class VideoStreamer {
         console.log(`[VideoStreamer] Starting local file at ${startTimeSec}s`);
       }
 
+      // Check for SponsorBlock segments in metadata
+      let sponsorFilters: string[] = [];
+      const metadataPath = session.streamUrl.replace(/\.(mp4|webm|mkv|avi)$/, '.json');
+      
+      if (existsSync(metadataPath)) {
+        try {
+          const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
+          if (metadata.sponsorSegments && metadata.sponsorSegments.length > 0 && metadata.sponsorBlockEnabled !== false) {
+            console.log(`[VideoStreamer] Applying ${metadata.sponsorSegments.length} SponsorBlock segments`);
+            
+            // Import and generate filters
+            const { generateSkipFilter } = await import('../youtube/sponsorblock.js');
+            sponsorFilters = generateSkipFilter(metadata.sponsorSegments, metadata.duration / 1000);
+            
+            if (sponsorFilters.length > 0) {
+              console.log('[VideoStreamer] Generated SponsorBlock filters:', sponsorFilters);
+            }
+          }
+        } catch (error) {
+          console.error('[VideoStreamer] Failed to load SponsorBlock segments:', error);
+        }
+      }
+
       const volumeMultiplier = (session.volume / 100).toFixed(2);
 
       // Build FFmpeg args for local file input
@@ -319,12 +349,28 @@ class VideoStreamer {
         '-b:v', `${config.stream.maxBitrate}k`,
         '-maxrate', `${config.stream.maxBitrate * 1.5}k`,
         '-bufsize', `${config.stream.maxBitrate * 2}k`,
-        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+      );
+
+      // Add SponsorBlock filters if available
+      if (sponsorFilters.length > 0) {
+        // Add video filter
+        ffmpegArgs.push('-vf', sponsorFilters[0]);
+        // Add audio filter
+        ffmpegArgs.push('-af', `${sponsorFilters[1]},volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`);
+      } else {
+        // Normal scaling and filters
+        ffmpegArgs.push(
+          '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+          '-af', `volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`
+        );
+      }
+      
+      // Audio and output settings
+      ffmpegArgs.push(
         '-c:a', 'libopus',
         '-b:a', '320k',
         '-ar', '48000',
         '-ac', '2',
-        '-af', `volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`,
         '-f', 'matroska',
         '-'
       );

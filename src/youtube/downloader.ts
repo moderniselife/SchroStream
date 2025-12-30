@@ -24,6 +24,9 @@ export interface VideoMetadata {
   description?: string;
   url: string;
   downloadedAt: number;
+  videoID?: string;
+  sponsorSegments?: any[]; // SponsorBlock segments
+  sponsorBlockEnabled?: boolean; // Whether segments were applied
 }
 
 export interface DownloadProgress {
@@ -180,6 +183,23 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
 
         // Save metadata file alongside video
         const metadataPath = outputPath.replace('.mp4', '.json');
+        
+        // Extract video ID from URL for SponsorBlock
+        const videoIDMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+        const videoID = videoIDMatch ? videoIDMatch[1] : undefined;
+        
+        // Fetch SponsorBlock segments if video ID is available
+        let sponsorSegments: any[] = [];
+        if (videoID && config.sponsorBlock?.enabled !== false) {
+          try {
+            const { getSponsorSegments } = await import('./sponsorblock.js');
+            sponsorSegments = await getSponsorSegments(videoID);
+            console.log(`[YouTubeDownloader] Found ${sponsorSegments.length} SponsorBlock segments`);
+          } catch (error) {
+            console.error('[YouTubeDownloader] Failed to fetch SponsorBlock segments:', error);
+          }
+        }
+        
         const metadata: VideoMetadata = {
           title: info.title,
           duration: info.duration,
@@ -189,7 +209,10 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
           uploadDate: info.upload_date ? new Date(info.upload_date).toLocaleDateString() : undefined,
           description: info.description ? (info.description.length > 100 ? info.description.substring(0, 100) + '...' : info.description) : undefined,
           url: url,
-          downloadedAt: Date.now()
+          downloadedAt: Date.now(),
+          videoID: videoID,
+          sponsorSegments: sponsorSegments,
+          sponsorBlockEnabled: sponsorSegments.length > 0
         };
 
         try {
