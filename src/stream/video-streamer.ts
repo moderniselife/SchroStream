@@ -301,7 +301,13 @@ class VideoStreamer {
 
       // Add seek before input for better performance with local files
       if (startTimeSec > 0) {
-        ffmpegArgs.push('-ss', startTimeSec.toString());
+        // Validate seek position against video duration
+        if (session.duration && startTimeSec > session.duration) {
+          console.log(`[VideoStreamer] Seek position ${startTimeSec}s exceeds video duration ${session.duration}s, seeking to end`);
+          ffmpegArgs.push('-ss', Math.max(0, session.duration - 5).toString()); // Seek to 5s before end
+        } else {
+          ffmpegArgs.push('-ss', startTimeSec.toString());
+        }
       }
 
       ffmpegArgs.push('-i', session.streamUrl);
@@ -315,15 +321,14 @@ class VideoStreamer {
         '-tune', 'zerolatency',
         '-pix_fmt', 'yuv420p',
         '-r', String(config.stream.frameRate),
-        '-g', String(config.stream.frameRate), // Keyframe every 1 second (was 2)
+        '-g', String(config.stream.frameRate), // Keyframe every 1 second
         '-keyint_min', String(config.stream.frameRate), // Minimum keyframe interval
         '-b:v', `${config.stream.maxBitrate}k`,
-        '-maxrate', `${config.stream.maxBitrate}k`, // Strict CBR (was 1.5x)
-        '-bufsize', `${Math.floor(config.stream.maxBitrate / 2)}k`, // Smaller buffer for more consistent frames
-        '-x264-params', 'nal-hrd=cbr:force-cfr=1', // Force constant bitrate and frame rate
+        '-maxrate', `${config.stream.maxBitrate}k`, // Strict CBR
+        '-bufsize', `${Math.floor(config.stream.maxBitrate / 2)}k`, // Smaller buffer
         '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
         '-c:a', 'libopus',
-        '-b:a', '320k', // Reduced from 320k (Discord limit is 128k anyway)
+        '-b:a', '128k', // Reduced from 320k (Discord limit is 128k anyway)
         '-ar', '48000',
         '-ac', '2',
         '-af', `volume=${volumeMultiplier}`, // Removed speechnorm (CPU intensive)
@@ -352,6 +357,10 @@ class VideoStreamer {
       ffmpeg.on('exit', (code) => {
         if (code !== 0 && code !== null) {
           console.log('[VideoStreamer] FFmpeg exited with code:', code);
+          if (code === 255) {
+            console.error('[VideoStreamer] FFmpeg exit code 255 - likely seek or input error');
+            console.error('[VideoStreamer] Check if seek position is valid or file exists');
+          }
         }
       });
 
