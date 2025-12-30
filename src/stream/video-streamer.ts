@@ -360,6 +360,18 @@ class VideoStreamer {
               this.playLocalFile(session, 0);
             }, 1000);
           }
+        } else if (code === 0) {
+          // FFmpeg exited normally (video finished)
+          console.log('[VideoStreamer] FFmpeg exited normally - video finished');
+          
+          // Use the same cleanup logic as the normal stream end
+          if (!session.isStopping) {
+            console.log('[VideoStreamer] Local file playback finished');
+            this.sessions.delete(session.guildId);
+            
+            // Auto-play next item in queue
+            this.playNextInQueue(session.guildId, session.channelId, session.userId);
+          }
         }
       });
 
