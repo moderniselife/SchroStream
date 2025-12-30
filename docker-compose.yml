@@ -33,3 +33,4 @@ services:
       - ALLOWED_ROLES=${ALLOWED_ROLES}
     volumes:
       - ./data:/app/data
+      - ./downloads:/app/downloads
