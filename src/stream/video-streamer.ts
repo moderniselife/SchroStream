@@ -283,6 +283,8 @@ class VideoStreamer {
   private async playLocalFile(session: VideoStreamSession, startTimeMs: number = 0): Promise<void> {
     const height = config.stream.defaultQuality;
     const width = Math.round(height * (16 / 9));
+    
+    console.log(`[VideoStreamer] Encoding local file at ${width}x${height} (quality: ${height}p)`);
 
     try {
       const startTimeSec = Math.floor(startTimeMs / 1000);
@@ -313,6 +315,13 @@ class VideoStreamer {
       }
 
       // Video and audio output settings - maximum compatibility for processed videos
+      // Adjust bitrate based on quality for optimal encoding
+      const qualityBitrate = height >= 1080 ? config.stream.maxBitrate : 
+                            height >= 720 ? Math.floor(config.stream.maxBitrate * 0.6) :
+                            Math.floor(config.stream.maxBitrate * 0.4);
+      
+      console.log(`[VideoStreamer] Using ${qualityBitrate}k bitrate for ${height}p video`);
+      
       ffmpegArgs.push(
         '-map', '0:v:0?',
         '-map', '0:a:0?',
@@ -323,9 +332,9 @@ class VideoStreamer {
         '-r', String(config.stream.frameRate),
         '-g', '30', // Smaller GOP size for better resilience
         '-keyint_min', '15', // Allow more frequent keyframes
-        '-b:v', `${config.stream.maxBitrate}k`,
-        '-maxrate', `${config.stream.maxBitrate * 1.5}k`, // More flexible bitrate
-        '-bufsize', `${config.stream.maxBitrate * 2}k`, // Larger buffer for stability
+        '-b:v', `${qualityBitrate}k`,
+        '-maxrate', `${qualityBitrate * 1.5}k`, // More flexible bitrate
+        '-bufsize', `${qualityBitrate * 2}k`, // Larger buffer for stability
         '-x264-params', 'scenecut=0:lookahead=0', // Disable lookahead to reduce CPU
         '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=fps=${config.stream.frameRate}:round=up`, // Force consistent frame rate
         '-c:a', 'libopus',
