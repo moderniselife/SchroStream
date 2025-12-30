@@ -315,36 +315,58 @@ class VideoStreamer {
       }
 
       // Video and audio output settings - maximum compatibility for processed videos
-      // Adjust bitrate based on quality for optimal encoding
-      const qualityBitrate = height >= 1080 ? config.stream.maxBitrate : 
-                            height >= 720 ? Math.floor(config.stream.maxBitrate * 0.6) :
-                            Math.floor(config.stream.maxBitrate * 0.4);
+      // Try to use stream copy first to avoid CPU-intensive re-encoding
+      // Only re-encode if absolutely necessary (scaling, frame rate conversion)
+      const needsReencode = false; // Downloaded videos should already be compatible
       
-      console.log(`[VideoStreamer] Using ${qualityBitrate}k bitrate for ${height}p video`);
-      
-      ffmpegArgs.push(
-        '-map', '0:v:0?',
-        '-map', '0:a:0?',
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-tune', 'fastdecode', // Better for playback performance
-        '-pix_fmt', 'yuv420p',
-        '-r', String(config.stream.frameRate),
-        '-g', '30', // Smaller GOP size for better resilience
-        '-keyint_min', '15', // Allow more frequent keyframes
-        '-b:v', `${qualityBitrate}k`,
-        '-maxrate', `${qualityBitrate * 1.5}k`, // More flexible bitrate
-        '-bufsize', `${qualityBitrate * 2}k`, // Larger buffer for stability
-        '-x264-params', 'scenecut=0:lookahead=0', // Disable lookahead to reduce CPU
-        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=fps=${config.stream.frameRate}:round=up`, // Force consistent frame rate
-        '-c:a', 'libopus',
-        '-b:a', '128k',
-        '-ar', '48000',
-        '-ac', '2',
-        '-af', `volume=${volumeMultiplier}`,
-        '-f', 'matroska',
-        '-'
-      );
+      if (needsReencode) {
+        // Adjust bitrate based on quality for optimal encoding
+        const qualityBitrate = height >= 1080 ? config.stream.maxBitrate : 
+                              height >= 720 ? Math.floor(config.stream.maxBitrate * 0.6) :
+                              Math.floor(config.stream.maxBitrate * 0.4);
+        
+        console.log(`[VideoStreamer] Re-encoding at ${qualityBitrate}k bitrate for ${height}p video`);
+        
+        ffmpegArgs.push(
+          '-map', '0:v:0?',
+          '-map', '0:a:0?',
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-tune', 'fastdecode',
+          '-pix_fmt', 'yuv420p',
+          '-r', String(config.stream.frameRate),
+          '-g', '30',
+          '-keyint_min', '15',
+          '-b:v', `${qualityBitrate}k`,
+          '-maxrate', `${qualityBitrate * 1.5}k`,
+          '-bufsize', `${qualityBitrate * 2}k`,
+          '-x264-params', 'scenecut=0:lookahead=0',
+          '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=fps=${config.stream.frameRate}:round=up`,
+          '-c:a', 'libopus',
+          '-b:a', '128k',
+          '-ar', '48000',
+          '-ac', '2',
+          '-af', `volume=${volumeMultiplier}`,
+          '-f', 'matroska',
+          '-'
+        );
+      } else {
+        // Stream copy - minimal processing, maximum performance
+        console.log(`[VideoStreamer] Using stream copy for local file (no re-encoding)`);
+        
+        ffmpegArgs.push(
+          '-map', '0:v:0?',
+          '-map', '0:a:0?',
+          '-c:v', 'copy', // Copy video stream directly - no re-encoding
+          '-c:a', 'libopus', // Audio needs re-encoding for Discord
+          '-b:a', '128k',
+          '-ar', '48000',
+          '-ac', '2',
+          '-af', `volume=${volumeMultiplier}`,
+          '-f', 'matroska',
+          '-'
+        );
+      }
 
       console.log('[VideoStreamer] Starting FFmpeg for local file...');
       const ffmpeg = spawn('ffmpeg', ffmpegArgs);
