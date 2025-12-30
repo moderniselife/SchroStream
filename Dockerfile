@@ -25,8 +25,11 @@ COPY . .
 # Create data directory
 RUN mkdir -p /app/data
 
-# Build TypeScript
+# Build TypeScript backend
 RUN npm run build
+
+# Build web frontend (outputs to /app/public)
+RUN npm run build:web
 
 # Set environment
 ENV NODE_ENV=production
