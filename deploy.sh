@@ -26,7 +26,7 @@ SSH_PORT=22
 MAIN_REPO_DIR="/Users/josephshenton/SchroStream"
 
 # Files to copy to the server
-FILES=("docker-compose.yml" "Dockerfile" "src/" "package.json" "tsconfig.json")
+FILES=("docker-compose.yml" "Dockerfile" "src/" "web/" "vite.config.ts" "package.json" "tsconfig.json")
 
 # Function to print section headers
 section() {
