@@ -315,9 +315,9 @@ class VideoStreamer {
       }
 
       // Video and audio output settings - maximum compatibility for processed videos
-      // Try to use stream copy first to avoid CPU-intensive re-encoding
-      // Only re-encode if absolutely necessary (scaling, frame rate conversion)
-      const needsReencode = false; // Downloaded videos should already be compatible
+      // Force re-encoding to ensure H.264 compatibility with Discord
+      // AV1 and other codecs are not supported by Discord video streaming
+      const needsReencode = true; // Always re-encode for Discord compatibility
       
       if (needsReencode) {
         // Adjust bitrate based on quality for optimal encoding
@@ -377,6 +377,9 @@ class VideoStreamer {
         // Always show errors, but only show other logs if enabled
         if (msg.includes('Error') || msg.includes('error') || msg.includes('Fatal')) {
           console.error('[FFmpeg]', msg);
+        } else if (msg.includes('codec_id') && msg.includes('225')) {
+          // AV1 codec detected - log why we need to re-encode
+          console.warn('[FFmpeg] AV1 codec detected - re-encoding required for Discord compatibility');
         } else if (msg.includes('frame=') && msg.includes('fps=')) {
           // Debug frame processing to detect video freezing
           if (config.stream.showFFmpegLogs) {
