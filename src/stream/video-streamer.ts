@@ -299,7 +299,9 @@ class VideoStreamer {
         '-loglevel', 'error',
       ];
 
-      // Add seek before input for better performance with local files
+      ffmpegArgs.push('-i', session.streamUrl);
+
+      // Add seek AFTER input for better compatibility with processed videos
       if (startTimeSec > 0) {
         // Validate seek position against video duration
         if (session.duration && startTimeSec > session.duration) {
@@ -310,24 +312,18 @@ class VideoStreamer {
         }
       }
 
-      ffmpegArgs.push('-i', session.streamUrl);
-
-      // Video and audio output settings - simplified for robust seeking
+      // Video and audio output settings - maximum compatibility for processed videos
       ffmpegArgs.push(
         '-map', '0:v:0?',
         '-map', '0:a:0?',
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
-        '-tune', 'fastdecode', // Better for seeking than zerolatency
         '-pix_fmt', 'yuv420p',
         '-r', String(config.stream.frameRate),
-        '-g', '60', // Fixed GOP size for better seek compatibility
         '-b:v', `${config.stream.maxBitrate}k`,
-        '-maxrate', `${config.stream.maxBitrate * 1.2}k`, // More flexible bitrate
-        '-bufsize', `${config.stream.maxBitrate}k`, // Standard buffer size
         '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
         '-c:a', 'libopus',
-        '-b:a', '320',
+        '-b:a', '128k',
         '-ar', '48000',
         '-ac', '2',
         '-af', `volume=${volumeMultiplier}`,
