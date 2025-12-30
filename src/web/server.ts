@@ -537,7 +537,9 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     const { spawn } = await import('child_process');
     
     // Detect if this is an HLS stream (external masked) or direct video (YouTube/Plex)
-    const needsHLSFetcher = (session.streamUrl.includes('.json') || 
+    const isLocalFile = session.streamUrl.startsWith('/') || session.streamUrl.startsWith('./') || session.streamUrl.includes('downloads/');
+    const needsHLSFetcher = !isLocalFile && (
+                            session.streamUrl.includes('.json') || 
                             session.streamUrl.includes('.svg') || 
                             session.streamUrl.includes('.php') ||
                             session.streamUrl.includes('.txt') ||
@@ -569,18 +571,38 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
       ];
     } else {
       console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildId}, seeking to ${seekSeconds}s (current: ${Math.floor(progress.current / 1000)}s + ${STARTUP_OFFSET}s offset)`);
+      console.log(`[WebServer] Stream URL: ${session.streamUrl}, isLocalFile: ${isLocalFile}`);
       
-      // Build FFmpeg args for direct streams (YouTube)
+      // Check if file exists for local files
+      if (isLocalFile) {
+        const { existsSync } = await import('fs');
+        if (!existsSync(session.streamUrl)) {
+          console.error(`[WebServer] Local file not found: ${session.streamUrl}`);
+          return res.status(404).json({ error: 'Local file not found' });
+        }
+        console.log(`[WebServer] Local file confirmed: ${session.streamUrl}`);
+      }
+      
+      // Build FFmpeg args for direct streams (YouTube/local files)
       ffmpegArgs = [
         '-hide_banner',
         '-loglevel', 'warning',
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5',
-        '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+      ];
+      
+      // Add reconnect options for external streams only
+      if (!isLocalFile) {
+        ffmpegArgs.push(
+          '-reconnect', '1',
+          '-reconnect_streamed', '1',
+          '-reconnect_delay_max', '5',
+          '-protocol_whitelist', 'file,http,https,tcp,tls,crypto'
+        );
+      }
+      
+      ffmpegArgs.push(
         '-ss', seekSeconds.toString(),
         '-i', session.streamUrl,
-      ];
+      );
       
       // Add audio input if separate (YouTube)
       if (session.audioUrl) {
