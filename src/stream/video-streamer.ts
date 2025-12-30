@@ -312,26 +312,25 @@ class VideoStreamer {
 
       ffmpegArgs.push('-i', session.streamUrl);
 
-      // Video and audio output settings - optimized for streaming
+      // Video and audio output settings - simplified for robust seeking
       ffmpegArgs.push(
         '-map', '0:v:0?',
         '-map', '0:a:0?',
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
-        '-tune', 'zerolatency',
+        '-tune', 'fastdecode', // Better for seeking than zerolatency
         '-pix_fmt', 'yuv420p',
         '-r', String(config.stream.frameRate),
-        '-g', String(config.stream.frameRate), // Keyframe every 1 second
-        '-keyint_min', String(config.stream.frameRate), // Minimum keyframe interval
+        '-g', '60', // Fixed GOP size for better seek compatibility
         '-b:v', `${config.stream.maxBitrate}k`,
-        '-maxrate', `${config.stream.maxBitrate}k`, // Strict CBR
-        '-bufsize', `${Math.floor(config.stream.maxBitrate / 2)}k`, // Smaller buffer
+        '-maxrate', `${config.stream.maxBitrate * 1.2}k`, // More flexible bitrate
+        '-bufsize', `${config.stream.maxBitrate}k`, // Standard buffer size
         '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
         '-c:a', 'libopus',
-        '-b:a', '128k', // Reduced from 320k (Discord limit is 128k anyway)
+        '-b:a', '320',
         '-ar', '48000',
         '-ac', '2',
-        '-af', `volume=${volumeMultiplier}`, // Removed speechnorm (CPU intensive)
+        '-af', `volume=${volumeMultiplier}`,
         '-f', 'matroska',
         '-'
       );
@@ -357,9 +356,13 @@ class VideoStreamer {
       ffmpeg.on('exit', (code) => {
         if (code !== 0 && code !== null) {
           console.log('[VideoStreamer] FFmpeg exited with code:', code);
-          if (code === 255) {
-            console.error('[VideoStreamer] FFmpeg exit code 255 - likely seek or input error');
-            console.error('[VideoStreamer] Check if seek position is valid or file exists');
+          if (code === 255 && startTimeSec > 0) {
+            console.error('[VideoStreamer] FFmpeg exit code 255 - seek error, retrying without seek');
+            // Retry without seek if it was a seek failure
+            setTimeout(() => {
+              console.log('[VideoStreamer] Retrying local file playback from start');
+              this.playLocalFile(session, 0);
+            }, 1000);
           }
         }
       });
