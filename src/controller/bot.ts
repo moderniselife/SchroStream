@@ -3500,10 +3500,13 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
   const searchValue = interaction.options.getString('search');
   const seasonValue = interaction.options.getString('season');
   
+  console.log(`[Autocomplete] Focused: ${focusedOption.name}, Search: "${searchValue}", Season: "${seasonValue}"`);
+  
   try {
     if (focusedOption.name === 'search') {
       // Search for media
       const query = focusedOption.value.toLowerCase();
+      console.log(`[Autocomplete] Searching for: "${query}"`);
       const results = await plexClient.search(query);
       
       const choices = results.slice(0, 25).map(item => ({
@@ -3511,10 +3514,14 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
         value: item.ratingKey,
       }));
       
+      console.log(`[Autocomplete] Found ${results.length} results, returning ${choices.length} choices`);
       await interaction.respond(choices);
     } else if (focusedOption.name === 'season') {
       // Show seasons for selected media - need to find the media from search value
+      console.log(`[Autocomplete] Getting seasons for search: "${searchValue}"`);
+      
       if (!searchValue) {
+        console.log('[Autocomplete] No search value, returning empty');
         await interaction.respond([]);
         return;
       }
@@ -3523,7 +3530,10 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       const searchResults = await plexClient.search(searchValue);
       const mediaItem = searchResults[0]; // Use first result
       
+      console.log(`[Autocomplete] Found media: ${mediaItem?.title}, type: ${mediaItem?.type}`);
+      
       if (!mediaItem || mediaItem.type !== 'show') {
+        console.log('[Autocomplete] Not a TV show, returning empty seasons');
         await interaction.respond([]);
         return;
       }
@@ -3535,6 +3545,8 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       });
       
       const seasons = await plexClient.getSeasons(mediaItem.ratingKey);
+      console.log(`[Autocomplete] Found ${seasons.length} seasons`);
+      
       const query = focusedOption.value.toLowerCase();
       
       const filtered = seasons.filter(season => 
@@ -3547,10 +3559,14 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
         value: season.index?.toString() || '1',
       }));
       
+      console.log(`[Autocomplete] Returning ${choices.length} season choices`);
       await interaction.respond(choices);
     } else if (focusedOption.name === 'episode') {
       // Show episodes for selected season - need to get media and season
+      console.log(`[Autocomplete] Getting episodes for search: "${searchValue}", season: "${seasonValue}"`);
+      
       if (!searchValue) {
+        console.log('[Autocomplete] No search value, returning empty');
         await interaction.respond([]);
         return;
       }
@@ -3559,7 +3575,10 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       const searchResults = await plexClient.search(searchValue);
       const mediaItem = searchResults[0];
       
+      console.log(`[Autocomplete] Found media: ${mediaItem?.title}, type: ${mediaItem?.type}`);
+      
       if (!mediaItem || mediaItem.type !== 'show') {
+        console.log('[Autocomplete] Not a TV show, returning empty episodes');
         await interaction.respond([]);
         return;
       }
@@ -3568,6 +3587,8 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       const targetSeason = seasonValue ? parseInt(seasonValue, 10) : 1;
       const seasons = await plexClient.getSeasons(mediaItem.ratingKey);
       const selectedSeason = seasons.find(s => (s.index || 1) === targetSeason) || seasons[0];
+      
+      console.log(`[Autocomplete] Target season: ${targetSeason}, selected season index: ${selectedSeason?.index}`);
       
       // Update state
       autocompleteState.set(interaction.user.id, {
@@ -3578,6 +3599,9 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       
       const allEpisodes = await plexClient.getEpisodes(mediaItem.ratingKey);
       const episodes = allEpisodes.filter(ep => (ep.parentIndex || 0) === (selectedSeason.index || 1));
+      
+      console.log(`[Autocomplete] Found ${episodes.length} episodes for season ${selectedSeason.index}`);
+      
       const query = focusedOption.value.toLowerCase();
       
       const filtered = episodes.filter(ep => 
@@ -3590,6 +3614,7 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
         value: ep.index?.toString() || '1',
       }));
       
+      console.log(`[Autocomplete] Returning ${choices.length} episode choices`);
       await interaction.respond(choices);
     }
   } catch (error) {
