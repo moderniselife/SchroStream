@@ -3548,7 +3548,8 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       
       const query = focusedOption.value.toLowerCase();
       
-      const filtered = seasons.filter(season => 
+      // If query is empty, show all seasons; otherwise filter
+      const filtered = query === '' ? seasons : seasons.filter(season => 
         season.index?.toString().includes(query) ||
         `season ${season.index}`.includes(query)
       );
@@ -3602,7 +3603,8 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       
       const query = focusedOption.value.toLowerCase();
       
-      const filtered = episodes.filter(ep => 
+      // If query is empty, show all episodes; otherwise filter
+      const filtered = query === '' ? episodes : episodes.filter(ep => 
         ep.index?.toString().includes(query) ||
         ep.title.toLowerCase().includes(query)
       );
