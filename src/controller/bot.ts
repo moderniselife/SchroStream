@@ -712,10 +712,12 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       
       console.log(`[Autocomplete] Found season ${seasonNum} with ratingKey: ${season.ratingKey}`);
       
-      // Get episodes
-      const episodes = await plexClient.getEpisodes(season.ratingKey);
+      // Get ALL episodes for the show, then filter by season (parentIndex)
+      // This is how showEpisodesForSeason works - getEpisodes takes SHOW ratingKey, not season!
+      const allEpisodes = await plexClient.getEpisodes(media.ratingKey);
+      const episodes = allEpisodes.filter(ep => (ep.parentIndex || 0) === seasonNum);
       state.episodes = episodes;
-      console.log(`[Autocomplete] Found ${episodes.length} episodes for season ${seasonNum}`);
+      console.log(`[Autocomplete] Found ${allEpisodes.length} total episodes, ${episodes.length} for season ${seasonNum}`);
       
       // Filter based on what user typed
       const filterValue = String(focusedOption.value || '');
