@@ -14,6 +14,8 @@ import {
   ButtonInteraction,
   StringSelectMenuInteraction,
   ActivityType,
+  AutocompleteInteraction,
+  ApplicationCommandOptionType,
 } from 'discord.js';
 import config from '../config.js';
 import plexClient from '../plex/client.js';
@@ -80,6 +82,27 @@ const commands = [
       option.setName('episode')
         .setDescription('Episode to play (e.g., S02E05)')
         .setRequired(false)
+    ),
+  new SlashCommandBuilder()
+    .setName('play-enhanced')
+    .setDescription('Enhanced play command with autocomplete search')
+    .addStringOption(option =>
+      option.setName('search')
+        .setDescription('Search for media to play')
+        .setRequired(true)
+        .setAutocomplete(true)
+    )
+    .addStringOption(option =>
+      option.setName('season')
+        .setDescription('Season number (for TV shows)')
+        .setRequired(false)
+        .setAutocomplete(true)
+    )
+    .addStringOption(option =>
+      option.setName('episode')
+        .setDescription('Episode number (for TV shows)')
+        .setRequired(false)
+        .setAutocomplete(true)
     ),
   new SlashCommandBuilder()
     .setName('stop')
@@ -352,6 +375,8 @@ export async function initControllerBot(): Promise<Client | null> {
         await handleButton(interaction);
       } else if (interaction.isStringSelectMenu()) {
         await handleSelectMenu(interaction);
+      } else if (interaction.isAutocomplete()) {
+        await handleAutocomplete(interaction);
       }
     } catch (error) {
       console.error('[Controller] Interaction error:', error);
@@ -435,6 +460,9 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'play':
       await handlePlay(interaction);
+      break;
+    case 'play-enhanced':
+      await handlePlayEnhanced(interaction);
       break;
     case 'stop':
       await handleStop(interaction);
@@ -3457,6 +3485,145 @@ async function handleCleanup(interaction: ChatInputCommandInteraction): Promise<
   } catch (error) {
     console.error('[Controller] Error in handleCleanup:', error);
     await interaction.editReply('❌ Failed to cleanup watched videos');
+  }
+}
+
+// Store autocomplete state per user
+const autocompleteState = new Map<string, {
+  selectedMedia?: MediaItem;
+  selectedSeason?: any;
+  timestamp: number;
+}>();
+
+async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+  const focusedOption = interaction.options.getFocused(true);
+  
+  try {
+    if (focusedOption.name === 'search') {
+      // Search for media
+      const query = focusedOption.value.toLowerCase();
+      const results = await plexClient.search(query);
+      
+      const choices = results.slice(0, 25).map(item => ({
+        name: `${item.title}${item.year ? ` (${item.year})` : ''}`,
+        value: item.ratingKey,
+      }));
+      
+      await interaction.respond(choices);
+    } else if (focusedOption.name === 'season') {
+      // Show seasons for selected media
+      const state = autocompleteState.get(interaction.user.id);
+      if (!state?.selectedMedia || state.selectedMedia.type !== 'show') {
+        await interaction.respond([]);
+        return;
+      }
+      
+      const seasons = await plexClient.getSeasons(state.selectedMedia.ratingKey);
+      const query = focusedOption.value.toLowerCase();
+      
+      const filtered = seasons.filter(season => 
+        season.index?.toString().includes(query) ||
+        `season ${season.index}`.includes(query)
+      );
+      
+      const choices = filtered.slice(0, 25).map(season => ({
+        name: `Season ${season.index || 1}`,
+        value: season.index?.toString() || '1',
+      }));
+      
+      await interaction.respond(choices);
+    } else if (focusedOption.name === 'episode') {
+      // Show episodes for selected season
+      const state = autocompleteState.get(interaction.user.id);
+      if (!state?.selectedMedia || !state?.selectedSeason) {
+        await interaction.respond([]);
+        return;
+      }
+      
+      const allEpisodes = await plexClient.getEpisodes(state.selectedMedia.ratingKey);
+      const episodes = allEpisodes.filter(ep => (ep.parentIndex || 0) === (state.selectedSeason.index || 1));
+      const query = focusedOption.value.toLowerCase();
+      
+      const filtered = episodes.filter(ep => 
+        ep.index?.toString().includes(query) ||
+        ep.title.toLowerCase().includes(query)
+      );
+      
+      const choices = filtered.slice(0, 25).map(ep => ({
+        name: `E${String(ep.index).padStart(2, '0')}: ${ep.title}`,
+        value: ep.index?.toString() || '1',
+      }));
+      
+      await interaction.respond(choices);
+    }
+  } catch (error) {
+    console.error('[Controller] Autocomplete error:', error);
+    await interaction.respond([]);
+  }
+}
+
+async function handlePlayEnhanced(interaction: ChatInputCommandInteraction): Promise<void> {
+  const searchQuery = interaction.options.getString('search', true);
+  const seasonNum = interaction.options.getString('season');
+  const episodeNum = interaction.options.getString('episode');
+  
+  await interaction.deferReply();
+  
+  try {
+    // Search for the media
+    const results = await plexClient.search(searchQuery);
+    if (results.length === 0) {
+      await interaction.editReply('❌ No results found');
+      return;
+    }
+    
+    const mediaItem = results[0]; // Use first result
+    
+    // Store state for autocomplete
+    autocompleteState.set(interaction.user.id, {
+      selectedMedia: mediaItem,
+      timestamp: Date.now()
+    });
+    
+    let itemToPlay = mediaItem;
+    
+    // Handle TV show episode selection
+    if (mediaItem.type === 'show') {
+      let targetSeason = 1;
+      let targetEpisode = 1;
+      
+      if (seasonNum) {
+        targetSeason = parseInt(seasonNum, 10);
+      }
+      
+      if (episodeNum) {
+        targetEpisode = parseInt(episodeNum, 10);
+      }
+      
+      // Get seasons for state
+      const seasons = await plexClient.getSeasons(mediaItem.ratingKey);
+      const selectedSeason = seasons.find(s => (s.index || 1) === targetSeason) || seasons[0];
+      
+      // Update state
+      autocompleteState.set(interaction.user.id, {
+        selectedMedia: mediaItem,
+        selectedSeason,
+        timestamp: Date.now()
+      });
+      
+      const episode = await plexClient.getEpisode(mediaItem.ratingKey, targetSeason, targetEpisode);
+      if (!episode) {
+        await interaction.editReply(`❌ Episode S${String(targetSeason).padStart(2, '0')}E${String(targetEpisode).padStart(2, '0')} not found`);
+        return;
+      }
+      itemToPlay = episode;
+    }
+    
+    await startPlayback(interaction, itemToPlay);
+    
+  } catch (error) {
+    console.error('[Controller] Enhanced play error:', error);
+    await interaction.editReply('❌ Failed to play media');
   }
 }
 
