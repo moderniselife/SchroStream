@@ -13,9 +13,8 @@ import {
   ChatInputCommandInteraction,
   ButtonInteraction,
   StringSelectMenuInteraction,
-  ActivityType,
   AutocompleteInteraction,
-  ApplicationCommandOptionType,
+  ActivityType,
 } from 'discord.js';
 import config from '../config.js';
 import plexClient from '../plex/client.js';
@@ -32,15 +31,15 @@ const youtubeSearchSessions = new Map<string, { results: any[], timestamp: numbe
 const youtubeSearchPages = new Map<string, { page: number }>();
 const SESSION_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 
-// Store pagination state per user
-const paginationSessions = new Map<string, { 
-  type: 'seasons' | 'episodes',
-  show: MediaItem,
-  seasonIndex?: number,
-  currentPage: number,
-  items: any[],
-  timestamp: number 
-}>();
+// State tracking for play-enhanced autocomplete
+interface PlayEnhancedState {
+  selectedMedia?: MediaItem;
+  selectedSeason?: number;
+  seasons?: any[];
+  episodes?: any[];
+  timestamp: number;
+}
+const playEnhancedState = new Map<string, PlayEnhancedState>();
 
 interface YouTubeSearchResult {
   id: string;
@@ -82,27 +81,6 @@ const commands = [
       option.setName('episode')
         .setDescription('Episode to play (e.g., S02E05)')
         .setRequired(false)
-    ),
-  new SlashCommandBuilder()
-    .setName('play-enhanced')
-    .setDescription('Enhanced play command with autocomplete search')
-    .addStringOption(option =>
-      option.setName('search')
-        .setDescription('Search for media to play')
-        .setRequired(true)
-        .setAutocomplete(true)
-    )
-    .addStringOption(option =>
-      option.setName('season')
-        .setDescription('Season number (for TV shows)')
-        .setRequired(false)
-        .setAutocomplete(true)
-    )
-    .addStringOption(option =>
-      option.setName('episode')
-        .setDescription('Episode number (for TV shows)')
-        .setRequired(false)
-        .setAutocomplete(true)
     ),
   new SlashCommandBuilder()
     .setName('stop')
@@ -322,6 +300,27 @@ const commands = [
   new SlashCommandBuilder()
     .setName('cleanup')
     .setDescription('Clean up all fully watched videos'),
+  new SlashCommandBuilder()
+    .setName('play-enhanced')
+    .setDescription('Play media with autocomplete (bypasses 25 option limit)')
+    .addStringOption(option =>
+      option.setName('media')
+        .setDescription('Search for a movie or TV show')
+        .setRequired(true)
+        .setAutocomplete(true)
+    )
+    .addIntegerOption(option =>
+      option.setName('season')
+        .setDescription('Season number (for TV shows)')
+        .setRequired(false)
+        .setAutocomplete(true)
+    )
+    .addIntegerOption(option =>
+      option.setName('episode')
+        .setDescription('Episode number')
+        .setRequired(false)
+        .setAutocomplete(true)
+    ),
 ].map(cmd => cmd.toJSON());
 
 export async function initControllerBot(): Promise<Client | null> {
@@ -369,14 +368,14 @@ export async function initControllerBot(): Promise<Client | null> {
   // Handle interactions
   controllerBot.on('interactionCreate', async (interaction) => {
     try {
-      if (interaction.isChatInputCommand()) {
+      if (interaction.isAutocomplete()) {
+        await handleAutocomplete(interaction);
+      } else if (interaction.isChatInputCommand()) {
         await handleSlashCommand(interaction);
       } else if (interaction.isButton()) {
         await handleButton(interaction);
       } else if (interaction.isStringSelectMenu()) {
         await handleSelectMenu(interaction);
-      } else if (interaction.isAutocomplete()) {
-        await handleAutocomplete(interaction);
       }
     } catch (error) {
       console.error('[Controller] Interaction error:', error);
@@ -403,7 +402,7 @@ export async function initControllerBot(): Promise<Client | null> {
     }
   });
 
-  controllerBot.once('clientReady', () => {
+  controllerBot.once('ready', () => {
     console.log(`[Controller] Bot ready as ${controllerBot?.user?.tag}`);
     
     // Set full presence (status and activity in one call)
@@ -460,9 +459,6 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'play':
       await handlePlay(interaction);
-      break;
-    case 'play-enhanced':
-      await handlePlayEnhanced(interaction);
       break;
     case 'stop':
       await handleStop(interaction);
@@ -533,6 +529,233 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
     case 'cleanup':
       await handleCleanup(interaction);
       break;
+    case 'play-enhanced':
+      await handlePlayEnhanced(interaction);
+      break;
+  }
+}
+
+async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+  if (interaction.commandName !== 'play-enhanced') return;
+  
+  const focusedOption = interaction.options.getFocused(true);
+  const userId = interaction.user.id;
+  
+  // Get or create user state
+  let state = playEnhancedState.get(userId);
+  if (!state || Date.now() - state.timestamp > SESSION_TIMEOUT) {
+    state = { timestamp: Date.now() };
+    playEnhancedState.set(userId, state);
+  }
+  
+  try {
+    if (focusedOption.name === 'media') {
+      // Search for media
+      const query = focusedOption.value as string;
+      let results: MediaItem[] = [];
+      
+      if (query.length > 0) {
+        results = await plexClient.search(query);
+      } else {
+        // Show a prompt when no query entered
+        await interaction.respond([{ name: 'Start typing to search...', value: 'none' }]);
+        return;
+      }
+      
+      if (results.length === 0) {
+        await interaction.respond([{ name: 'No results found', value: 'none' }]);
+        return;
+      }
+      
+      // Store results for later use
+      searchSessions.set(userId, { results, timestamp: Date.now() });
+      
+      // Format for autocomplete (max 25 options)
+      const options = results.slice(0, 25).map((item, index) => {
+        const type = item.type === 'show' ? '📺' : '🎬';
+        const year = 'year' in item && item.year ? ` (${item.year})` : '';
+        const name = `${type} ${item.title}${year}`;
+        return {
+          name: name.substring(0, 100),
+          value: `${index}:${item.ratingKey}`
+        };
+      });
+      
+      await interaction.respond(options);
+      
+    } else if (focusedOption.name === 'season') {
+      // Get selected media from the media option
+      const mediaValue = interaction.options.getString('media');
+      
+      if (!mediaValue) {
+        await interaction.respond([{ name: 'Select a TV show first', value: 0 }]);
+        return;
+      }
+      
+      const [indexStr, ratingKey] = mediaValue.split(':');
+      const session = searchSessions.get(userId);
+      
+      if (!session) {
+        await interaction.respond([{ name: 'Search again', value: 0 }]);
+        return;
+      }
+      
+      const media = session.results.find(r => r.ratingKey === ratingKey);
+      
+      if (!media || media.type !== 'show') {
+        await interaction.respond([{ name: 'Not a TV show - just play it!', value: 0 }]);
+        return;
+      }
+      
+      // Store selected media
+      state.selectedMedia = media;
+      state.timestamp = Date.now();
+      
+      // Get seasons
+      const seasons = await plexClient.getSeasons(media.ratingKey);
+      state.seasons = seasons;
+      
+      const options = seasons
+        .filter(season => season.index !== undefined)
+        .map(season => ({
+          name: `Season ${season.index}`,
+          value: season.index as number
+        }));
+      
+      await interaction.respond(options.slice(0, 25));
+      
+    } else if (focusedOption.name === 'episode') {
+      const seasonNum = interaction.options.getInteger('season');
+      
+      if (!seasonNum || !state.selectedMedia) {
+        await interaction.respond([{ name: 'Select a season first', value: 0 }]);
+        return;
+      }
+      
+      state.selectedSeason = seasonNum;
+      state.timestamp = Date.now();
+      
+      // Find the season
+      const season = state.seasons?.find(s => s.index === seasonNum);
+      if (!season) {
+        await interaction.respond([{ name: 'Season not found', value: 0 }]);
+        return;
+      }
+      
+      // Get episodes
+      const episodes = await plexClient.getEpisodes(season.ratingKey);
+      state.episodes = episodes;
+      
+      const options = episodes
+        .filter(ep => ep.index !== undefined)
+        .map(ep => ({
+          name: `E${ep.index}: ${ep.title}`.substring(0, 100),
+          value: ep.index as number
+        }));
+      
+      await interaction.respond(options.slice(0, 25));
+    }
+  } catch (error) {
+    console.error('[Controller] Autocomplete error:', error);
+    await interaction.respond([]);
+  }
+}
+
+async function handlePlayEnhanced(interaction: ChatInputCommandInteraction): Promise<void> {
+  const mediaValue = interaction.options.getString('media', true);
+  const seasonNum = interaction.options.getInteger('season');
+  const episodeNum = interaction.options.getInteger('episode');
+  const userId = interaction.user.id;
+  
+  await interaction.deferReply();
+  
+  try {
+    const [indexStr, ratingKey] = mediaValue.split(':');
+    const session = searchSessions.get(userId);
+    
+    if (!session) {
+      await interaction.editReply('❌ Session expired. Please search again.');
+      return;
+    }
+    
+    const media = session.results.find(r => r.ratingKey === ratingKey);
+    
+    if (!media) {
+      await interaction.editReply('❌ Media not found. Please search again.');
+      return;
+    }
+    
+    // Get voice channel
+    const member = await interaction.guild?.members.fetch(interaction.user.id);
+    const voiceChannel = member?.voice.channel;
+    
+    if (!voiceChannel) {
+      await interaction.editReply('❌ You need to be in a voice channel!');
+      return;
+    }
+    
+    let itemToPlay: MediaItem = media;
+    
+    // If it's a show, get the specific episode
+    if (media.type === 'show' && seasonNum && episodeNum) {
+      const state = playEnhancedState.get(userId);
+      
+      if (state?.episodes) {
+        const episode = state.episodes.find((ep: any) => ep.index === episodeNum);
+        if (episode) {
+          itemToPlay = episode;
+        }
+      } else {
+        // Fallback: fetch episodes directly
+        const seasons = await plexClient.getSeasons(media.ratingKey);
+        const season = seasons.find(s => s.index === seasonNum);
+        if (season) {
+          const episodes = await plexClient.getEpisodes(season.ratingKey);
+          const episode = episodes.find((ep: any) => ep.index === episodeNum);
+          if (episode) {
+            itemToPlay = episode;
+          }
+        }
+      }
+    } else if (media.type === 'show' && !seasonNum) {
+      // Show selected but no episode - show help
+      await interaction.editReply('📺 This is a TV show. Please also select a **season** and **episode**.');
+      return;
+    }
+    
+    // Get stream URL
+    const streamInfo = await plexClient.getDirectStreamUrl(itemToPlay.ratingKey);
+    if (!streamInfo) {
+      await interaction.editReply('❌ Could not get stream URL');
+      return;
+    }
+    
+    // Start playback
+    const videoStreamer = getVideoStreamer();
+    const guildId = interaction.guildId!;
+    
+    const embed = new EmbedBuilder()
+      .setTitle('▶️ Now Playing')
+      .setDescription(`**${itemToPlay.title}**`)
+      .setColor(0x00ff00);
+    
+    await interaction.editReply({ embeds: [embed] });
+    
+    await videoStreamer.startStream(
+      guildId,
+      voiceChannel.id,
+      itemToPlay,
+      streamInfo.url,
+      0,
+      interaction.user.id
+    );
+    
+    // Clean up state
+    playEnhancedState.delete(userId);
+    
+  } catch (error: any) {
+    console.error('[Controller] Play enhanced error:', error);
+    await interaction.editReply(`❌ Error: ${error.message}`);
   }
 }
 
@@ -2005,56 +2228,6 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       await interaction.editReply(`⏭️ Skipped to: ${nextEpisode.title}`);
       break;
     }
-    // Season pagination buttons
-    case 'season_prev': {
-      const session = paginationSessions.get(interaction.user.id);
-      if (!session || session.type !== 'seasons') {
-        await interaction.reply({ content: '❌ Session expired', ephemeral: true });
-        return;
-      }
-      const newPage = Math.max(0, session.currentPage - 1);
-      session.currentPage = newPage;
-      await interaction.deferUpdate();
-      await showSeasonsPage(interaction, newPage);
-      break;
-    }
-    case 'season_next': {
-      const session = paginationSessions.get(interaction.user.id);
-      if (!session || session.type !== 'seasons') {
-        await interaction.reply({ content: '❌ Session expired', ephemeral: true });
-        return;
-      }
-      const newPage = Math.min(session.currentPage + 1, Math.ceil(session.items.length / 25) - 1);
-      session.currentPage = newPage;
-      await interaction.deferUpdate();
-      await showSeasonsPage(interaction, newPage);
-      break;
-    }
-    // Episode pagination buttons
-    case 'episode_prev': {
-      const session = paginationSessions.get(interaction.user.id);
-      if (!session || session.type !== 'episodes') {
-        await interaction.reply({ content: '❌ Session expired', ephemeral: true });
-        return;
-      }
-      const newPage = Math.max(0, session.currentPage - 1);
-      session.currentPage = newPage;
-      await interaction.deferUpdate();
-      await showEpisodesPage(interaction, newPage);
-      break;
-    }
-    case 'episode_next': {
-      const session = paginationSessions.get(interaction.user.id);
-      if (!session || session.type !== 'episodes') {
-        await interaction.reply({ content: '❌ Session expired', ephemeral: true });
-        return;
-      }
-      const newPage = Math.min(session.currentPage + 1, Math.ceil(session.items.length / 25) - 1);
-      session.currentPage = newPage;
-      await interaction.deferUpdate();
-      await showEpisodesPage(interaction, newPage);
-      break;
-    }
     default: {
       // Handle YouTube play buttons
       if (interaction.customId.startsWith('yt_play_')) {
@@ -2330,81 +2503,26 @@ async function showEpisodeSelector(
     return;
   }
 
-  // Store pagination state
-  paginationSessions.set(interaction.user.id, {
-    type: 'seasons',
-    show,
-    currentPage: 0,
-    items: seasons,
-    timestamp: Date.now()
-  });
-
-  await showSeasonsPage(interaction, 0);
-}
-
-async function showSeasonsPage(interaction: StringSelectMenuInteraction | ButtonInteraction, page: number): Promise<void> {
-  const session = paginationSessions.get(interaction.user.id);
-  if (!session || session.type !== 'seasons') {
-    await interaction.editReply('❌ Session expired');
-    return;
-  }
-
-  const seasons = session.items;
-  const itemsPerPage = 25;
-  const startIndex = page * itemsPerPage;
-  const endIndex = Math.min(startIndex + itemsPerPage, seasons.length);
-  const pageSeasons = seasons.slice(startIndex, endIndex);
-
-  // Show seasons selector with pagination
+  // Show seasons selector
   const embed = new EmbedBuilder()
-    .setTitle(`📺 ${session.show.title}`)
-    .setDescription(`Select a season to view episodes (Page ${page + 1}/${Math.ceil(seasons.length / itemsPerPage)})`)
+    .setTitle(`📺 ${show.title}`)
+    .setDescription('Select a season to view episodes')
     .setColor(0xe5a00d);
 
-  const seasonOptions = pageSeasons.map(season => ({
+  const seasonOptions = seasons.slice(0, 25).map(season => ({
     label: `Season ${season.index || 1}`,
     description: season.childCount ? `${season.childCount} episodes` : 'Unknown episodes',
     value: `${season.ratingKey}_${season.index || 1}`,
   }));
 
   const seasonSelect = new StringSelectMenuBuilder()
-    .setCustomId(`season_select_${session.show.ratingKey}`)
+    .setCustomId(`season_select_${show.ratingKey}`)
     .setPlaceholder('Select a season...')
     .addOptions(seasonOptions);
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(seasonSelect);
 
-  // Add pagination buttons if needed
-  const components: any[] = [row];
-  if (seasons.length > itemsPerPage) {
-    const buttonRow = new ActionRowBuilder<ButtonBuilder>();
-    
-    // Previous button
-    const prevButton = new ButtonBuilder()
-      .setCustomId('season_prev')
-      .setEmoji('⬅️')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(page === 0);
-    
-    // Next button  
-    const nextButton = new ButtonBuilder()
-      .setCustomId('season_next')
-      .setEmoji('➡️')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(endIndex >= seasons.length);
-    
-    // Page indicator button (disabled)
-    const pageButton = new ButtonBuilder()
-      .setCustomId('season_page')
-      .setLabel(`${page + 1}/${Math.ceil(seasons.length / itemsPerPage)}`)
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(true);
-    
-    buttonRow.addComponents(prevButton, pageButton, nextButton);
-    components.push(buttonRow);
-  }
-
-  await interaction.editReply({ embeds: [embed], components });
+  await interaction.editReply({ embeds: [embed], components: [row] });
 }
 
 async function showEpisodesForSeason(
@@ -2422,84 +2540,25 @@ async function showEpisodesForSeason(
     return;
   }
 
-  // Store pagination state
-  paginationSessions.set(interaction.user.id, {
-    type: 'episodes',
-    show,
-    seasonIndex,
-    currentPage: 0,
-    items: episodes,
-    timestamp: Date.now()
-  });
-
-  await showEpisodesPage(interaction, 0);
-}
-
-async function showEpisodesPage(interaction: StringSelectMenuInteraction | ButtonInteraction, page: number): Promise<void> {
-  const session = paginationSessions.get(interaction.user.id);
-  if (!session || session.type !== 'episodes') {
-    await interaction.editReply('❌ Session expired');
-    return;
-  }
-
-  const episodes = session.items;
-  const itemsPerPage = 25;
-  const startIndex = page * itemsPerPage;
-  const endIndex = Math.min(startIndex + itemsPerPage, episodes.length);
-  const pageEpisodes = episodes.slice(startIndex, endIndex);
-
   const embed = new EmbedBuilder()
-    .setTitle(`📺 ${session.show.title}`)
-    .setDescription(`Select an episode to play\n\n**Season ${session.seasonIndex}** (Page ${page + 1}/${Math.ceil(episodes.length / itemsPerPage)})`)
+    .setTitle(`📺 ${show.title}`)
+    .setDescription(`Select an episode to play\n\n**Season ${seasonIndex}**`)
     .setColor(0xe5a00d);
 
-  const episodeOptions = pageEpisodes.map(ep => ({
+  const episodeOptions = episodes.slice(0, 25).map(ep => ({
     label: `E${String(ep.index).padStart(2, '0')}: ${ep.title}`.substring(0, 100),
     description: ep.duration ? formatPlexDuration(ep.duration) : undefined,
-    value: `${session.seasonIndex}_${ep.index}`,
+    value: `${seasonIndex}_${ep.index}`,
   }));
 
   const episodeSelect = new StringSelectMenuBuilder()
-    .setCustomId(`episode_select_${session.show.ratingKey}`)
+    .setCustomId(`episode_select_${show.ratingKey}`)
     .setPlaceholder('Select an episode...')
     .addOptions(episodeOptions);
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(episodeSelect);
 
-  // Add pagination buttons if needed
-  const components: any[] = [row];
-  if (episodes.length > itemsPerPage) {
-    const buttonRow = new ActionRowBuilder<ButtonBuilder>();
-    
-    // Previous button
-    const prevButton = new ButtonBuilder()
-      .setCustomId('episode_prev')
-      .setEmoji('⬅️')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(page === 0);
-    
-    // Next button  
-    const nextButton = new ButtonBuilder()
-      .setCustomId('episode_next')
-      .setEmoji('➡️')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(endIndex >= episodes.length);
-    
-    // Page indicator button (disabled)
-    const pageButton = new ButtonBuilder()
-      .setCustomId('episode_page')
-      .setLabel(`${page + 1}/${Math.ceil(episodes.length / itemsPerPage)}`)
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(true);
-    
-    buttonRow.addComponents(prevButton, pageButton, nextButton);
-    components.push(buttonRow);
-  }
-
-  await interaction.editReply({ 
-    embeds: [embed],
-    components
-  });
+  await interaction.editReply({ embeds: [embed], components: [row] });
 }
 
 function createProgressBar(percent: number): string {
@@ -3485,207 +3544,6 @@ async function handleCleanup(interaction: ChatInputCommandInteraction): Promise<
   } catch (error) {
     console.error('[Controller] Error in handleCleanup:', error);
     await interaction.editReply('❌ Failed to cleanup watched videos');
-  }
-}
-
-// Store autocomplete state per user
-const autocompleteState = new Map<string, {
-  selectedMedia?: MediaItem;
-  selectedSeason?: any;
-  timestamp: number;
-}>();
-
-async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
-  const focusedOption = interaction.options.getFocused(true);
-  const searchValue = interaction.options.getString('search');
-  const seasonValue = interaction.options.getString('season');
-  
-  console.log(`[Autocomplete] Focused: ${focusedOption.name}, Search: "${searchValue}", Season: "${seasonValue}"`);
-  
-  try {
-    if (focusedOption.name === 'search') {
-      // Search for media
-      const query = focusedOption.value.toLowerCase();
-      console.log(`[Autocomplete] Searching for: "${query}"`);
-      const results = await plexClient.search(query);
-      
-      const choices = results.slice(0, 25).map(item => ({
-        name: `${item.title}${item.year ? ` (${item.year})` : ''}`,
-        value: item.ratingKey,
-      }));
-      
-      console.log(`[Autocomplete] Found ${results.length} results, returning ${choices.length} choices`);
-      await interaction.respond(choices);
-    } else if (focusedOption.name === 'season') {
-      // Show seasons for selected media - use the ratingKey from search value
-      console.log(`[Autocomplete] Getting seasons for ratingKey: "${searchValue}"`);
-      
-      if (!searchValue) {
-        console.log('[Autocomplete] No search value, returning empty');
-        await interaction.respond([]);
-        return;
-      }
-      
-      // Get media directly by ratingKey instead of searching
-      const mediaItem = await plexClient.getMetadata(searchValue);
-      
-      console.log(`[Autocomplete] Found media: ${mediaItem?.title}, type: ${mediaItem?.type}`);
-      
-      if (!mediaItem || mediaItem.type !== 'show') {
-        console.log('[Autocomplete] Not a TV show, returning empty seasons');
-        await interaction.respond([]);
-        return;
-      }
-      
-      // Update state with selected media
-      autocompleteState.set(interaction.user.id, {
-        selectedMedia: mediaItem,
-        timestamp: Date.now()
-      });
-      
-      const seasons = await plexClient.getSeasons(mediaItem.ratingKey);
-      console.log(`[Autocomplete] Found ${seasons.length} seasons`);
-      
-      const query = focusedOption.value.toLowerCase();
-      
-      // If query is empty, show all seasons; otherwise filter
-      const filtered = query === '' ? seasons : seasons.filter(season => 
-        season.index?.toString().includes(query) ||
-        `season ${season.index}`.includes(query)
-      );
-      
-      const choices = filtered.slice(0, 25).map(season => ({
-        name: `Season ${season.index || 1}`,
-        value: season.index?.toString() || '1',
-      }));
-      
-      console.log(`[Autocomplete] Returning ${choices.length} season choices`);
-      await interaction.respond(choices);
-    } else if (focusedOption.name === 'episode') {
-      // Show episodes for selected season - use ratingKey from search
-      console.log(`[Autocomplete] Getting episodes for ratingKey: "${searchValue}", season: "${seasonValue}"`);
-      
-      if (!searchValue) {
-        console.log('[Autocomplete] No search value, returning empty');
-        await interaction.respond([]);
-        return;
-      }
-      
-      // Get media directly by ratingKey
-      const mediaItem = await plexClient.getMetadata(searchValue);
-      
-      console.log(`[Autocomplete] Found media: ${mediaItem?.title}, type: ${mediaItem?.type}`);
-      
-      if (!mediaItem || mediaItem.type !== 'show') {
-        console.log('[Autocomplete] Not a TV show, returning empty episodes');
-        await interaction.respond([]);
-        return;
-      }
-      
-      // Get season number
-      const targetSeason = seasonValue ? parseInt(seasonValue, 10) : 1;
-      const seasons = await plexClient.getSeasons(mediaItem.ratingKey);
-      const selectedSeason = seasons.find(s => (s.index || 1) === targetSeason) || seasons[0];
-      
-      console.log(`[Autocomplete] Target season: ${targetSeason}, selected season index: ${selectedSeason?.index}`);
-      
-      // Update state
-      autocompleteState.set(interaction.user.id, {
-        selectedMedia: mediaItem,
-        selectedSeason,
-        timestamp: Date.now()
-      });
-      
-      const allEpisodes = await plexClient.getEpisodes(mediaItem.ratingKey);
-      const episodes = allEpisodes.filter(ep => (ep.parentIndex || 0) === (selectedSeason.index || 1));
-      
-      console.log(`[Autocomplete] Found ${episodes.length} episodes for season ${selectedSeason.index}`);
-      
-      const query = focusedOption.value.toLowerCase();
-      
-      // If query is empty, show all episodes; otherwise filter
-      const filtered = query === '' ? episodes : episodes.filter(ep => 
-        ep.index?.toString().includes(query) ||
-        ep.title.toLowerCase().includes(query)
-      );
-      
-      const choices = filtered.slice(0, 25).map(ep => ({
-        name: `E${String(ep.index).padStart(2, '0')}: ${ep.title}`,
-        value: ep.index?.toString() || '1',
-      }));
-      
-      console.log(`[Autocomplete] Returning ${choices.length} episode choices`);
-      await interaction.respond(choices);
-    }
-  } catch (error) {
-    console.error('[Controller] Autocomplete error:', error);
-    await interaction.respond([]);
-  }
-}
-
-async function handlePlayEnhanced(interaction: ChatInputCommandInteraction): Promise<void> {
-  const searchQuery = interaction.options.getString('search', true);
-  const seasonNum = interaction.options.getString('season');
-  const episodeNum = interaction.options.getString('episode');
-  
-  await interaction.deferReply();
-  
-  try {
-    // Get media directly by ratingKey (the search value should be a ratingKey)
-    const mediaItem = await plexClient.getMetadata(searchQuery);
-    if (!mediaItem) {
-      await interaction.editReply('❌ Media not found');
-      return;
-    }
-    
-    // Store state for autocomplete
-    autocompleteState.set(interaction.user.id, {
-      selectedMedia: mediaItem,
-      timestamp: Date.now()
-    });
-    
-    // Build episode string like handleSelectMenu does
-    let episodeStr = '';
-    if (mediaItem.type === 'show' && (seasonNum || episodeNum)) {
-      let targetSeason = 1;
-      let targetEpisode = 1;
-      
-      if (seasonNum) {
-        targetSeason = parseInt(seasonNum, 10);
-      }
-      
-      if (episodeNum) {
-        targetEpisode = parseInt(episodeNum, 10);
-      }
-      
-      // Get seasons for state (needed for autocomplete)
-      const seasons = await plexClient.getSeasons(mediaItem.ratingKey);
-      const selectedSeason = seasons.find(s => (s.index || 1) === targetSeason) || seasons[0];
-      
-      // Update state with selected season (needed for autocomplete)
-      autocompleteState.set(interaction.user.id, {
-        selectedMedia: mediaItem,
-        selectedSeason,
-        timestamp: Date.now()
-      });
-      
-      // Verify episode exists before trying to play
-      const episode = await plexClient.getEpisode(mediaItem.ratingKey, targetSeason, targetEpisode);
-      if (!episode) {
-        await interaction.editReply(`❌ Episode S${String(targetSeason).padStart(2, '0')}E${String(targetEpisode).padStart(2, '0')} not found`);
-        return;
-      }
-      
-      episodeStr = `S${targetSeason}E${targetEpisode}`;
-    }
-    
-    // Pass the show object with episode string, just like handleSelectMenu does
-    // startPlayback will handle fetching the episode itself
-    await startPlayback(interaction, mediaItem, episodeStr);
-    
-  } catch (error) {
-    console.error('[Controller] Enhanced play error:', error);
-    await interaction.editReply('❌ Failed to play media');
   }
 }
 

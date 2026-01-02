@@ -7,7 +7,7 @@ import { startWebServer } from '../web/server.js';
 export const client = new Client({
 });
 
-client.on('clientReady', async () => {
+client.on('ready', async () => {
   console.log(`[SchroStream] Logged in as ${client.user?.tag}`);
   console.log(`[SchroStream] Prefix: ${config.discord.prefix}`);
   
