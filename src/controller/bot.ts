@@ -3642,9 +3642,10 @@ async function handlePlayEnhanced(interaction: ChatInputCommandInteraction): Pro
       timestamp: Date.now()
     });
     
-    // Build episode string like the regular /play command expects
-    let episodeStr = '';
-    if (mediaItem.type === 'show' && (seasonNum || episodeNum)) {
+    let itemToPlay = mediaItem;
+    
+    // Handle TV show episode selection
+    if (mediaItem.type === 'show') {
       let targetSeason = 1;
       let targetEpisode = 1;
       
@@ -3656,11 +3657,35 @@ async function handlePlayEnhanced(interaction: ChatInputCommandInteraction): Pro
         targetEpisode = parseInt(episodeNum, 10);
       }
       
-      episodeStr = `S${targetSeason}E${targetEpisode}`;
+      // Get seasons for state
+      const seasons = await plexClient.getSeasons(mediaItem.ratingKey);
+      const selectedSeason = seasons.find(s => (s.index || 1) === targetSeason) || seasons[0];
+      
+      // Update state
+      autocompleteState.set(interaction.user.id, {
+        selectedMedia: mediaItem,
+        selectedSeason,
+        timestamp: Date.now()
+      });
+      
+      const episode = await plexClient.getEpisode(mediaItem.ratingKey, targetSeason, targetEpisode);
+      if (!episode) {
+        await interaction.editReply(`❌ Episode S${String(targetSeason).padStart(2, '0')}E${String(targetEpisode).padStart(2, '0')} not found`);
+        return;
+      }
+      itemToPlay = episode;
+    }
+    
+    // Build episode string like the regular /play command expects
+    let episodeStr = '';
+    if (itemToPlay.type === 'episode') {
+      const season = itemToPlay.parentIndex || 1;
+      const episode = itemToPlay.index || 1;
+      episodeStr = `S${season}E${episode}`;
     }
     
     // Use the same startPlayback function that works in handleSelectMenu
-    await startPlayback(interaction, mediaItem, episodeStr);
+    await startPlayback(interaction, itemToPlay, episodeStr);
     
   } catch (error) {
     console.error('[Controller] Enhanced play error:', error);
