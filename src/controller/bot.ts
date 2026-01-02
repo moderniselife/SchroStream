@@ -686,22 +686,31 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
         return;
       }
       
+      // Clear seasons cache if media changed
+      if (state.selectedMedia?.ratingKey !== media.ratingKey) {
+        console.log(`[Autocomplete] Media changed, clearing seasons cache`);
+        state.seasons = undefined;
+        state.episodes = undefined;
+      }
+      
+      state.selectedMedia = media;
       state.selectedSeason = seasonNum;
       state.timestamp = Date.now();
       
-      // Fetch seasons if not cached
-      if (!state.seasons || state.seasons.length === 0) {
-        state.seasons = await plexClient.getSeasons(media.ratingKey);
-        console.log(`[Autocomplete] Fetched ${state.seasons.length} seasons`);
-      }
+      // Always fetch seasons fresh to ensure correct data
+      console.log(`[Autocomplete] Fetching seasons for ${media.title} (${media.ratingKey})`);
+      state.seasons = await plexClient.getSeasons(media.ratingKey);
+      console.log(`[Autocomplete] Fetched ${state.seasons.length} seasons: ${state.seasons.map(s => s.index).join(', ')}`);
       
       // Find the season
       const season = state.seasons?.find(s => s.index === seasonNum);
       if (!season) {
-        console.log(`[Autocomplete] Season ${seasonNum} not found in seasons:`, state.seasons?.map(s => s.index));
-        await interaction.respond([{ name: `Season ${seasonNum} not found`, value: 0 }]);
+        console.log(`[Autocomplete] Season ${seasonNum} not found in seasons`);
+        await interaction.respond([{ name: `Season ${seasonNum} not found (have: ${state.seasons.map(s => s.index).join(', ')})`, value: 0 }]);
         return;
       }
+      
+      console.log(`[Autocomplete] Found season ${seasonNum} with ratingKey: ${season.ratingKey}`);
       
       // Get episodes
       const episodes = await plexClient.getEpisodes(season.ratingKey);
