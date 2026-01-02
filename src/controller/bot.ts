@@ -630,19 +630,45 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       
     } else if (focusedOption.name === 'episode') {
       const seasonNum = interaction.options.getInteger('season');
+      const mediaValue = interaction.options.getString('media');
       
-      if (!seasonNum || !state.selectedMedia) {
+      if (!seasonNum) {
         await interaction.respond([{ name: 'Select a season first', value: 0 }]);
+        return;
+      }
+      
+      if (!mediaValue) {
+        await interaction.respond([{ name: 'Select a show first', value: 0 }]);
+        return;
+      }
+      
+      // Get media from session if not in state
+      const [indexStr, ratingKey] = mediaValue.split(':');
+      const session = searchSessions.get(userId);
+      let media = state.selectedMedia;
+      
+      if (!media && session) {
+        media = session.results.find(r => r.ratingKey === ratingKey);
+        if (media) state.selectedMedia = media;
+      }
+      
+      if (!media) {
+        await interaction.respond([{ name: 'Search for a show first', value: 0 }]);
         return;
       }
       
       state.selectedSeason = seasonNum;
       state.timestamp = Date.now();
       
+      // Fetch seasons if not cached
+      if (!state.seasons || state.seasons.length === 0) {
+        state.seasons = await plexClient.getSeasons(media.ratingKey);
+      }
+      
       // Find the season
       const season = state.seasons?.find(s => s.index === seasonNum);
       if (!season) {
-        await interaction.respond([{ name: 'Season not found', value: 0 }]);
+        await interaction.respond([{ name: `Season ${seasonNum} not found`, value: 0 }]);
         return;
       }
       
