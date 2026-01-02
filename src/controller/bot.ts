@@ -632,6 +632,8 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       const seasonNum = interaction.options.getInteger('season');
       const mediaValue = interaction.options.getString('media');
       
+      console.log(`[Autocomplete] Episode - seasonNum: ${seasonNum}, mediaValue: ${mediaValue}`);
+      
       if (!seasonNum) {
         await interaction.respond([{ name: 'Select a season first', value: 0 }]);
         return;
@@ -642,18 +644,45 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
         return;
       }
       
-      // Get media from session if not in state
-      const [indexStr, ratingKey] = mediaValue.split(':');
-      const session = searchSessions.get(userId);
+      // Try to get media - first from state, then from session by ratingKey, then by searching
       let media = state.selectedMedia;
       
-      if (!media && session) {
-        media = session.results.find(r => r.ratingKey === ratingKey);
-        if (media) state.selectedMedia = media;
+      if (!media) {
+        // Try parsing the value format "index:ratingKey"
+        const parts = mediaValue.split(':');
+        if (parts.length >= 2) {
+          const ratingKey = parts[1];
+          const session = searchSessions.get(userId);
+          if (session) {
+            media = session.results.find(r => r.ratingKey === ratingKey);
+          }
+          // Also try direct Plex lookup
+          if (!media) {
+            const plexMedia = await plexClient.getMetadata(ratingKey);
+            if (plexMedia) media = plexMedia;
+          }
+        }
+        
+        // Fallback: Search by title extracted from display value
+        if (!media) {
+          // Extract title from display format like "📺 South Park (1997)"
+          const titleMatch = mediaValue.match(/[📺🎬]\s*(.+?)(?:\s*\(\d{4}\))?$/);
+          const searchTitle = titleMatch ? titleMatch[1].trim() : mediaValue.replace(/[📺🎬]/g, '').trim();
+          console.log(`[Autocomplete] Searching by title: ${searchTitle}`);
+          
+          const searchResults = await plexClient.search(searchTitle);
+          media = searchResults.find(r => r.type === 'show');
+        }
+        
+        if (media) {
+          state.selectedMedia = media;
+          console.log(`[Autocomplete] Found media: ${media.title} (${media.ratingKey})`);
+        }
       }
       
       if (!media) {
-        await interaction.respond([{ name: 'Search for a show first', value: 0 }]);
+        console.log(`[Autocomplete] Could not find media for: ${mediaValue}`);
+        await interaction.respond([{ name: 'Could not find show - try searching again', value: 0 }]);
         return;
       }
       
@@ -663,11 +692,13 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       // Fetch seasons if not cached
       if (!state.seasons || state.seasons.length === 0) {
         state.seasons = await plexClient.getSeasons(media.ratingKey);
+        console.log(`[Autocomplete] Fetched ${state.seasons.length} seasons`);
       }
       
       // Find the season
       const season = state.seasons?.find(s => s.index === seasonNum);
       if (!season) {
+        console.log(`[Autocomplete] Season ${seasonNum} not found in seasons:`, state.seasons?.map(s => s.index));
         await interaction.respond([{ name: `Season ${seasonNum} not found`, value: 0 }]);
         return;
       }
@@ -675,6 +706,7 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       // Get episodes
       const episodes = await plexClient.getEpisodes(season.ratingKey);
       state.episodes = episodes;
+      console.log(`[Autocomplete] Found ${episodes.length} episodes for season ${seasonNum}`);
       
       // Filter based on what user typed
       const filterValue = String(focusedOption.value || '');
