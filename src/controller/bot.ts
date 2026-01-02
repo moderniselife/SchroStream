@@ -3645,8 +3645,35 @@ async function handlePlayEnhanced(interaction: ChatInputCommandInteraction): Pro
     // Build episode string like handleSelectMenu does
     let episodeStr = '';
     if (mediaItem.type === 'show' && (seasonNum || episodeNum)) {
-      let targetSeason = seasonNum ? parseInt(seasonNum, 10) : 1;
-      let targetEpisode = episodeNum ? parseInt(episodeNum, 10) : 1;
+      let targetSeason = 1;
+      let targetEpisode = 1;
+      
+      if (seasonNum) {
+        targetSeason = parseInt(seasonNum, 10);
+      }
+      
+      if (episodeNum) {
+        targetEpisode = parseInt(episodeNum, 10);
+      }
+      
+      // Get seasons for state (needed for autocomplete)
+      const seasons = await plexClient.getSeasons(mediaItem.ratingKey);
+      const selectedSeason = seasons.find(s => (s.index || 1) === targetSeason) || seasons[0];
+      
+      // Update state with selected season (needed for autocomplete)
+      autocompleteState.set(interaction.user.id, {
+        selectedMedia: mediaItem,
+        selectedSeason,
+        timestamp: Date.now()
+      });
+      
+      // Verify episode exists before trying to play
+      const episode = await plexClient.getEpisode(mediaItem.ratingKey, targetSeason, targetEpisode);
+      if (!episode) {
+        await interaction.editReply(`❌ Episode S${String(targetSeason).padStart(2, '0')}E${String(targetEpisode).padStart(2, '0')} not found`);
+        return;
+      }
+      
       episodeStr = `S${targetSeason}E${targetEpisode}`;
     }
     
