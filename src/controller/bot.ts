@@ -3642,10 +3642,9 @@ async function handlePlayEnhanced(interaction: ChatInputCommandInteraction): Pro
       timestamp: Date.now()
     });
     
-    let itemToPlay = mediaItem;
-    
-    // Handle TV show episode selection
-    if (mediaItem.type === 'show') {
+    // Build episode string like the regular /play command expects
+    let episodeStr = '';
+    if (mediaItem.type === 'show' && (seasonNum || episodeNum)) {
       let targetSeason = 1;
       let targetEpisode = 1;
       
@@ -3657,66 +3656,11 @@ async function handlePlayEnhanced(interaction: ChatInputCommandInteraction): Pro
         targetEpisode = parseInt(episodeNum, 10);
       }
       
-      // Get seasons for state
-      const seasons = await plexClient.getSeasons(mediaItem.ratingKey);
-      const selectedSeason = seasons.find(s => (s.index || 1) === targetSeason) || seasons[0];
-      
-      // Update state
-      autocompleteState.set(interaction.user.id, {
-        selectedMedia: mediaItem,
-        selectedSeason,
-        timestamp: Date.now()
-      });
-      
-      const episode = await plexClient.getEpisode(mediaItem.ratingKey, targetSeason, targetEpisode);
-      if (!episode) {
-        await interaction.editReply(`❌ Episode S${String(targetSeason).padStart(2, '0')}E${String(targetEpisode).padStart(2, '0')} not found`);
-        return;
-      }
-      itemToPlay = episode;
+      episodeStr = `S${targetSeason}E${targetEpisode}`;
     }
     
-    // Trigger the main bot's play command instead of using VideoStreamer directly
-    const selfbot = selfbotClient;
-    const guild = selfbot.guilds.cache.get(interaction.guildId!);
-    const channel = guild?.channels.cache.get(interaction.channelId!) as any;
-    
-    if (!selfbot || !guild || !channel || !('send' in channel)) {
-      await interaction.editReply('❌ Could not access main bot');
-      return;
-    }
-    
-    // Find the media item in search results to get the number
-    const searchResults = await plexClient.search(mediaItem.title);
-    const mediaIndex = searchResults.findIndex(item => item.ratingKey === mediaItem.ratingKey);
-    
-    if (mediaIndex === -1) {
-      await interaction.editReply('❌ Could not find media in search results');
-      return;
-    }
-    
-    // Build the command arguments
-    let commandArgs = [String(mediaIndex + 1)];
-    
-    if (itemToPlay.type === 'episode') {
-      const season = itemToPlay.parentIndex || 1;
-      const episode = itemToPlay.index || 1;
-      commandArgs.push(`S${season}E${episode}`);
-    }
-    
-    // Send the play command to trigger the main bot
-    const commandText = `!play ${commandArgs.join(' ')}`;
-    await channel.send(commandText);
-    
-    // Update the interaction reply
-    let title = itemToPlay.title;
-    if (itemToPlay.type === 'episode' && itemToPlay.grandparentTitle) {
-      const season = itemToPlay.parentIndex ? `S${String(itemToPlay.parentIndex).padStart(2, '0')}` : '';
-      const episode = itemToPlay.index ? `E${String(itemToPlay.index).padStart(2, '0')}` : '';
-      title = `${itemToPlay.grandparentTitle} ${season}${episode} - ${itemToPlay.title}`;
-    }
-    
-    await interaction.editReply(`🎬 **Queued for playback:** ${title}\n\n*Triggering main bot to start streaming...*`);
+    // Use the same startPlayback function that works in handleSelectMenu
+    await startPlayback(interaction, mediaItem, episodeStr);
     
   } catch (error) {
     console.error('[Controller] Enhanced play error:', error);
