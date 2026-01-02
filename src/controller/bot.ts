@@ -30,6 +30,16 @@ const youtubeSearchSessions = new Map<string, { results: any[], timestamp: numbe
 const youtubeSearchPages = new Map<string, { page: number }>();
 const SESSION_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 
+// Store pagination state per user
+const paginationSessions = new Map<string, { 
+  type: 'seasons' | 'episodes',
+  show: MediaItem,
+  seasonIndex?: number,
+  currentPage: number,
+  items: any[],
+  timestamp: number 
+}>();
+
 interface YouTubeSearchResult {
   id: string;
   title: string;
@@ -1967,6 +1977,56 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       await interaction.editReply(`⏭️ Skipped to: ${nextEpisode.title}`);
       break;
     }
+    // Season pagination buttons
+    case 'season_prev': {
+      const session = paginationSessions.get(interaction.user.id);
+      if (!session || session.type !== 'seasons') {
+        await interaction.reply({ content: '❌ Session expired', ephemeral: true });
+        return;
+      }
+      const newPage = Math.max(0, session.currentPage - 1);
+      session.currentPage = newPage;
+      await interaction.deferUpdate();
+      await showSeasonsPage(interaction, newPage);
+      break;
+    }
+    case 'season_next': {
+      const session = paginationSessions.get(interaction.user.id);
+      if (!session || session.type !== 'seasons') {
+        await interaction.reply({ content: '❌ Session expired', ephemeral: true });
+        return;
+      }
+      const newPage = Math.min(session.currentPage + 1, Math.ceil(session.items.length / 25) - 1);
+      session.currentPage = newPage;
+      await interaction.deferUpdate();
+      await showSeasonsPage(interaction, newPage);
+      break;
+    }
+    // Episode pagination buttons
+    case 'episode_prev': {
+      const session = paginationSessions.get(interaction.user.id);
+      if (!session || session.type !== 'episodes') {
+        await interaction.reply({ content: '❌ Session expired', ephemeral: true });
+        return;
+      }
+      const newPage = Math.max(0, session.currentPage - 1);
+      session.currentPage = newPage;
+      await interaction.deferUpdate();
+      await showEpisodesPage(interaction, newPage);
+      break;
+    }
+    case 'episode_next': {
+      const session = paginationSessions.get(interaction.user.id);
+      if (!session || session.type !== 'episodes') {
+        await interaction.reply({ content: '❌ Session expired', ephemeral: true });
+        return;
+      }
+      const newPage = Math.min(session.currentPage + 1, Math.ceil(session.items.length / 25) - 1);
+      session.currentPage = newPage;
+      await interaction.deferUpdate();
+      await showEpisodesPage(interaction, newPage);
+      break;
+    }
     default: {
       // Handle YouTube play buttons
       if (interaction.customId.startsWith('yt_play_')) {
@@ -2242,26 +2302,81 @@ async function showEpisodeSelector(
     return;
   }
 
-  // Show seasons selector
+  // Store pagination state
+  paginationSessions.set(interaction.user.id, {
+    type: 'seasons',
+    show,
+    currentPage: 0,
+    items: seasons,
+    timestamp: Date.now()
+  });
+
+  await showSeasonsPage(interaction, 0);
+}
+
+async function showSeasonsPage(interaction: StringSelectMenuInteraction | ButtonInteraction, page: number): Promise<void> {
+  const session = paginationSessions.get(interaction.user.id);
+  if (!session || session.type !== 'seasons') {
+    await interaction.editReply('❌ Session expired');
+    return;
+  }
+
+  const seasons = session.items;
+  const itemsPerPage = 25;
+  const startIndex = page * itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, seasons.length);
+  const pageSeasons = seasons.slice(startIndex, endIndex);
+
+  // Show seasons selector with pagination
   const embed = new EmbedBuilder()
-    .setTitle(`📺 ${show.title}`)
-    .setDescription('Select a season to view episodes')
+    .setTitle(`📺 ${session.show.title}`)
+    .setDescription(`Select a season to view episodes (Page ${page + 1}/${Math.ceil(seasons.length / itemsPerPage)})`)
     .setColor(0xe5a00d);
 
-  const seasonOptions = seasons.slice(0, 25).map(season => ({
+  const seasonOptions = pageSeasons.map(season => ({
     label: `Season ${season.index || 1}`,
     description: season.childCount ? `${season.childCount} episodes` : 'Unknown episodes',
     value: `${season.ratingKey}_${season.index || 1}`,
   }));
 
   const seasonSelect = new StringSelectMenuBuilder()
-    .setCustomId(`season_select_${show.ratingKey}`)
+    .setCustomId(`season_select_${session.show.ratingKey}`)
     .setPlaceholder('Select a season...')
     .addOptions(seasonOptions);
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(seasonSelect);
 
-  await interaction.editReply({ embeds: [embed], components: [row] });
+  // Add pagination buttons if needed
+  const components: any[] = [row];
+  if (seasons.length > itemsPerPage) {
+    const buttonRow = new ActionRowBuilder<ButtonBuilder>();
+    
+    // Previous button
+    const prevButton = new ButtonBuilder()
+      .setCustomId('season_prev')
+      .setEmoji('⬅️')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(page === 0);
+    
+    // Next button  
+    const nextButton = new ButtonBuilder()
+      .setCustomId('season_next')
+      .setEmoji('➡️')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(endIndex >= seasons.length);
+    
+    // Page indicator button (disabled)
+    const pageButton = new ButtonBuilder()
+      .setCustomId('season_page')
+      .setLabel(`${page + 1}/${Math.ceil(seasons.length / itemsPerPage)}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true);
+    
+    buttonRow.addComponents(prevButton, pageButton, nextButton);
+    components.push(buttonRow);
+  }
+
+  await interaction.editReply({ embeds: [embed], components });
 }
 
 async function showEpisodesForSeason(
@@ -2279,25 +2394,84 @@ async function showEpisodesForSeason(
     return;
   }
 
+  // Store pagination state
+  paginationSessions.set(interaction.user.id, {
+    type: 'episodes',
+    show,
+    seasonIndex,
+    currentPage: 0,
+    items: episodes,
+    timestamp: Date.now()
+  });
+
+  await showEpisodesPage(interaction, 0);
+}
+
+async function showEpisodesPage(interaction: StringSelectMenuInteraction | ButtonInteraction, page: number): Promise<void> {
+  const session = paginationSessions.get(interaction.user.id);
+  if (!session || session.type !== 'episodes') {
+    await interaction.editReply('❌ Session expired');
+    return;
+  }
+
+  const episodes = session.items;
+  const itemsPerPage = 25;
+  const startIndex = page * itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, episodes.length);
+  const pageEpisodes = episodes.slice(startIndex, endIndex);
+
   const embed = new EmbedBuilder()
-    .setTitle(`📺 ${show.title}`)
-    .setDescription(`Select an episode to play\n\n**Season ${seasonIndex}**`)
+    .setTitle(`📺 ${session.show.title}`)
+    .setDescription(`Select an episode to play\n\n**Season ${session.seasonIndex}** (Page ${page + 1}/${Math.ceil(episodes.length / itemsPerPage)})`)
     .setColor(0xe5a00d);
 
-  const episodeOptions = episodes.slice(0, 25).map(ep => ({
+  const episodeOptions = pageEpisodes.map(ep => ({
     label: `E${String(ep.index).padStart(2, '0')}: ${ep.title}`.substring(0, 100),
     description: ep.duration ? formatPlexDuration(ep.duration) : undefined,
-    value: `${seasonIndex}_${ep.index}`,
+    value: `${session.seasonIndex}_${ep.index}`,
   }));
 
   const episodeSelect = new StringSelectMenuBuilder()
-    .setCustomId(`episode_select_${show.ratingKey}`)
+    .setCustomId(`episode_select_${session.show.ratingKey}`)
     .setPlaceholder('Select an episode...')
     .addOptions(episodeOptions);
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(episodeSelect);
 
-  await interaction.editReply({ embeds: [embed], components: [row] });
+  // Add pagination buttons if needed
+  const components: any[] = [row];
+  if (episodes.length > itemsPerPage) {
+    const buttonRow = new ActionRowBuilder<ButtonBuilder>();
+    
+    // Previous button
+    const prevButton = new ButtonBuilder()
+      .setCustomId('episode_prev')
+      .setEmoji('⬅️')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(page === 0);
+    
+    // Next button  
+    const nextButton = new ButtonBuilder()
+      .setCustomId('episode_next')
+      .setEmoji('➡️')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(endIndex >= episodes.length);
+    
+    // Page indicator button (disabled)
+    const pageButton = new ButtonBuilder()
+      .setCustomId('episode_page')
+      .setLabel(`${page + 1}/${Math.ceil(episodes.length / itemsPerPage)}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true);
+    
+    buttonRow.addComponents(prevButton, pageButton, nextButton);
+    components.push(buttonRow);
+  }
+
+  await interaction.editReply({ 
+    embeds: [embed],
+    components
+  });
 }
 
 function createProgressBar(percent: number): string {
