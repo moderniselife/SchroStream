@@ -403,7 +403,7 @@ export async function initControllerBot(): Promise<Client | null> {
     }
   });
 
-  controllerBot.once('ready', () => {
+  controllerBot.once('clientReady', () => {
     console.log(`[Controller] Bot ready as ${controllerBot?.user?.tag}`);
     
     // Set full presence (status and activity in one call)

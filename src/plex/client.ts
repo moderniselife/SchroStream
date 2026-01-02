@@ -178,8 +178,11 @@ export class PlexClient {
       console.log('[Plex] No results from standard search, trying comprehensive search...');
       try {
         results = await this.comprehensiveSearch(query);
-      } catch (err) {
-        console.log('[Plex] Comprehensive search failed:', err);
+      } catch (err: any) {
+        // Only log comprehensive search errors at debug level since standard search works
+        if (err.message && !err.message.includes('500')) {
+          console.log('[Plex] Comprehensive search failed:', err);
+        }
       }
     }
 
