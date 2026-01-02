@@ -3517,8 +3517,8 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       console.log(`[Autocomplete] Found ${results.length} results, returning ${choices.length} choices`);
       await interaction.respond(choices);
     } else if (focusedOption.name === 'season') {
-      // Show seasons for selected media - need to find the media from search value
-      console.log(`[Autocomplete] Getting seasons for search: "${searchValue}"`);
+      // Show seasons for selected media - use the ratingKey from search value
+      console.log(`[Autocomplete] Getting seasons for ratingKey: "${searchValue}"`);
       
       if (!searchValue) {
         console.log('[Autocomplete] No search value, returning empty');
@@ -3526,9 +3526,8 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
         return;
       }
       
-      // Search to get the media item
-      const searchResults = await plexClient.search(searchValue);
-      const mediaItem = searchResults[0]; // Use first result
+      // Get media directly by ratingKey instead of searching
+      const mediaItem = await plexClient.getMetadata(searchValue);
       
       console.log(`[Autocomplete] Found media: ${mediaItem?.title}, type: ${mediaItem?.type}`);
       
@@ -3562,8 +3561,8 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       console.log(`[Autocomplete] Returning ${choices.length} season choices`);
       await interaction.respond(choices);
     } else if (focusedOption.name === 'episode') {
-      // Show episodes for selected season - need to get media and season
-      console.log(`[Autocomplete] Getting episodes for search: "${searchValue}", season: "${seasonValue}"`);
+      // Show episodes for selected season - use ratingKey from search
+      console.log(`[Autocomplete] Getting episodes for ratingKey: "${searchValue}", season: "${seasonValue}"`);
       
       if (!searchValue) {
         console.log('[Autocomplete] No search value, returning empty');
@@ -3571,9 +3570,8 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
         return;
       }
       
-      // Get media from search
-      const searchResults = await plexClient.search(searchValue);
-      const mediaItem = searchResults[0];
+      // Get media directly by ratingKey
+      const mediaItem = await plexClient.getMetadata(searchValue);
       
       console.log(`[Autocomplete] Found media: ${mediaItem?.title}, type: ${mediaItem?.type}`);
       
@@ -3631,14 +3629,12 @@ async function handlePlayEnhanced(interaction: ChatInputCommandInteraction): Pro
   await interaction.deferReply();
   
   try {
-    // Search for the media
-    const results = await plexClient.search(searchQuery);
-    if (results.length === 0) {
-      await interaction.editReply('❌ No results found');
+    // Get media directly by ratingKey (the search value should be a ratingKey)
+    const mediaItem = await plexClient.getMetadata(searchQuery);
+    if (!mediaItem) {
+      await interaction.editReply('❌ Media not found');
       return;
     }
-    
-    const mediaItem = results[0]; // Use first result
     
     // Store state for autocomplete
     autocompleteState.set(interaction.user.id, {
