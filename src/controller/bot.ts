@@ -615,12 +615,16 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       const seasons = await plexClient.getSeasons(media.ratingKey);
       state.seasons = seasons;
       
+      // Filter based on what user typed
+      const filterValue = String(focusedOption.value || '');
+      
       const options = seasons
         .filter(season => season.index !== undefined)
         .map(season => ({
           name: `Season ${season.index}`,
           value: season.index as number
-        }));
+        }))
+        .filter(opt => filterValue === '' || String(opt.value).startsWith(filterValue));
       
       await interaction.respond(options.slice(0, 25));
       
@@ -646,12 +650,16 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       const episodes = await plexClient.getEpisodes(season.ratingKey);
       state.episodes = episodes;
       
+      // Filter based on what user typed
+      const filterValue = String(focusedOption.value || '');
+      
       const options = episodes
         .filter(ep => ep.index !== undefined)
         .map(ep => ({
           name: `E${ep.index}: ${ep.title}`.substring(0, 100),
           value: ep.index as number
-        }));
+        }))
+        .filter(opt => filterValue === '' || String(opt.value).startsWith(filterValue));
       
       await interaction.respond(options.slice(0, 25));
     }
