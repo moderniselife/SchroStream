@@ -20,7 +20,7 @@ DOCKER="🐳"
 
 # Configuration
 REMOTE_USER="joseph"
-REMOTE_HOST="schrodingerscopy"
+REMOTE_HOST="192.168.1.124"
 REMOTE_DIR="/home/joseph/SchroStream"
 SSH_PORT=22
 MAIN_REPO_DIR="/Users/josephshenton/SchroStream"

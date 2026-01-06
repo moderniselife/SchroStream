@@ -110,7 +110,7 @@ async function clearBotStatuses(): Promise<void> {
     // Clear selfbot status
     const { client } = await import('../bot/client.js');
     if (client?.user) {
-      await client.user.setActivity(null);
+      await client.user.setActivity(undefined);
     }
     
     console.log('[Status] Cleared bot statuses');
