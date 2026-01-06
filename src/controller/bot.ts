@@ -18,7 +18,7 @@ import {
 } from 'discord.js';
 import config from '../config.js';
 import plexClient from '../plex/client.js';
-import { getVideoStreamer, getPlaybackPosition } from '../stream/video-streamer.js';
+import { getVideoStreamer, getPlaybackPosition, setControllerBot } from '../stream/video-streamer.js';
 import { formatDuration as formatPlexDuration, parseTimeString, getNextEpisode } from '../plex/library.js';
 import type { MediaItem } from '../types/index.js';
 import { client as selfbotClient } from '../bot/client.js';
@@ -405,7 +405,10 @@ export async function initControllerBot(): Promise<Client | null> {
   controllerBot.once('ready', () => {
     console.log(`[Controller] Bot ready as ${controllerBot?.user?.tag}`);
     
-    // Set full presence (status and activity in one call)
+    // Set controller bot instance for presence updates
+    setControllerBot(controllerBot);
+    
+    // Set initial presence
     controllerBot?.user?.setPresence({
       status: 'online',
       activities: [{
