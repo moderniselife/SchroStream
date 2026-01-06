@@ -8,14 +8,6 @@ import config from '../config.js';
 import plexClient from '../plex/client.js';
 import { updateWatchDeck } from '../data/watch-deck.js';
 import { popQueue, peekQueue } from '../data/queue.js';
-import { client as selfbotClient } from '../bot/client.js';
-
-// Controller bot instance (will be set when initialized)
-let controllerBot: any = null;
-
-export function setControllerBot(bot: any): void {
-  controllerBot = bot;
-}
 
 // Playback history file path
 const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
@@ -47,6 +39,110 @@ interface PlaybackHistoryEntry {
 }
 
 let playbackHistory: Map<string, PlaybackHistoryEntry> = new Map();
+
+// Status update timer
+let statusUpdateTimer: NodeJS.Timeout | null = null;
+
+// Function to update bot statuses
+async function updateBotStatuses(session: VideoStreamSession): Promise<void> {
+  try {
+    // Calculate current position
+    const elapsed = Date.now() - session.startedAt;
+    const currentPos = session.isPaused ? session.currentTime : session.currentTime + elapsed;
+    
+    // Format position as MM:SS / HH:MM:SS
+    const formatTime = (ms: number): string => {
+      const seconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      
+      if (hours > 0) {
+        return `${hours}:${String(minutes % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+      }
+      return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+    };
+    
+    const currentPosStr = formatTime(currentPos);
+    const durationStr = session.duration ? formatTime(session.duration) : 'Live';
+    const statusText = `${session.mediaItem.title} (${currentPosStr}${session.duration ? '/' + durationStr : ''})`;
+    
+    // Update controller bot status
+    const { getControllerBot } = await import('../controller/bot.js');
+    const controllerBot = getControllerBot();
+    if (controllerBot?.user) {
+      await controllerBot.user.setPresence({
+        status: 'online',
+        activities: [{
+          name: statusText,
+          type: 0 // PLAYING
+        }]
+      });
+    }
+    
+    // Update selfbot status
+    const { client } = await import('../bot/client.js');
+    if (client?.user) {
+      await client.user.setActivity(statusText, { type: 'PLAYING' });
+    }
+    
+    console.log(`[Status] Updated: ${statusText}`);
+  } catch (error) {
+    console.error('[Status] Failed to update bot statuses:', error);
+  }
+}
+
+// Function to clear bot statuses
+async function clearBotStatuses(): Promise<void> {
+  try {
+    // Clear controller bot status
+    const { getControllerBot } = await import('../controller/bot.js');
+    const controllerBot = getControllerBot();
+    if (controllerBot?.user) {
+      await controllerBot.user.setPresence({
+        status: 'online',
+        activities: [{
+          name: '/help for commands',
+          type: 2 // LISTENING
+        }]
+      });
+    }
+    
+    // Clear selfbot status
+    const { client } = await import('../bot/client.js');
+    if (client?.user) {
+      await client.user.setActivity(null);
+    }
+    
+    console.log('[Status] Cleared bot statuses');
+  } catch (error) {
+    console.error('[Status] Failed to clear bot statuses:', error);
+  }
+}
+
+// Start status update timer
+function startStatusUpdateTimer(session: VideoStreamSession): void {
+  // Clear existing timer
+  if (statusUpdateTimer) {
+    clearInterval(statusUpdateTimer);
+  }
+  
+  // Update immediately
+  updateBotStatuses(session);
+  
+  // Update every 5 seconds
+  statusUpdateTimer = setInterval(() => {
+    updateBotStatuses(session);
+  }, 5000);
+}
+
+// Stop status update timer
+function stopStatusUpdateTimer(): void {
+  if (statusUpdateTimer) {
+    clearInterval(statusUpdateTimer);
+    statusUpdateTimer = null;
+    clearBotStatuses();
+  }
+}
 
 // Load playback history from disk
 function loadPlaybackHistory(): void {
@@ -110,43 +206,6 @@ export function savePlaybackPosition(ratingKey: string, position: number, title?
 export function clearPlaybackPosition(ratingKey: string): void {
   playbackHistory.delete(ratingKey);
   persistPlaybackHistory();
-}
-
-// Update bot presence with now playing information
-export function updateBotPresence(session?: VideoStreamSession): void {
-  const presence = session && !session.isStopping ? {
-    status: 'online' as const,
-    activities: [{
-      name: `${session.isPaused ? '⏸️ Paused' : '▶️ Playing'}: ${session.mediaItem.title} (${formatDuration(session.currentTime)}/${formatDuration(session.duration)})`,
-      type: 0 // PLAYING
-    }]
-  } : {
-    status: 'online' as const,
-    activities: []
-  };
-
-  // Update selfbot presence
-  if (selfbotClient.user) {
-    selfbotClient.user.setPresence(presence);
-  }
-
-  // Update controller bot presence
-  if (controllerBot?.user) {
-    controllerBot.user.setPresence(presence);
-  }
-}
-
-// Format duration in ms to human readable format
-function formatDuration(ms: number): string {
-  const seconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  
-  if (hours > 0) {
-    return `${hours}:${String(minutes % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
-  } else {
-    return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
-  }
 }
 
 class VideoStreamer {
@@ -240,9 +299,9 @@ class VideoStreamer {
     };
 
     this.sessions.set(guildId, session);
-
-    // Update bot presence with now playing
-    updateBotPresence(session);
+    
+    // Start status update timer
+    startStatusUpdateTimer(session);
 
     // Play Live TV channels as external streams to skip Plex transcoding
     if (mediaItem.type === 'channel') {
@@ -283,6 +342,9 @@ class VideoStreamer {
     };
 
     this.sessions.set(guildId, session);
+    
+    // Start status update timer
+    startStatusUpdateTimer(session);
 
     await this.playLocalFile(session);
   }
@@ -324,6 +386,9 @@ class VideoStreamer {
     };
 
     this.sessions.set(guildId, session);
+    
+    // Start status update timer
+    startStatusUpdateTimer(session);
 
     this.playExternalStream(session);
   }
@@ -928,67 +993,28 @@ class VideoStreamer {
         savePlaybackPosition(session.mediaItem.ratingKey, currentPosition);
       }
 
-      this.sessions.delete(session.guildId);
+      // Unregister from web server
+      const { unregisterWebStream } = await import('../web/server.js');
+      unregisterWebStream(guildId);
+
+      // Remove session
+      this.sessions.delete(guildId);
       
-      // Clear bot presence
-      updateBotPresence(undefined);
+      // Stop status update timer
+      stopStatusUpdateTimer();
+    }
 
-// Calculate volume filter (100% = 1.0, 50% = 0.5, 200% = 2.0)
-const volumeMultiplier = (session.volume / 100).toFixed(2);
-
-const frameRate = config.stream.frameRate;
-const gopSize = frameRate * 2; // 2 seconds of keyframes
-  
-ffmpegArgs.push(
-  '-i', actualStreamUrl,
-  // Video output
-  '-c:v', 'libx264',
-  '-preset', 'veryfast',
-  '-tune', 'zerolatency',
-  '-b:v', `${config.stream.maxBitrate}k`,
-  '-maxrate', `${Math.round(config.stream.maxBitrate * 1.5)}k`,
-  '-bufsize', `${config.stream.maxBitrate * 2}k`,
-  '-vf', `scale=${width}:${height}`,
-  '-r', frameRate.toString(),
-  '-g', gopSize.toString(),
-  '-pix_fmt', 'yuv420p',
-  // Audio output with volume filter
-  '-af', `volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`,
-  '-c:a', 'libopus',
-  '-b:a', '320k',
-  '-ar', '48000',
-  '-ac', '2',
-  // Output format
-  '-f', 'matroska',
-  'pipe:1'
-);
-
-console.log('[VideoStreamer] Starting FFmpeg with HLS input...');
-  
-const ffmpeg = spawn('ffmpeg', ffmpegArgs);
-session.ffmpegCommand = ffmpeg;
-
-ffmpeg.stderr.on('data', (data: Buffer) => {
-  const msg = data.toString().trim();
-  if (msg && !msg.includes('frame=')) {
-    console.error('[FFmpeg]', msg);
+    try {
+      this.streamer.stopStream();
+      this.streamer.leaveVoice();
+    } catch {
+      // Ignore disconnect errors
+    }
   }
-});
 
-// Update presence periodically during playback
-const presenceInterval = setInterval(() => {
-  if (session.isPlaying && !session.isStopping) {
-    session.currentTime = this.getCurrentTime(session.guildId);
-    updateBotPresence(session);
-  } else {
-    clearInterval(presenceInterval);
-  }
-}, 5000); // Update every 5 seconds
-
-// Clean up interval when FFmpeg exits
-ffmpeg.on('exit', () => {
-  clearInterval(presenceInterval);
-});
+  async seekStream(guildId: string, timeMs: number): Promise<boolean> {
+    const session = this.sessions.get(guildId);
+    if (!session) return false;
 
     // Check if stream has already ended
     if (!session.isPlaying && !session.isPaused) {
@@ -1159,21 +1185,6 @@ ffmpeg.on('exit', () => {
         }
       });
       
-      // Update presence periodically during external stream playback
-      const presenceInterval = setInterval(() => {
-        if (session.isPlaying && !session.isStopping) {
-          session.currentTime = this.getCurrentTime(session.guildId);
-          updateBotPresence(session);
-        } else {
-          clearInterval(presenceInterval);
-        }
-      }, 5000); // Update every 5 seconds
-      
-      // Clean up interval when FFmpeg exits
-      ffmpeg.on('exit', () => {
-        clearInterval(presenceInterval);
-      });
-      
       session.isPlaying = true;
       session.startedAt = Date.now();
       
@@ -1246,10 +1257,6 @@ ffmpeg.on('exit', () => {
 
       this.streamer.stopStream();
       
-      // Update presence when paused
-      session.isPaused = true;
-      updateBotPresence(session);
-      
       // Save position for later resume
       savePlaybackPosition(session.mediaItem.ratingKey, session.currentTime);
     }
@@ -1274,9 +1281,6 @@ ffmpeg.on('exit', () => {
     session.isPaused = false;
     session.isStopping = false;
     session.startedAt = Date.now();
-    
-    // Update presence when resuming
-    updateBotPresence(session);
 
     // Check if this is a local file
     const isLocalFile = session.streamUrl.startsWith('/') || session.streamUrl.startsWith('./') || session.streamUrl.includes('downloads/');
