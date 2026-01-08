@@ -186,10 +186,10 @@ function startStatusUpdateTimer(session: VideoStreamSession): void {
   // Set initial status without position (for Discord auto-tracking)
   setInitialBotStatuses(session);
   
-  // Update with position every 5 seconds
+  // Update with position every 15 seconds
   statusUpdateTimer = setInterval(() => {
     updateBotStatuses(session);
-  }, 5000);
+  }, 15000);
 }
 
 // Stop status update timer
@@ -938,21 +938,21 @@ class VideoStreamer {
         '-preset', 'ultrafast', // Fastest encoding for less CPU load
         '-tune', 'fastdecode', // Optimize for decoding speed
         '-profile:v', 'baseline', // Most compatible profile
-        '-level', '4.0', // Ensure compatibility
-        '-b:v', `${config.stream.maxBitrate}k`,
-        '-maxrate', `${config.stream.maxBitrate}k`, // Same as bitrate to prevent spikes
-        '-bufsize', `${config.stream.maxBitrate}k`, // Smaller buffer for less latency
-        '-vf', `scale=${width}:${height}:flags=lanczos`,
-        '-r', frameRate.toString(),
-        '-g', '30', // Fixed GOP size for stability
-        '-keyint_min', '30',
+        '-level', '3.1', // Lower level for better compatibility
+        '-b:v', `${Math.floor(config.stream.maxBitrate * 0.8)}k`, // Reduce bitrate slightly
+        '-maxrate', `${Math.floor(config.stream.maxBitrate * 0.8)}k`, // Same as bitrate to prevent spikes
+        '-bufsize', `${Math.floor(config.stream.maxBitrate * 1.5)}k`, // Slightly larger buffer
+        '-vf', `scale=${width}:${height}:flags=bilinear`, // Faster scaling
+        '-r', '30', // Fixed 30fps for consistency
+        '-g', '60', // Larger GOP size for efficiency
+        '-keyint_min', '60',
         '-sc_threshold', '0', // Disable scene change detection
         '-pix_fmt', 'yuv420p',
         '-x264-params', 'nal-hrd=cbr:force-cfr=1', // Constant framerate for stability
-        // Audio output with volume filter
-        '-af', `volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`,
+        // Audio output with volume filter - reduce audio bitrate
+        '-af', `volume=${volumeMultiplier}`,
         '-c:a', 'libopus',
-        '-b:a', '320k',
+        '-b:a', '128k', // Reduced audio bitrate
         '-ar', '48000',
         '-ac', '2',
         // Output format
