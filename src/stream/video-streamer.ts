@@ -932,17 +932,22 @@ class VideoStreamer {
       
       ffmpegArgs.push(
         '-i', actualStreamUrl,
-        // Video output
+        // Video output - optimized for Discord streaming
         '-c:v', 'libx264',
-        '-preset', 'veryfast',
-        '-tune', 'zerolatency',
+        '-preset', 'ultrafast', // Fastest encoding for less CPU load
+        '-tune', 'fastdecode', // Optimize for decoding speed
+        '-profile:v', 'baseline', // Most compatible profile
+        '-level', '4.0', // Ensure compatibility
         '-b:v', `${config.stream.maxBitrate}k`,
-        '-maxrate', `${Math.round(config.stream.maxBitrate * 1.5)}k`,
-        '-bufsize', `${config.stream.maxBitrate * 2}k`,
-        '-vf', `scale=${width}:${height}`,
+        '-maxrate', `${config.stream.maxBitrate}k`, // Same as bitrate to prevent spikes
+        '-bufsize', `${config.stream.maxBitrate}k`, // Smaller buffer for less latency
+        '-vf', `scale=${width}:${height}:flags=lanczos`,
         '-r', frameRate.toString(),
-        '-g', gopSize.toString(),
+        '-g', '30', // Fixed GOP size for stability
+        '-keyint_min', '30',
+        '-sc_threshold', '0', // Disable scene change detection
         '-pix_fmt', 'yuv420p',
+        '-x264-params', 'nal-hrd=cbr:force-cfr=1', // Constant framerate for stability
         // Audio output with volume filter
         '-af', `volume=${volumeMultiplier},speechnorm=e=6:r=0.001:l=1`,
         '-c:a', 'libopus',
