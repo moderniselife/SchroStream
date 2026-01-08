@@ -498,21 +498,21 @@ class VideoStreamer {
         
         console.log(`[VideoStreamer] Re-encoding at ${qualityBitrate}k bitrate for ${height}p video`);
         
+        // NOTE: Do NOT use ultrafast - it causes bitrate spikes and stuttering!
         ffmpegArgs.push(
           '-map', '0:v:0?',
           '-map', '0:a:0?',
           '-c:v', 'libx264',
-          '-preset', 'ultrafast',
-          '-tune', 'fastdecode',
+          '-preset', 'superfast', // superfast prevents bitrate spikes (ultrafast causes stutter!)
+          '-tune', 'zerolatency',
           '-pix_fmt', 'yuv420p',
           '-r', String(config.stream.frameRate),
-          '-g', '30',
-          '-keyint_min', '15',
+          '-g', '50',
+          '-keyint_min', '25',
           '-b:v', `${qualityBitrate}k`,
-          '-maxrate', `${qualityBitrate * 1.5}k`,
+          '-maxrate', `${qualityBitrate}k`,
           '-bufsize', `${qualityBitrate * 2}k`,
-          '-x264-params', 'scenecut=0:lookahead=0',
-          '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=fps=${config.stream.frameRate}:round=up`,
+          '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
@@ -934,25 +934,25 @@ class VideoStreamer {
       ffmpegArgs.push(
         '-i', actualStreamUrl,
         // Video output - optimized for Discord streaming
+        // NOTE: Do NOT use ultrafast - it causes bitrate spikes and stuttering!
         '-c:v', 'libx264',
-        '-preset', 'ultrafast', // Fastest encoding for less CPU load
-        '-tune', 'fastdecode', // Optimize for decoding speed
+        '-preset', 'superfast', // superfast prevents bitrate spikes (ultrafast causes stutter!)
+        '-tune', 'zerolatency', // Low latency for streaming
         '-profile:v', 'baseline', // Most compatible profile
-        '-level', '3.1', // Lower level for better compatibility
-        '-b:v', `${Math.floor(config.stream.maxBitrate * 0.8)}k`, // Reduce bitrate slightly
-        '-maxrate', `${Math.floor(config.stream.maxBitrate * 0.8)}k`, // Same as bitrate to prevent spikes
-        '-bufsize', `${Math.floor(config.stream.maxBitrate * 1.5)}k`, // Slightly larger buffer
-        '-vf', `scale=${width}:${height}:flags=bilinear`, // Faster scaling
-        '-r', '30', // Fixed 30fps for consistency
-        '-g', '60', // Larger GOP size for efficiency
-        '-keyint_min', '60',
+        '-level', '4.0',
+        '-b:v', `${config.stream.maxBitrate}k`,
+        '-maxrate', `${config.stream.maxBitrate}k`,
+        '-bufsize', `${config.stream.maxBitrate * 2}k`,
+        '-vf', `scale=${width}:${height}`,
+        '-r', frameRate.toString(),
+        '-g', '50', // GOP size
+        '-keyint_min', '25',
         '-sc_threshold', '0', // Disable scene change detection
         '-pix_fmt', 'yuv420p',
-        '-x264-params', 'nal-hrd=cbr:force-cfr=1', // Constant framerate for stability
-        // Audio output with volume filter - reduce audio bitrate
+        // Audio output
         '-af', `volume=${volumeMultiplier}`,
         '-c:a', 'libopus',
-        '-b:a', '128k', // Reduced audio bitrate
+        '-b:a', '128k',
         '-ar', '48000',
         '-ac', '2',
         // Output format
