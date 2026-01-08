@@ -374,7 +374,8 @@ class VideoStreamer {
     channelId: string,
     mediaItem: MediaItem,
     filePath: string,
-    userId?: string
+    userId?: string,
+    startTimeMs = 0
   ): Promise<void> {
     await this.stopStream(guildId);
 
@@ -389,7 +390,7 @@ class VideoStreamer {
       isStopping: false,
       isPlaying: false,
       startedAt: Date.now(),
-      currentTime: 0,
+      currentTime: startTimeMs,
       duration: mediaItem.duration || 0,
       volume: 100,
       ffmpegCommand: null,
@@ -403,7 +404,7 @@ class VideoStreamer {
     // Start status update timer
     startStatusUpdateTimer(session);
 
-    await this.playLocalFile(session);
+    await this.playLocalFile(session, startTimeMs);
   }
 
   async startExternalStream(

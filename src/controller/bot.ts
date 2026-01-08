@@ -136,6 +136,11 @@ const commands = [
         .setDescription('YouTube URL')
         .setRequired(true)
     )
+    .addStringOption(option =>
+      option.setName('time')
+        .setDescription('Start time (e.g., "3:31" or "1:23:45")')
+        .setRequired(false)
+    )
     .addBooleanOption(option =>
       option.setName('queue')
         .setDescription('Add to queue instead of playing immediately')
@@ -1375,8 +1380,25 @@ async function handleVolume(interaction: ChatInputCommandInteraction): Promise<v
 
 async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<void> {
   const url = interaction.options.getString('url', true);
+  const timeStr = interaction.options.getString('time');
   const queueOption = interaction.options.getBoolean('queue') || false;
   await interaction.deferReply();
+  
+  // Parse time string (e.g., "3:31", "1:23:45") to milliseconds
+  let startTimeMs = 0;
+  if (timeStr) {
+    const parts = timeStr.split(':').map(Number);
+    if (parts.length === 2) {
+      // MM:SS format
+      startTimeMs = (parts[0] * 60 + parts[1]) * 1000;
+    } else if (parts.length === 3) {
+      // HH:MM:SS format
+      startTimeMs = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+    } else {
+      await interaction.editReply('❌ Invalid time format. Use MM:SS or HH:MM:SS');
+      return;
+    }
+  }
 
   const guildId = interaction.guildId;
   if (!guildId) {
@@ -1556,7 +1578,8 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
       voiceChannel.id,
       mediaItem,
       downloadedVideo.filePath,
-      interaction.user.id
+      interaction.user.id,
+      startTimeMs
     ).catch(err => console.error('[Controller] YouTube stream error:', err));
 
   } catch (error) {
