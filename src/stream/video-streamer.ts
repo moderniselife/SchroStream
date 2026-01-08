@@ -43,7 +43,49 @@ let playbackHistory: Map<string, PlaybackHistoryEntry> = new Map();
 // Status update timer
 let statusUpdateTimer: NodeJS.Timeout | null = null;
 
-// Function to update bot statuses
+// Function to set initial bot statuses (without position for Discord auto-tracking)
+async function setInitialBotStatuses(session: VideoStreamSession): Promise<void> {
+  try {
+    // Format title based on media type
+    let titleText = session.mediaItem.title;
+    if (session.mediaItem.type === 'show' && session.mediaItem.parentIndex && session.mediaItem.index) {
+      // TV show: "Show Name S01E02"
+      titleText = `${session.mediaItem.grandparentTitle || session.mediaItem.title} S${String(session.mediaItem.parentIndex).padStart(2, '0')}E${String(session.mediaItem.index).padStart(2, '0')}`;
+    } else if (session.mediaItem.type === 'episode') {
+      // Individual episode: "Show Name S01E02: Episode Title"
+      const showName = session.mediaItem.grandparentTitle || 'Unknown Show';
+      const season = session.mediaItem.parentIndex || 0;
+      const episode = session.mediaItem.index || 0;
+      titleText = `${showName} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}: ${session.mediaItem.title}`;
+    }
+    // For movies, just use the title as-is
+    
+    // Update controller bot status (without position for Discord auto-tracking)
+    const { getControllerBot } = await import('../controller/bot.js');
+    const controllerBot = getControllerBot();
+    if (controllerBot?.user) {
+      await controllerBot.user.setPresence({
+        status: 'online',
+        activities: [{
+          name: titleText,
+          type: 0 // PLAYING
+        }]
+      });
+    }
+    
+    // Update selfbot status (without position for Discord auto-tracking)
+    const { client } = await import('../bot/client.js');
+    if (client?.user) {
+      await client.user.setActivity(titleText, { type: 'PLAYING' });
+    }
+    
+    console.log(`[Status] Initial: ${titleText}`);
+  } catch (error) {
+    console.error('[Status] Failed to set initial bot statuses:', error);
+  }
+}
+
+// Function to update bot statuses with position
 async function updateBotStatuses(session: VideoStreamSession): Promise<void> {
   try {
     // Calculate current position
@@ -64,9 +106,24 @@ async function updateBotStatuses(session: VideoStreamSession): Promise<void> {
     
     const currentPosStr = formatTime(currentPos);
     const durationStr = session.duration ? formatTime(session.duration) : 'Live';
-    const statusText = `${session.mediaItem.title} (${currentPosStr}${session.duration ? '/' + durationStr : ''})`;
     
-    // Update controller bot status
+    // Format title based on media type
+    let titleText = session.mediaItem.title;
+    if (session.mediaItem.type === 'show' && session.mediaItem.parentIndex && session.mediaItem.index) {
+      // TV show: "Show Name S01E02"
+      titleText = `${session.mediaItem.grandparentTitle || session.mediaItem.title} S${String(session.mediaItem.parentIndex).padStart(2, '0')}E${String(session.mediaItem.index).padStart(2, '0')}`;
+    } else if (session.mediaItem.type === 'episode') {
+      // Individual episode: "Show Name S01E02: Episode Title"
+      const showName = session.mediaItem.grandparentTitle || 'Unknown Show';
+      const season = session.mediaItem.parentIndex || 0;
+      const episode = session.mediaItem.index || 0;
+      titleText = `${showName} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}: ${session.mediaItem.title}`;
+    }
+    // For movies, just use the title as-is
+    
+    const statusText = `${titleText} (${currentPosStr}${session.duration ? '/' + durationStr : ''})`;
+    
+    // Update controller bot status (with position)
     const { getControllerBot } = await import('../controller/bot.js');
     const controllerBot = getControllerBot();
     if (controllerBot?.user) {
@@ -79,7 +136,7 @@ async function updateBotStatuses(session: VideoStreamSession): Promise<void> {
       });
     }
     
-    // Update selfbot status
+    // Update selfbot status (with position)
     const { client } = await import('../bot/client.js');
     if (client?.user) {
       await client.user.setActivity(statusText, { type: 'PLAYING' });
@@ -126,10 +183,10 @@ function startStatusUpdateTimer(session: VideoStreamSession): void {
     clearInterval(statusUpdateTimer);
   }
   
-  // Update immediately
-  updateBotStatuses(session);
+  // Set initial status without position (for Discord auto-tracking)
+  setInitialBotStatuses(session);
   
-  // Update every 5 seconds
+  // Update with position every 5 seconds
   statusUpdateTimer = setInterval(() => {
     updateBotStatuses(session);
   }, 5000);
