@@ -27,6 +27,9 @@ export class VoiceAudioReceiver {
     // Override the handleIncoming method to capture audio
     this.originalHandleIncoming = mediaUdp.handleIncoming.bind(mediaUdp);
     mediaUdp.handleIncoming = (buf: unknown) => {
+      // Debug: Log incoming packets
+      console.log(`[VoiceAudioReceiver] Received packet: ${typeof buf}, size: ${Buffer.isBuffer(buf) ? buf.length : 'N/A'}`);
+      
       // Call original handler first
       if (this.originalHandleIncoming) {
         this.originalHandleIncoming(buf);
@@ -106,9 +109,11 @@ export function startVoiceReceiver(guildId: string, mediaUdp: MediaUdp): void {
   // Stop any existing receiver
   stopVoiceReceiver(guildId);
   
+  console.log(`[VoiceReceiver] Starting voice receiver for guild ${guildId}`);
   const audioReceiver = new VoiceAudioReceiver(guildId);
   audioReceiver.start(mediaUdp);
   receivers.set(guildId, audioReceiver);
+  console.log(`[VoiceReceiver] Voice receiver started for guild ${guildId}`);
 }
 
 export function stopVoiceReceiver(guildId: string): void {
