@@ -1113,6 +1113,9 @@ class VideoStreamer {
       // Wait for FFmpeg to stop
       await new Promise(resolve => setTimeout(resolve, 500));
       
+      // Rejoin voice channel to prepare for new stream
+      await this.streamer.joinVoice(session.guildId, session.channelId);
+      
       session.isStopping = false;
       await this.playExternalStream(session, timeMs);
       return true;
@@ -1142,6 +1145,9 @@ class VideoStreamer {
 
       // Wait for FFmpeg to stop
       await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Rejoin voice channel to prepare for new stream
+      await this.streamer.joinVoice(session.guildId, session.channelId);
       
       session.isStopping = false;
       await this.playLocalFile(session, timeMs);
@@ -1347,6 +1353,9 @@ class VideoStreamer {
 
     // Check if this is a local file
     const isLocalFile = session.streamUrl.startsWith('/') || session.streamUrl.startsWith('./') || session.streamUrl.includes('downloads/');
+
+    // Rejoin voice channel to prepare for new stream
+    await this.streamer.joinVoice(session.guildId, session.channelId);
 
     // Resume from saved position
     if (isLocalFile) {

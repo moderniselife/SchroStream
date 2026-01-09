@@ -2984,17 +2984,49 @@ async function handleQueue(interaction: ChatInputCommandInteraction): Promise<vo
                     });
                   },
                   onComplete: async () => {
-                    console.log('[Controller] Download complete');
-                    // Update to completion message
-                    const completeEmbed = new EmbedBuilder()
-                      .setTitle('✅ Download Complete')
+                    console.log('[Controller] Download complete, calculating SponsorBlock segments...');
+                    // Update to SponsorBlock calculation message
+                    const sponsorBlockEmbed = new EmbedBuilder()
+                      .setTitle('🔍 Calculating SponsorBlock Segments')
                       .setDescription(`**${first.title}**`)
-                      .setColor(0x00ff00)
+                      .setColor(0xffaa00)
                       .addFields(
-                        { name: 'Status', value: '🎬 Ready to play!' }
+                        { name: 'Status', value: '⏳ Identifying sponsor segments to skip...' }
                       );
 
-                    await progressMessage.edit({ embeds: [completeEmbed] });
+                    await progressMessage.edit({ embeds: [sponsorBlockEmbed] });
+                    
+                    // Fetch SponsorBlock segments
+                    try {
+                      const { fetchSponsorSegments, formatSponsorBlockEmbed } = await import('../youtube/sponsorblock.js');
+                      const sponsorResult = await fetchSponsorSegments(ytItem.url);
+                      
+                      // Update with final completion message including SponsorBlock results
+                      const completeEmbed = new EmbedBuilder()
+                        .setTitle('✅ Download Complete')
+                        .setDescription(`**${first.title}**`)
+                        .setColor(0x00ff00)
+                        .addFields(
+                          { name: 'Status', value: '🎬 Ready to play!' },
+                          { name: 'SponsorBlock', value: formatSponsorBlockEmbed(sponsorResult || { videoId: '', segments: [], totalSkipTime: 0, categories: [] }) }
+                        );
+
+                      await progressMessage.edit({ embeds: [completeEmbed] });
+                    } catch (sbError) {
+                      console.error('[Controller] SponsorBlock calculation failed:', sbError);
+                      
+                      // Update with completion message even if SponsorBlock fails
+                      const completeEmbed = new EmbedBuilder()
+                        .setTitle('✅ Download Complete')
+                        .setDescription(`**${first.title}**`)
+                        .setColor(0x00ff00)
+                        .addFields(
+                          { name: 'Status', value: '🎬 Ready to play!' },
+                          { name: 'SponsorBlock', value: '❌ Failed to calculate segments' }
+                        );
+
+                      await progressMessage.edit({ embeds: [completeEmbed] });
+                    }
                   },
                   onError: (error) => {
                     console.error('[Controller] Download error:', error);
