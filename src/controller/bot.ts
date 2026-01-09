@@ -2268,11 +2268,12 @@ async function handleYouTubePlay(interaction: ChatInputCommandInteraction): Prom
   ).catch(err => console.error('[Controller] YouTube stream error:', err));
 }
 
-function formatDuration(seconds: number | null): string {
-  if (!seconds) return 'Live/Unknown';
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
+function formatDuration(milliseconds: number | null): string {
+  if (!milliseconds) return 'Live/Unknown';
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
   if (h > 0) {
     return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
