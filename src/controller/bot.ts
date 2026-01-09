@@ -1042,6 +1042,11 @@ async function startPlayback(
     new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('ctrl_skip').setEmoji('⏭️').setStyle(ButtonStyle.Primary),
   );
+  const speedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('ctrl_speed_down').setLabel('🐢').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ctrl_speed').setLabel('1x').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ctrl_speed_up').setLabel('🐇').setStyle(ButtonStyle.Secondary),
+  );
 
   const embed = new EmbedBuilder()
     .setTitle('📺 Now Playing')
@@ -1062,7 +1067,7 @@ async function startPlayback(
     }
   }
 
-  await interaction.editReply({ embeds: [embed], components: [controlRow] });
+  await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
 
   // Start stream
   const videoStreamer = getVideoStreamer();
@@ -1603,8 +1608,13 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
       new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
     );
+    const speedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('ctrl_speed_down').setLabel('🐢').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_speed').setLabel('1x').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_speed_up').setLabel('🐇').setStyle(ButtonStyle.Secondary),
+    );
 
-    await interaction.editReply({ embeds: [embed], components: [controlRow] });
+    await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
 
     // Start streaming the downloaded file
     videoStreamer.startLocalFile(
@@ -1737,9 +1747,16 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
   const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
+  );
+  const speedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('ctrl_speed_down').setLabel('🐢').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ctrl_speed').setLabel('1x').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ctrl_speed_up').setLabel('🐇').setStyle(ButtonStyle.Secondary),
   );
 
-  await interaction.editReply({ embeds: [embed], components: [controlRow] });
+  await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
 
   const videoStreamer = getVideoStreamer();
   videoStreamer.startExternalStream(
@@ -2226,8 +2243,13 @@ async function handleYouTubePlay(interaction: ChatInputCommandInteraction): Prom
     new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
   );
+  const speedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('ctrl_speed_down').setLabel('🐢').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ctrl_speed').setLabel('1x').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ctrl_speed_up').setLabel('🐇').setStyle(ButtonStyle.Secondary),
+  );
 
-  await interaction.editReply({ embeds: [embed], components: [controlRow] });
+  await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
 
   const videoStreamer = getVideoStreamer();
   videoStreamer.startExternalStream(
@@ -2362,6 +2384,33 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       await interaction.editReply(`⏭️ Skipped to: ${nextEpisode.title}`);
       break;
     }
+    case 'ctrl_speed': {
+      // Cycle through speeds: 1x -> 1.25x -> 1.5x -> 2x -> 1x
+      const currentSpeed = videoStreamer.getSpeed(guildId);
+      const speeds = [1, 1.25, 1.5, 2];
+      const currentIndex = speeds.indexOf(currentSpeed);
+      const nextSpeed = speeds[(currentIndex + 1) % speeds.length];
+      
+      await videoStreamer.setSpeed(guildId, nextSpeed);
+      const speedEmoji = nextSpeed > 1 ? '⏩' : '▶️';
+      await interaction.reply({ content: `${speedEmoji} Speed: **${nextSpeed}x**`, ephemeral: true });
+      break;
+    }
+    case 'ctrl_speed_up': {
+      const currentSpeed = videoStreamer.getSpeed(guildId);
+      const newSpeed = Math.min(currentSpeed + 0.25, 3);
+      await videoStreamer.setSpeed(guildId, newSpeed);
+      await interaction.reply({ content: `⏩ Speed: **${newSpeed}x**`, ephemeral: true });
+      break;
+    }
+    case 'ctrl_speed_down': {
+      const currentSpeed = videoStreamer.getSpeed(guildId);
+      const newSpeed = Math.max(currentSpeed - 0.25, 0.5);
+      await videoStreamer.setSpeed(guildId, newSpeed);
+      const speedEmoji = newSpeed < 1 ? '⏪' : newSpeed > 1 ? '⏩' : '▶️';
+      await interaction.reply({ content: `${speedEmoji} Speed: **${newSpeed}x**`, ephemeral: true });
+      break;
+    }
     default: {
       // Handle YouTube play buttons
       if (interaction.customId.startsWith('yt_play_')) {
@@ -2459,8 +2508,13 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
           new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
           new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
         );
+        const speedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId('ctrl_speed_down').setLabel('🐢').setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId('ctrl_speed').setLabel('1x').setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId('ctrl_speed_up').setLabel('🐇').setStyle(ButtonStyle.Secondary),
+        );
 
-        await interaction.editReply({ embeds: [embed], components: [controlRow] });
+        await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
 
         const videoStreamer = getVideoStreamer();
         videoStreamer.startExternalStream(
@@ -3570,8 +3624,13 @@ async function handlePlayDownload(interaction: ChatInputCommandInteraction): Pro
       new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
     );
+    const speedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('ctrl_speed_down').setLabel('🐢').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_speed').setLabel('1x').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_speed_up').setLabel('🐇').setStyle(ButtonStyle.Secondary),
+    );
 
-    await interaction.editReply({ embeds: [embed], components: [controlRow] });
+    await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
 
     // Start streaming the downloaded file
     videoStreamer.startLocalFile(
