@@ -129,6 +129,16 @@ const commands = [
         .setMaxValue(200)
     ),
   new SlashCommandBuilder()
+    .setName('speed')
+    .setDescription('Adjust playback speed')
+    .addNumberOption(option =>
+      option.setName('multiplier')
+        .setDescription('Speed multiplier (0.5-3, default 1)')
+        .setRequired(true)
+        .setMinValue(0.5)
+        .setMaxValue(3)
+    ),
+  new SlashCommandBuilder()
     .setName('yt')
     .setDescription('Play a YouTube video')
     .addStringOption(option =>
@@ -488,6 +498,9 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'volume':
       await handleVolume(interaction);
+      break;
+    case 'speed':
+      await handleSpeed(interaction);
       break;
     case 'yt':
       await handleYouTube(interaction);
@@ -1373,6 +1386,27 @@ async function handleVolume(interaction: ChatInputCommandInteraction): Promise<v
 
   if (success) {
     await interaction.reply(`🔊 Volume set to ${level}%`);
+  } else {
+    await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
+  }
+}
+
+async function handleSpeed(interaction: ChatInputCommandInteraction): Promise<void> {
+  const multiplier = interaction.options.getNumber('multiplier', true);
+
+  const videoStreamer = getVideoStreamer();
+  const guildId = interaction.guildId;
+  
+  if (!guildId) {
+    await interaction.reply({ content: '❌ Guild not found', ephemeral: true });
+    return;
+  }
+  
+  const success = await videoStreamer.setSpeed(guildId, multiplier);
+
+  if (success) {
+    const speedEmoji = multiplier > 1 ? '⏩' : multiplier < 1 ? '⏪' : '▶️';
+    await interaction.reply(`${speedEmoji} Playback speed set to **${multiplier}x**`);
   } else {
     await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
   }
