@@ -2386,6 +2386,7 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     }
     case 'ctrl_speed': {
       // Cycle through speeds: 1x -> 1.25x -> 1.5x -> 2x -> 1x
+      await interaction.deferReply({ ephemeral: true });
       const currentSpeed = videoStreamer.getSpeed(guildId);
       const speeds = [1, 1.25, 1.5, 2];
       const currentIndex = speeds.indexOf(currentSpeed);
@@ -2393,22 +2394,24 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       
       await videoStreamer.setSpeed(guildId, nextSpeed);
       const speedEmoji = nextSpeed > 1 ? '⏩' : '▶️';
-      await interaction.reply({ content: `${speedEmoji} Speed: **${nextSpeed}x**`, ephemeral: true });
+      await interaction.editReply(`${speedEmoji} Speed: **${nextSpeed}x**`);
       break;
     }
     case 'ctrl_speed_up': {
+      await interaction.deferReply({ ephemeral: true });
       const currentSpeed = videoStreamer.getSpeed(guildId);
       const newSpeed = Math.min(currentSpeed + 0.25, 3);
       await videoStreamer.setSpeed(guildId, newSpeed);
-      await interaction.reply({ content: `⏩ Speed: **${newSpeed}x**`, ephemeral: true });
+      await interaction.editReply(`⏩ Speed: **${newSpeed}x**`);
       break;
     }
     case 'ctrl_speed_down': {
+      await interaction.deferReply({ ephemeral: true });
       const currentSpeed = videoStreamer.getSpeed(guildId);
       const newSpeed = Math.max(currentSpeed - 0.25, 0.5);
       await videoStreamer.setSpeed(guildId, newSpeed);
       const speedEmoji = newSpeed < 1 ? '⏪' : newSpeed > 1 ? '⏩' : '▶️';
-      await interaction.reply({ content: `${speedEmoji} Speed: **${newSpeed}x**`, ephemeral: true });
+      await interaction.editReply(`${speedEmoji} Speed: **${newSpeed}x**`);
       break;
     }
     default: {
