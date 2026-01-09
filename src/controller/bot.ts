@@ -15,6 +15,10 @@ import {
   StringSelectMenuInteraction,
   AutocompleteInteraction,
   ActivityType,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ModalSubmitInteraction,
 } from 'discord.js';
 import config from '../config.js';
 import plexClient from '../plex/client.js';
@@ -391,6 +395,8 @@ export async function initControllerBot(): Promise<Client | null> {
         await handleButton(interaction);
       } else if (interaction.isStringSelectMenu()) {
         await handleSelectMenu(interaction);
+      } else if (interaction.isModalSubmit()) {
+        await handleModalSubmit(interaction);
       }
     } catch (error) {
       console.error('[Controller] Interaction error:', error);
@@ -2326,34 +2332,56 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
         await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
         return;
       }
+      
       const currentTime = videoStreamer.getCurrentTime(guildId);
-      const newTime = Math.min(currentTime + 30000, session.duration);
-      try {
-        await videoStreamer.seekStream(guildId, newTime);
-        await interaction.reply({ content: `⏩ +30s → ${formatDuration(newTime)}`, ephemeral: true });
-      } catch (err: any) {
-        if (err.message && err.message.includes('400 Bad Request')) {
-          await interaction.reply({ content: '❌ Seek failed - wait a moment and try again', ephemeral: true });
-        } else {
-          await interaction.reply({ content: `❌ Seek error: ${err.message}`, ephemeral: true });
-        }
-      }
+      const currentFormatted = formatDuration(currentTime);
+      const remainingFormatted = formatDuration(session.duration - currentTime);
+      
+      const modal = new ModalBuilder()
+        .setCustomId('seek_forward_modal')
+        .setTitle('⏩ Seek Forward');
+      
+      const timeInput = new TextInputBuilder()
+        .setCustomId('seek_time')
+        .setLabel(`Current: ${currentFormatted} | Remaining: ${remainingFormatted}`)
+        .setPlaceholder('Enter seconds to skip forward (e.g., 30, 60, 300)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(4);
+      
+      const actionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(timeInput);
+      modal.addComponents(actionRow);
+      
+      await interaction.showModal(modal);
       break;
     }
     case 'ctrl_rw': {
-      const currentTime = videoStreamer.getCurrentTime(guildId);
-      const newTime = Math.max(currentTime - 30000, 0);
-      try {
-        await videoStreamer.seekStream(guildId, newTime);
-      } catch (err: any) {
-        if (err.message && err.message.includes('400 Bad Request')) {
-          await interaction.reply({ content: '❌ Seek failed - wait a moment and try again', ephemeral: true });
-        } else {
-          await interaction.reply({ content: `❌ Seek error: ${err.message}`, ephemeral: true });
-        }
+      const session = videoStreamer.getSession(guildId);
+      if (!session) {
+        await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
         return;
       }
-      await interaction.reply({ content: `⏪ -30s → ${formatDuration(newTime)}`, ephemeral: true });
+      
+      const currentTime = videoStreamer.getCurrentTime(guildId);
+      const currentFormatted = formatDuration(currentTime);
+      const remainingFormatted = formatDuration(session.duration - currentTime);
+      
+      const modal = new ModalBuilder()
+        .setCustomId('seek_backward_modal')
+        .setTitle('⏪ Seek Backward');
+      
+      const timeInput = new TextInputBuilder()
+        .setCustomId('seek_time')
+        .setLabel(`Current: ${currentFormatted} | Remaining: ${remainingFormatted}`)
+        .setPlaceholder('Enter seconds to skip backward (e.g., 30, 60, 300)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(4);
+      
+      const actionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(timeInput);
+      modal.addComponents(actionRow);
+      
+      await interaction.showModal(modal);
       break;
     }
     case 'ctrl_skip': {
@@ -2805,6 +2833,74 @@ async function handleChannels(interaction: ChatInputCommandInteraction): Promise
     embeds: [embed],
     components: [row]
   });
+}
+
+async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
+  const videoStreamer = getVideoStreamer();
+  const guildId = interaction.guildId;
+  
+  if (!guildId) {
+    await interaction.reply({ content: '❌ This command can only be used in a server', ephemeral: true });
+    return;
+  }
+
+  const session = videoStreamer.getSession(guildId);
+  if (!session) {
+    await interaction.reply({ content: '❌ Nothing is playing', ephemeral: true });
+    return;
+  }
+
+  if (interaction.customId === 'seek_forward_modal') {
+    const seekTimeStr = interaction.fields.getTextInputValue('seek_time');
+    const seekSeconds = parseInt(seekTimeStr, 10);
+    
+    if (isNaN(seekSeconds) || seekSeconds < 1 || seekSeconds > 9999) {
+      await interaction.reply({ content: '❌ Please enter a valid number of seconds (1-9999)', ephemeral: true });
+      return;
+    }
+
+    const currentTime = videoStreamer.getCurrentTime(guildId);
+    const newTime = Math.min(currentTime + (seekSeconds * 1000), session.duration);
+    
+    try {
+      await videoStreamer.seekStream(guildId, newTime);
+      await interaction.reply({ 
+        content: `⏩ Skipped forward ${seekSeconds}s → ${formatDuration(newTime)}`, 
+        ephemeral: true 
+      });
+    } catch (err: any) {
+      if (err.message && err.message.includes('400 Bad Request')) {
+        await interaction.reply({ content: '❌ Seek failed - wait a moment and try again', ephemeral: true });
+      } else {
+        await interaction.reply({ content: `❌ Seek error: ${err.message}`, ephemeral: true });
+      }
+    }
+  } else if (interaction.customId === 'seek_backward_modal') {
+    const seekTimeStr = interaction.fields.getTextInputValue('seek_time');
+    const seekSeconds = parseInt(seekTimeStr, 10);
+    
+    if (isNaN(seekSeconds) || seekSeconds < 1 || seekSeconds > 9999) {
+      await interaction.reply({ content: '❌ Please enter a valid number of seconds (1-9999)', ephemeral: true });
+      return;
+    }
+
+    const currentTime = videoStreamer.getCurrentTime(guildId);
+    const newTime = Math.max(currentTime - (seekSeconds * 1000), 0);
+    
+    try {
+      await videoStreamer.seekStream(guildId, newTime);
+      await interaction.reply({ 
+        content: `⏪ Skipped backward ${seekSeconds}s → ${formatDuration(newTime)}`, 
+        ephemeral: true 
+      });
+    } catch (err: any) {
+      if (err.message && err.message.includes('400 Bad Request')) {
+        await interaction.reply({ content: '❌ Seek failed - wait a moment and try again', ephemeral: true });
+      } else {
+        await interaction.reply({ content: `❌ Seek error: ${err.message}`, ephemeral: true });
+      }
+    }
+  }
 }
 
 async function handleChannel(interaction: ChatInputCommandInteraction): Promise<void> {
