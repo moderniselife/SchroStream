@@ -1,5 +1,5 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
-import { Client } from 'discord.js-selfbot-v13';
+import { Client, EmbedBuilder } from 'discord.js-selfbot-v13';
 import { spawn } from 'child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -281,20 +281,22 @@ async function updateEmbedMessage(session: VideoStreamSession): Promise<void> {
     // Update embed
     const embed = message.embeds[0];
     if (embed) {
-      embed.setDescription(`**${session.mediaItem.title}**\n\n${progressBar} ${progress.toFixed(1)}%\n📍 ${currentFormatted} / ${totalFormatted}`);
+      // Create new embed with updated description
+      const updatedEmbed = new EmbedBuilder(embed)
+        .setDescription(`**${session.mediaItem.title}**\n\n${progressBar} ${progress.toFixed(1)}%\n📍 ${currentFormatted} / ${totalFormatted}`);
       
       // Update pause/play button
       const components = message.components;
-      if (components.length > 0) {
-        const actionRow = components[0];
-        const pauseButton = actionRow.components.find(c => c.customId === 'ctrl_pause');
+      if (components.length > 0 && 'components' in components[0]) {
+        const actionRow = components[0] as any;
+        const pauseButton = actionRow.components.find((c: any) => c.customId === 'ctrl_pause');
         if (pauseButton) {
           pauseButton.setLabel(session.isPaused ? '▶️ Resume' : '⏸️ Pause');
           pauseButton.setEmoji(session.isPaused ? '▶️' : '⏸️');
         }
       }
       
-      await message.edit({ embeds: [embed], components });
+      await message.edit({ embeds: [updatedEmbed], components });
     }
   } catch (error) {
     // Silently ignore errors - embed might have been deleted
