@@ -1275,6 +1275,10 @@ class VideoStreamer {
       
       // Note: We're already in the voice channel, no need to rejoin
       await this.playExternalStream(session, timeMs);
+      
+      // Wait for old demuxer to fully close before clearing isStopping
+      // This prevents the old stream's "end of stream" from triggering cleanup
+      await new Promise(resolve => setTimeout(resolve, 2000));
       session.isStopping = false;
       return true;
     }
@@ -1306,6 +1310,10 @@ class VideoStreamer {
       
       // Note: We're already in the voice channel, no need to rejoin
       await this.playLocalFile(session, timeMs);
+      
+      // Wait for old demuxer to fully close before clearing isStopping
+      // This prevents the old stream's "end of stream" from triggering cleanup
+      await new Promise(resolve => setTimeout(resolve, 2000));
       session.isStopping = false;
       return true;
     }
@@ -1458,8 +1466,11 @@ class VideoStreamer {
                         urlObj.searchParams.get('session') || undefined;
     }
     
-    session.isStopping = false;
     await this.playVideoStream(session, timeMs);
+    
+    // Wait for old demuxer to fully close before clearing isStopping
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    session.isStopping = false;
     return true;
   }
 
@@ -1527,7 +1538,8 @@ class VideoStreamer {
       await this.playVideoStream(session, session.currentTime);
     }
     
-    // Only mark as not stopping after successfully starting new stream
+    // Wait for old demuxer to fully close before clearing isStopping
+    await new Promise(resolve => setTimeout(resolve, 2000));
     session.isStopping = false;
     
     return true;
@@ -1652,7 +1664,8 @@ class VideoStreamer {
         } else {
           await this.playVideoStream(session, currentTime);
         }
-        // Only mark as not stopping after successfully starting new stream
+        // Wait for old demuxer to fully close before clearing isStopping
+        await new Promise(resolve => setTimeout(resolve, 2000));
         session.isStopping = false;
         console.log(`[VideoStreamer] Speed change completed - now playing at ${speed}x`);
       } catch (error) {
