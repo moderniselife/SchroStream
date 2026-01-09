@@ -1656,11 +1656,15 @@ class VideoStreamer {
       // Wait for FFmpeg to stop
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      // Get fresh stream URL (new Plex session) - but not for Live TV channels
-      if (session.mediaItem.type !== 'channel') {
-        const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
-        if (freshStreamInfo) {
-          session.streamUrl = freshStreamInfo.url;
+      // Get fresh stream URL for Plex streams only
+      if (!session.isExternal && session.mediaItem.type !== 'channel') {
+        try {
+          const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+          if (freshStreamInfo) {
+            session.streamUrl = freshStreamInfo.url;
+          }
+        } catch (error) {
+          console.error('[VideoStreamer] Error getting fresh Plex stream URL:', error);
         }
       }
       
