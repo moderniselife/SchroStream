@@ -328,6 +328,43 @@ export function cleanupOldDownloads(): void {
   }
 }
 
+// Check if a YouTube video is already downloaded by URL
+export function findDownloadedVideoByUrl(url: string): DownloadedVideo | null {
+  try {
+    const files = readdirSync(DOWNLOADS_DIR);
+    const videoFiles = files.filter(file => 
+      file.endsWith('.mp4') || 
+      file.endsWith('.webm') || 
+      file.endsWith('.mkv') || 
+      file.endsWith('.avi')
+    );
+
+    for (const file of videoFiles) {
+      const filePath = join(DOWNLOADS_DIR, file);
+      const metadata = getVideoMetadata(filePath);
+      
+      if (metadata && metadata.url === url) {
+        // Video found, return the downloaded video info
+        return {
+          filePath,
+          title: metadata.title,
+          duration: metadata.duration,
+          thumbnail: metadata.thumbnail,
+          uploader: metadata.uploader,
+          viewCount: metadata.viewCount,
+          uploadDate: metadata.uploadDate,
+          description: metadata.description,
+        };
+      }
+    }
+    
+    return null; // Not found
+  } catch (error) {
+    console.error('[YouTubeDownloader] Error checking for downloaded video:', error);
+    return null;
+  }
+}
+
 // Get metadata for a video file
 export function getVideoMetadata(videoFile: string): VideoMetadata | null {
   try {

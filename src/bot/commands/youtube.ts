@@ -1,7 +1,7 @@
 import type { Message, VoiceChannel } from 'discord.js-selfbot-v13';
 import { getVideoStreamer } from '../../stream/video-streamer.js';
 import { formatDuration } from '../../plex/library.js';
-import { downloadYouTubeVideo, type DownloadProgress } from '../../youtube/downloader.js';
+import { downloadYouTubeVideo, findDownloadedVideoByUrl, type DownloadProgress } from '../../youtube/downloader.js';
 
 function createProgressBar(percent: number): string {
   const barLength = 20;
@@ -34,6 +34,55 @@ export async function youtubeCommand(message: Message, args: string[]): Promise<
   }
 
   const statusMsg = await message.channel.send('🔍 Fetching video info...');
+
+  // Check if video is already downloaded
+  const existingVideo = findDownloadedVideoByUrl(url);
+  if (existingVideo) {
+    console.log(`[YouTube] Found existing download for: ${url}`);
+    
+    const videoStreamer = getVideoStreamer();
+    
+    const mediaItem = {
+      ratingKey: `yt-${Date.now()}`,
+      key: url,
+      title: existingVideo.title,
+      type: 'movie' as const,
+      duration: existingVideo.duration,
+      thumb: existingVideo.thumbnail,
+      summary: existingVideo.uploader ? `By ${existingVideo.uploader}` : undefined,
+    };
+
+    const duration = existingVideo.duration ? formatDuration(existingVideo.duration) : 'Live/Unknown';
+
+    await statusMsg.edit(
+      `📺 **Starting:** ${existingVideo.title}\n` +
+      `${existingVideo.uploader ? `👤 ${existingVideo.uploader}\n` : ''}` +
+      `⏱️ Duration: ${duration}\n` +
+      `📥 Playing from local file (no buffering!)\n\n` +
+      `*Connecting to voice channel...*`
+    );
+
+    // Start streaming the existing file
+    await videoStreamer.startLocalFile(
+      message.guild.id,
+      voiceChannel.id,
+      mediaItem,
+      existingVideo.filePath,
+      message.author.id
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    await statusMsg.edit(
+      `📺 **Now Streaming:** ${existingVideo.title}\n` +
+      `${existingVideo.uploader ? `👤 ${existingVideo.uploader}\n` : ''}` +
+      `⏱️ Duration: ${duration}\n` +
+      `📥 Playing from local file (no buffering!)\n` +
+      `🎬 Enjoy the show!`
+    );
+    
+    return;
+  }
 
   try {
     let downloadComplete = false;

@@ -1474,6 +1474,10 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
   // If queue option is selected, add to queue instead of playing
   if (queueOption) {
     try {
+      // Check if video is already downloaded first
+      const { findDownloadedVideoByUrl } = await import('../youtube/downloader.js');
+      const existingVideo = findDownloadedVideoByUrl(url);
+      
       // Get YouTube info to create media item
       const { getYouTubeInfo } = await import('../youtube/downloader.js');
       const info = await getYouTubeInfo(url);
@@ -1486,14 +1490,15 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
       const mediaItem: MediaItem = {
         ratingKey: `yt-${Date.now()}`,
         key: url,
-        type: 'youtube',
+        type: 'youtube', // Always 'youtube' type, filePath indicates if downloaded
         title: info.title,
         duration: info.duration,
         thumb: info.thumbnail,
         uploader: info.uploader,
         viewCount: info.view_count ? formatNumber(info.view_count) : undefined,
         uploadDate: info.upload_date ? new Date(info.upload_date).toLocaleDateString() : undefined,
-        url: url
+        url: url,
+        filePath: existingVideo?.filePath // Add file path if downloaded
       };
 
       const added = addToQueue(mediaItem, interaction.user.id);
@@ -1502,7 +1507,11 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
         return;
       }
 
-      await interaction.editReply(`✅ Added to queue: **${info.title}**`);
+      const message = existingVideo 
+        ? `✅ Added downloaded video to queue: **${info.title}**`
+        : `✅ Added to queue: **${info.title}**`;
+      
+      await interaction.editReply(message);
       return;
     } catch (error) {
       console.error('[Controller] Error adding YouTube to queue:', error);
@@ -1522,8 +1531,66 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
   }
 
   // Import YouTube downloader
-  const { downloadYouTubeVideo } = await import('../youtube/downloader');
+  const { downloadYouTubeVideo, findDownloadedVideoByUrl } = await import('../youtube/downloader');
   type DownloadProgress = import('../youtube/downloader').DownloadProgress;
+
+  // Check if video is already downloaded
+  const existingVideo = findDownloadedVideoByUrl(url);
+  if (existingVideo) {
+    console.log(`[Controller] Found existing download for: ${url}`);
+    
+    const videoStreamer = getVideoStreamer();
+    
+    const mediaItem = {
+      ratingKey: `yt-${Date.now()}`,
+      key: url,
+      title: existingVideo.title,
+      type: 'youtube' as const,
+      duration: existingVideo.duration,
+      thumb: existingVideo.thumbnail,
+      uploader: existingVideo.uploader,
+      viewCount: existingVideo.viewCount,
+      uploadDate: existingVideo.uploadDate,
+      url: url,
+      filePath: existingVideo.filePath
+    };
+
+    const embed = new EmbedBuilder()
+      .setTitle('📺 Starting Stream')
+      .setDescription(`**${existingVideo.title}**`)
+      .addFields(
+        { name: 'Channel', value: existingVideo.uploader || 'Unknown', inline: true },
+        { name: 'Duration', value: existingVideo.duration ? formatPlexDuration(existingVideo.duration) : 'Live', inline: true },
+        { name: 'Source', value: '📥 Local file (no buffering!)', inline: true }
+      )
+      .setColor(0x00ff00)
+      .setThumbnail(existingVideo.thumbnail || null);
+
+    const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
+    );
+    const speedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('ctrl_speed_down').setLabel('🐢').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_speed').setLabel('1x').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_speed_up').setLabel('🐇').setStyle(ButtonStyle.Secondary),
+    );
+
+    await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
+
+    // Start streaming the existing file
+    await videoStreamer.startLocalFile(
+      guildId,
+      voiceChannel.id,
+      mediaItem,
+      existingVideo.filePath,
+      interaction.user.id
+    );
+    
+    return;
+  }
 
   function createProgressBar(percent: number): string {
     const barLength = 20;
