@@ -1,9 +1,10 @@
 # Node.js base with FFmpeg (Bun has zeromq/libuv compatibility issues)
 FROM node:20-bookworm-slim
 
-# Install FFmpeg and yt-dlp
+# Install FFmpeg, yt-dlp, and build tools for native modules
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg python3 curl ca-certificates && \
+    apt-get install -y --no-install-recommends ffmpeg python3 curl ca-certificates \
+    build-essential make g++ unzip wget && \
     curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp && \
     rm -rf /var/lib/apt/lists/*
@@ -27,6 +28,12 @@ COPY . .
 
 # Create data directory
 RUN mkdir -p /app/data
+
+# Download Vosk model for voice commands (small English model ~40MB)
+RUN wget -q https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip && \
+    unzip -q vosk-model-small-en-us-0.15.zip && \
+    mv vosk-model-small-en-us-0.15 vosk-model && \
+    rm vosk-model-small-en-us-0.15.zip
 
 # Build TypeScript backend
 RUN npm run build

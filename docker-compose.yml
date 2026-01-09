@@ -31,6 +31,9 @@ services:
       - WEB_CHANNEL_ID=${WEB_CHANNEL_ID}
       - ALLOWED_GUILDS=${ALLOWED_GUILDS}
       - ALLOWED_ROLES=${ALLOWED_ROLES}
+      - VOICE_COMMANDS_ENABLED=${VOICE_COMMANDS_ENABLED:-false}
+      - VOICE_WAKE_WORD=${VOICE_WAKE_WORD:-bob}
+      - VOSK_MODEL_PATH=/app/vosk-model
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads
