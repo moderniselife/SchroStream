@@ -1198,8 +1198,8 @@ class VideoStreamer {
       await new Promise(resolve => setTimeout(resolve, 500));
       
       // Note: We're already in the voice channel, no need to rejoin
-      session.isStopping = false;
       await this.playExternalStream(session, timeMs);
+      session.isStopping = false;
       return true;
     }
 
@@ -1229,8 +1229,8 @@ class VideoStreamer {
       await new Promise(resolve => setTimeout(resolve, 500));
       
       // Note: We're already in the voice channel, no need to rejoin
-      session.isStopping = false;
       await this.playLocalFile(session, timeMs);
+      session.isStopping = false;
       return true;
     }
 
@@ -1431,7 +1431,6 @@ class VideoStreamer {
     }
 
     session.isPaused = false;
-    session.isStopping = false;
     session.startedAt = Date.now();
 
     // Check if this is a local file
@@ -1451,6 +1450,9 @@ class VideoStreamer {
     } else {
       await this.playVideoStream(session, session.currentTime);
     }
+    
+    // Only mark as not stopping after successfully starting new stream
+    session.isStopping = false;
     
     return true;
   }
@@ -1561,7 +1563,6 @@ class VideoStreamer {
       // Note: We're already in the voice channel, no need to rejoin
       // The bot stays connected after stopStream()
       
-      session.isStopping = false;
       session.startedAt = Date.now();
       
       // Check if this is a local file
@@ -1575,6 +1576,8 @@ class VideoStreamer {
         } else {
           await this.playVideoStream(session, currentTime);
         }
+        // Only mark as not stopping after successfully starting new stream
+        session.isStopping = false;
         console.log(`[VideoStreamer] Speed change completed - now playing at ${speed}x`);
       } catch (error) {
         console.error('[VideoStreamer] Failed to restart stream after speed change:', error);
