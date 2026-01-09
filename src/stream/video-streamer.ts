@@ -283,8 +283,18 @@ async function updateEmbedMessage(session: VideoStreamSession): Promise<void> {
     const embed = message.embeds[0];
     if (embed) {
       // Create new embed with updated description
-      const updatedEmbed = new EmbedBuilder(embed)
-        .setDescription(`**${session.mediaItem.title}**\n\n${progressBar} ${progress.toFixed(1)}%\n📍 ${currentFormatted} / ${totalFormatted}`);
+      const updatedEmbed = new EmbedBuilder({
+        title: embed.title || undefined,
+        url: embed.url,
+        description: `**${session.mediaItem.title}**\n\n${progressBar} ${progress.toFixed(1)}%\n📍 ${currentFormatted} / ${totalFormatted}`,
+        color: embed.color,
+        thumbnail: embed.thumbnail,
+        image: embed.image,
+        footer: embed.footer,
+        timestamp: embed.timestamp,
+        fields: embed.fields,
+        author: embed.author
+      });
       
       // Update pause/play button
       const components = message.components;
