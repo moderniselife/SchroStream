@@ -272,30 +272,33 @@ export class PythonVoiceListener {
   
   private convertOpusToWav(opusPath: string, wavPath: string): Promise<boolean> {
     return new Promise((resolve) => {
-      // Discord sends raw Opus frames at 48kHz stereo
-      // FFmpeg can decode this to WAV
+      // Discord @discordjs/voice sends decoded PCM s16le at 48kHz stereo
+      // The audio stream is already decoded from Opus by the library
       const ffmpeg = spawn('ffmpeg', [
         '-y',
         '-f', 's16le',           // Input format: signed 16-bit little-endian PCM
-        '-ar', '48000',          // Input sample rate: 48kHz
+        '-ar', '48000',          // Input sample rate: 48kHz (Discord standard)
         '-ac', '2',              // Input channels: stereo
-        '-i', opusPath,          // Input file
+        '-i', opusPath,          // Input file (raw PCM data)
         '-ar', '16000',          // Output sample rate: 16kHz (better for speech recognition)
         '-ac', '1',              // Output channels: mono
         wavPath                   // Output file
       ]);
       
+      let stderrOutput = '';
       ffmpeg.stderr.on('data', (data) => {
-        // FFmpeg outputs to stderr, ignore unless debugging
-        // console.log('[FFmpeg]', data.toString());
+        stderrOutput += data.toString();
       });
       
       ffmpeg.on('close', (code) => {
+        if (code !== 0) {
+          console.error('[PythonVoiceListener] FFmpeg failed:', stderrOutput.slice(-500));
+        }
         resolve(code === 0);
       });
       
       ffmpeg.on('error', (error) => {
-        console.error('[PythonVoiceListener] FFmpeg error:', error);
+        console.error('[PythonVoiceListener] FFmpeg spawn error:', error);
         resolve(false);
       });
     });
