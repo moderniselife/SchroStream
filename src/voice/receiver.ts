@@ -9,6 +9,7 @@ import {
 import { Client, GatewayIntentBits } from 'discord.js';
 import { processVoiceAudio } from './python-listener.js';
 import config from '../config.js';
+import prism from 'prism-media';
 
 // Separate bot client for voice listening (not the selfbot)
 let voiceListenerBot: Client | null = null;
@@ -128,31 +129,46 @@ export class VoiceAudioReceiver {
       receiver.speaking.on('start', (userId) => {
         console.log(`[VoiceAudioReceiver] User ${userId} started speaking`);
         
-        // Subscribe to user's audio stream
-        const audioStream = receiver.subscribe(userId, {
+        // Subscribe to user's audio stream (returns Opus-encoded audio)
+        const opusStream = receiver.subscribe(userId, {
           end: {
             behavior: EndBehaviorType.AfterSilence,
             duration: 2000,
           },
         });
         
-        // Collect audio data
+        // Decode Opus to PCM (s16le, 48kHz, stereo)
+        const opusDecoder = new prism.opus.Decoder({
+          rate: 48000,
+          channels: 2,
+          frameSize: 960, // 20ms at 48kHz
+        });
+        
+        // Collect decoded PCM audio data
         const chunks: Buffer[] = [];
         
-        audioStream.on('data', (chunk: Buffer) => {
+        // Pipe Opus stream through decoder
+        opusStream.pipe(opusDecoder);
+        
+        opusDecoder.on('data', (chunk: Buffer) => {
           chunks.push(chunk);
         });
         
-        audioStream.on('end', () => {
-          console.log(`[VoiceAudioReceiver] User ${userId} stopped speaking, collected ${chunks.length} chunks`);
+        opusDecoder.on('end', () => {
+          console.log(`[VoiceAudioReceiver] User ${userId} stopped speaking, collected ${chunks.length} PCM chunks`);
           
           if (chunks.length > 0) {
             const fullBuffer = Buffer.concat(chunks);
+            console.log(`[VoiceAudioReceiver] Total PCM audio: ${fullBuffer.length} bytes (~${(fullBuffer.length / (48000 * 2 * 2)).toFixed(2)}s)`);
             this.processAudio(fullBuffer);
           }
         });
         
-        audioStream.on('error', (error) => {
+        opusDecoder.on('error', (error) => {
+          console.error(`[VoiceAudioReceiver] Opus decoder error:`, error);
+        });
+        
+        opusStream.on('error', (error) => {
           console.error(`[VoiceAudioReceiver] Audio stream error:`, error);
         });
       });
