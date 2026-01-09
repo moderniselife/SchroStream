@@ -30,6 +30,8 @@ export interface VideoStreamSession {
   isExternal?: boolean; // Flag for external streams (YouTube, URLs)
   audioUrl?: string; // Separate audio URL for YouTube streams
   sessionId?: string; // Plex transcode session ID for reuse
+  messageId?: string; // Discord message ID for embed updates
+  textChannelId?: string; // Discord text channel ID for embed updates
 }
 
 // Store playback positions for resume functionality (ratingKey -> position in ms)
@@ -190,6 +192,7 @@ function startStatusUpdateTimer(session: VideoStreamSession): void {
   // Update with position every 15 seconds
   statusUpdateTimer = setInterval(() => {
     updateBotStatuses(session);
+    updateEmbedMessage(session);
   }, 15000);
 }
 
@@ -237,6 +240,66 @@ function persistPlaybackHistory(): void {
 
 // Initialize on module load
 loadPlaybackHistory();
+
+// Update the embed message with current progress
+async function updateEmbedMessage(session: VideoStreamSession): Promise<void> {
+  if (!session.messageId || !session.textChannelId) return;
+  
+  try {
+    // Import here to avoid circular dependency
+    const { getControllerBot } = await import('../controller/bot.js');
+    const controllerBot = getControllerBot();
+    if (!controllerBot) return;
+    
+    const channel = controllerBot.channels.cache.get(session.textChannelId);
+    if (!channel || !('messages' in channel)) return;
+    
+    const message = await channel.messages.fetch(session.messageId);
+    if (!message || !message.editable) return;
+    
+    // Calculate current position
+    const elapsed = Date.now() - session.startedAt;
+    const currentPos = session.isPaused ? session.currentTime : session.currentTime + elapsed;
+    const progress = Math.min((currentPos / session.duration) * 100, 100);
+    
+    // Format position as MM:SS / HH:MM:SS
+    const formatTime = (ms: number): string => {
+      const seconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      
+      if (hours > 0) {
+        return `${hours}:${String(minutes % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+      }
+      return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+    };
+    
+    const currentFormatted = formatTime(currentPos);
+    const totalFormatted = formatTime(session.duration);
+    const progressBar = '█'.repeat(Math.floor(progress / 5)) + '░'.repeat(20 - Math.floor(progress / 5));
+    
+    // Update embed
+    const embed = message.embeds[0];
+    if (embed) {
+      embed.setDescription(`**${session.mediaItem.title}**\n\n${progressBar} ${progress.toFixed(1)}%\n📍 ${currentFormatted} / ${totalFormatted}`);
+      
+      // Update pause/play button
+      const components = message.components;
+      if (components.length > 0) {
+        const actionRow = components[0];
+        const pauseButton = actionRow.components.find(c => c.customId === 'ctrl_pause');
+        if (pauseButton) {
+          pauseButton.setLabel(session.isPaused ? '▶️ Resume' : '⏸️ Pause');
+          pauseButton.setEmoji(session.isPaused ? '▶️' : '⏸️');
+        }
+      }
+      
+      await message.edit({ embeds: [embed], components });
+    }
+  } catch (error) {
+    // Silently ignore errors - embed might have been deleted
+  }
+}
 
 export function getPlaybackPosition(ratingKey: string): number | null {
   const history = playbackHistory.get(ratingKey);
@@ -1595,6 +1658,14 @@ class VideoStreamer {
   getSpeed(guildId: string): number {
     const session = this.sessions.get(guildId);
     return session?.speed || 1;
+  }
+
+  setEmbedMessage(guildId: string, messageId: string, channelId: string): void {
+    const session = this.sessions.get(guildId);
+    if (session) {
+      session.messageId = messageId;
+      session.textChannelId = channelId;
+    }
   }
 }
 

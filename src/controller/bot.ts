@@ -1085,10 +1085,12 @@ async function startPlayback(
     }
   }
 
-  await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
+  const reply = await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
 
   // Start stream
   const videoStreamer = getVideoStreamer();
+  // Store message info for embed updates
+  videoStreamer.setEmbedMessage(guildId, reply.id, interaction.channelId);
   try {
     if (itemToPlay.type === 'youtube') {
       const ytItem = itemToPlay as any;
@@ -2267,9 +2269,12 @@ async function handleYouTubePlay(interaction: ChatInputCommandInteraction): Prom
     new ButtonBuilder().setCustomId('ctrl_speed_up').setLabel('🐇').setStyle(ButtonStyle.Secondary),
   );
 
-  await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
+  const reply = await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
 
   const videoStreamer = getVideoStreamer();
+  // Store message info for embed updates
+  videoStreamer.setEmbedMessage(guildId, reply.id, interaction.channelId);
+  
   videoStreamer.startExternalStream(
     guildId,
     voiceChannel.id,
@@ -2558,9 +2563,12 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
           new ButtonBuilder().setCustomId('ctrl_speed_up').setLabel('🐇').setStyle(ButtonStyle.Secondary),
         );
 
-        await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
+        const reply = await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
 
         const videoStreamer = getVideoStreamer();
+        // Store message info for embed updates
+        videoStreamer.setEmbedMessage(guildId, reply.id, interaction.channelId);
+        
         videoStreamer.startExternalStream(
           guildId,
           voiceChannel.id,
