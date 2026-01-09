@@ -1197,9 +1197,7 @@ class VideoStreamer {
       // Wait for FFmpeg to stop
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Rejoin voice channel to prepare for new stream
-      await this.streamer.joinVoice(session.guildId, session.channelId);
-      
+      // Note: We're already in the voice channel, no need to rejoin
       session.isStopping = false;
       await this.playExternalStream(session, timeMs);
       return true;
@@ -1230,9 +1228,7 @@ class VideoStreamer {
       // Wait for FFmpeg to stop
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Rejoin voice channel to prepare for new stream
-      await this.streamer.joinVoice(session.guildId, session.channelId);
-      
+      // Note: We're already in the voice channel, no need to rejoin
       session.isStopping = false;
       await this.playLocalFile(session, timeMs);
       return true;
@@ -1441,8 +1437,8 @@ class VideoStreamer {
     // Check if this is a local file
     const isLocalFile = session.streamUrl.startsWith('/') || session.streamUrl.startsWith('./') || session.streamUrl.includes('downloads/');
 
-    // Rejoin voice channel to prepare for new stream
-    await this.streamer.joinVoice(session.guildId, session.channelId);
+    // Note: We're already in the voice channel, no need to rejoin
+    // The bot stays connected after pause
 
     // Start status update timer
     startStatusUpdateTimer(session);
@@ -1562,15 +1558,8 @@ class VideoStreamer {
       // Wait for FFmpeg to stop
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Rejoin voice channel
-      try {
-        await this.streamer.joinVoice(session.guildId, session.channelId);
-      } catch (error) {
-        console.error('[VideoStreamer] Failed to rejoin voice channel for speed change:', error);
-        // Reset stopping flag so user can try again
-        session.isStopping = false;
-        return false;
-      }
+      // Note: We're already in the voice channel, no need to rejoin
+      // The bot stays connected after stopStream()
       
       session.isStopping = false;
       session.startedAt = Date.now();
