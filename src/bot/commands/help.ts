@@ -26,6 +26,7 @@ export async function helpCommand(message: Message, _args: string[]): Promise<vo
 \`${prefix}skip\` - Skip to next episode (TV shows only)
 \`${prefix}np\` - Show what's currently playing
 \`${prefix}volume <0-200>\` - Set volume (default: 100%)
+\`${prefix}speed <0.5-3>\` - Set playback speed (e.g., \`1.5\` for 1.5x)
 
 **External Sources:**
 \`${prefix}yt <url>\` - Play YouTube/Twitch/etc via yt-dlp

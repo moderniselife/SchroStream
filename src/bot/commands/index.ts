@@ -13,6 +13,7 @@ import { randomCommand } from './random.js';
 import { onDeckCommand } from './ondeck.js';
 import { queueCommand } from './queue.js';
 import { ffwdCommand, rewindCommand } from './ffwd.js';
+import { speedCommand } from './speed.js';
 import { youtubeCommand } from './youtube.js';
 import { urlCommand } from './url.js';
 import { ytSearchCommand, ytPlayCommand } from './ytsearch.js';
@@ -57,6 +58,8 @@ const commands: Record<string, CommandHandler> = {
   rw: rewindCommand,
   rewind: rewindCommand,
   back: rewindCommand,
+  speed: speedCommand,
+  playspeed: speedCommand,
   yt: youtubeCommand,
   youtube: youtubeCommand,
   url: urlCommand,

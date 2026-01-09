@@ -24,6 +24,7 @@ export interface VideoStreamSession {
   currentTime: number;
   duration: number;
   volume: number;
+  speed: number; // Playback speed multiplier (1.0 = normal, 1.5 = 1.5x, etc.)
   ffmpegCommand: any | null;
   userId?: string;
   isExternal?: boolean; // Flag for external streams (YouTube, URLs)
@@ -289,13 +290,79 @@ class VideoStreamer {
     const nextItem = popQueue();
     if (!nextItem) {
       console.log('[VideoStreamer] Queue is empty, playback stopped');
+      // Stop status updater when queue is empty
+      stopStatusUpdateTimer();
       return;
     }
 
     console.log(`[VideoStreamer] Auto-playing next in queue: ${nextItem.title}`);
 
     try {
-      // Get the full media item from Plex
+      // Handle YouTube queue items
+      if (nextItem.type === 'youtube') {
+        console.log('[VideoStreamer] Next item is YouTube video');
+        
+        // Create media item from queue entry
+        const mediaItem: MediaItem = {
+          ratingKey: nextItem.ratingKey,
+          key: nextItem.ratingKey,
+          title: nextItem.title,
+          type: 'youtube',
+          duration: nextItem.duration || 0,
+          url: nextItem.url || '',
+          filePath: nextItem.filePath,
+          uploader: nextItem.uploader,
+          viewCount: nextItem.viewCount,
+          uploadDate: nextItem.uploadDate,
+        };
+        
+        // Check if file exists
+        if (nextItem.filePath) {
+          const { existsSync } = await import('fs');
+          if (existsSync(nextItem.filePath)) {
+            await this.startLocalFile(guildId, channelId, mediaItem, nextItem.filePath, userId);
+            return;
+          }
+        }
+        
+        // If no file, try to download
+        if (nextItem.url) {
+          console.log('[VideoStreamer] YouTube file not found, needs download. Skipping for now.');
+          // Skip to next item - downloading should be handled by the controller
+          await this.playNextInQueue(guildId, channelId, userId);
+          return;
+        }
+        
+        console.error('[VideoStreamer] YouTube item has no file or URL');
+        await this.playNextInQueue(guildId, channelId, userId);
+        return;
+      }
+
+      // Handle external stream queue items
+      if (nextItem.type === 'external') {
+        console.log('[VideoStreamer] Next item is external stream');
+        
+        if (!nextItem.url) {
+          console.error('[VideoStreamer] External item has no URL');
+          await this.playNextInQueue(guildId, channelId, userId);
+          return;
+        }
+        
+        const mediaItem: MediaItem = {
+          ratingKey: nextItem.ratingKey,
+          key: nextItem.ratingKey,
+          title: nextItem.title,
+          type: 'external',
+          duration: nextItem.duration || 0,
+          url: nextItem.url,
+          streamType: nextItem.streamType,
+        };
+        
+        await this.startExternalStream(guildId, channelId, mediaItem, nextItem.url, userId);
+        return;
+      }
+
+      // Handle Plex items (movie, episode, etc.)
       const mediaItem = await plexClient.getMetadata(nextItem.ratingKey);
       if (!mediaItem) {
         console.error('[VideoStreamer] Could not find media item in Plex');
@@ -350,6 +417,7 @@ class VideoStreamer {
       currentTime: startTimeMs,
       duration: mediaItem.duration || 0,
       volume: 100,
+      speed: 1,
       ffmpegCommand: null,
       userId,
       isExternal: mediaItem.type === 'channel', // Treat Live TV channels as external streams
@@ -393,6 +461,7 @@ class VideoStreamer {
       currentTime: startTimeMs,
       duration: mediaItem.duration || 0,
       volume: 100,
+      speed: 1,
       ffmpegCommand: null,
       userId,
       isExternal: true, // Treat local files as external streams
@@ -436,6 +505,7 @@ class VideoStreamer {
       currentTime: 0,
       duration: mediaItem.duration || 0,
       volume: 100,
+      speed: 1,
       ffmpegCommand: null,
       userId,
       isExternal: true,
@@ -512,12 +582,16 @@ class VideoStreamer {
           '-b:v', `${qualityBitrate}k`,
           '-maxrate', `${qualityBitrate}k`,
           '-bufsize', `${qualityBitrate * 2}k`,
-          '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+          '-vf', session.speed !== 1 
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
           '-ac', '2',
-          '-af', `volume=${volumeMultiplier}`,
+          '-af', session.speed !== 1
+            ? `volume=${volumeMultiplier},atempo=${session.speed}`
+            : `volume=${volumeMultiplier}`,
           '-f', 'matroska',
           '-'
         );
@@ -533,12 +607,17 @@ class VideoStreamer {
           '-b:a', '128k',
           '-ar', '48000',
           '-ac', '2',
-          '-af', `volume=${volumeMultiplier}`,
+          '-af', session.speed !== 1
+            ? `volume=${volumeMultiplier},atempo=${session.speed}`
+            : `volume=${volumeMultiplier}`,
           '-f', 'matroska',
           '-'
         );
       }
 
+      if (session.speed !== 1) {
+        console.log(`[VideoStreamer] Playing at ${session.speed}x speed`);
+      }
       console.log('[VideoStreamer] Starting FFmpeg for local file...');
       const ffmpeg = spawn('ffmpeg', ffmpegArgs);
       session.ffmpegCommand = ffmpeg;
@@ -720,16 +799,23 @@ class VideoStreamer {
         '-maxrate', `${config.stream.maxBitrate}k`, // Strict CBR (was 1.5x)
         '-bufsize', `${Math.floor(config.stream.maxBitrate / 2)}k`, // Smaller buffer for more consistent frames
         '-x264-params', 'nal-hrd=cbr:force-cfr=1', // Force constant bitrate and frame rate
-        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+        '-vf', session.speed !== 1
+          ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
+          : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
         '-c:a', 'libopus',
         '-b:a', '320k', // Reduced from 320k (Discord limit is 128k anyway)
         '-ar', '48000',
         '-ac', '2',
-        '-af', `volume=${volumeMultiplier}`, // Removed speechnorm (CPU intensive)
+        '-af', session.speed !== 1
+          ? `volume=${volumeMultiplier},atempo=${session.speed}`
+          : `volume=${volumeMultiplier}`, // Removed speechnorm (CPU intensive)
         '-f', 'matroska',
         '-'
       );
 
+      if (session.speed !== 1) {
+        console.log(`[VideoStreamer] Playing external stream at ${session.speed}x speed`);
+      }
       console.log('[VideoStreamer] Starting FFmpeg for external stream...');
       const ffmpeg = spawn('ffmpeg', ffmpegArgs);
       session.ffmpegCommand = ffmpeg;
@@ -1326,6 +1412,9 @@ class VideoStreamer {
 
       this.streamer.stopStream();
       
+      // Stop status updater when paused
+      stopStatusUpdateTimer();
+      
       // Save position for later resume
       savePlaybackPosition(session.mediaItem.ratingKey, session.currentTime);
     }
@@ -1356,6 +1445,9 @@ class VideoStreamer {
 
     // Rejoin voice channel to prepare for new stream
     await this.streamer.joinVoice(session.guildId, session.channelId);
+
+    // Start status update timer
+    startStatusUpdateTimer(session);
 
     // Resume from saved position
     if (isLocalFile) {
@@ -1438,6 +1530,66 @@ class VideoStreamer {
     }
     
     return true;
+  }
+
+  async setSpeed(guildId: string, speed: number): Promise<boolean> {
+    const session = this.sessions.get(guildId);
+    if (!session) return false;
+
+    // Clamp speed between 0.5x and 3x
+    const oldSpeed = session.speed;
+    session.speed = Math.max(0.5, Math.min(3, speed));
+    
+    // If currently playing (not paused), restart stream at current position with new speed
+    if (!session.isPaused && session.ffmpegCommand) {
+      const currentTime = this.getCurrentTime(guildId);
+      console.log(`[VideoStreamer] Speed changing from ${oldSpeed}x to ${session.speed}x, restarting at ${Math.floor(currentTime / 1000)}s...`);
+      
+      session.currentTime = currentTime;
+      session.isStopping = true;
+      
+      try {
+        session.ffmpegCommand.kill('SIGKILL');
+      } catch {
+        // Ignore
+      }
+      
+      // Stop current stream
+      try {
+        this.streamer.stopStream();
+      } catch {
+        // Ignore
+      }
+      
+      // Wait for FFmpeg to stop
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Rejoin voice channel
+      await this.streamer.joinVoice(session.guildId, session.channelId);
+      
+      session.isStopping = false;
+      session.startedAt = Date.now();
+      
+      // Check if this is a local file
+      const isLocalFile = session.streamUrl.startsWith('/') || session.streamUrl.startsWith('./') || session.streamUrl.includes('downloads/');
+      
+      if (isLocalFile) {
+        await this.playLocalFile(session, currentTime);
+      } else if (session.isExternal) {
+        await this.playExternalStream(session, currentTime);
+      } else {
+        await this.playVideoStream(session, currentTime);
+      }
+    } else {
+      console.log(`[VideoStreamer] Speed set to ${session.speed}x (will apply on resume)`);
+    }
+    
+    return true;
+  }
+
+  getSpeed(guildId: string): number {
+    const session = this.sessions.get(guildId);
+    return session?.speed || 1;
   }
 }
 
