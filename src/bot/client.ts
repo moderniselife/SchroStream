@@ -3,6 +3,7 @@ import config from '../config.js';
 import { handleCommand } from './commands/index.js';
 import { initVideoStreamer } from '../stream/video-streamer.js';
 import { startWebServer } from '../web/server.js';
+import { startVoiceListener, stopVoiceListener } from '../voice/python-listener.js';
 
 export const client = new Client({
 });
@@ -26,6 +27,12 @@ client.on('ready', async () => {
   
   initVideoStreamer(client);
   startWebServer();
+  
+  // Start voice listener if enabled
+  if (config.voice.enabled) {
+    console.log('[SchroStream] Voice commands enabled');
+    // Voice listener will be started per guild when joining voice channels
+  }
 });
 
 function hasPermission(message: import('discord.js-selfbot-v13').Message): boolean {

@@ -9,6 +9,7 @@ import config from '../config.js';
 import plexClient from '../plex/client.js';
 import { updateWatchDeck } from '../data/watch-deck.js';
 import { popQueue, peekQueue } from '../data/queue.js';
+import { startVoiceListener, stopVoiceListener } from '../voice/python-listener.js';
 
 // Playback history file path
 const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
@@ -524,6 +525,11 @@ class VideoStreamer {
     await this.stopStream(guildId);
 
     await this.streamer.joinVoice(guildId, channelId);
+
+    // Start voice listener if enabled
+    if (config.voice.enabled) {
+      await startVoiceListener(guildId);
+    }
 
     const session: VideoStreamSession = {
       guildId,
@@ -1197,6 +1203,11 @@ class VideoStreamer {
       // Get current position BEFORE stopping anything
       const currentPosition = session.isPlaying ? this.getCurrentTime(guildId) : 0;
       console.log(`[VideoStreamer] Stopping stream, position: ${currentPosition}ms, isPlaying: ${session.isPlaying}`);
+      
+      // Stop voice listener if running
+      if (config.voice.enabled) {
+        stopVoiceListener(guildId);
+      }
       
       // Stop Plex transcode FIRST (before killing FFmpeg) - only for Plex streams
       if (!session.isExternal) {

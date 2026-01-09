@@ -1,12 +1,7 @@
-import { spawn } from 'child_process';
-import { createWriteStream, existsSync, mkdirSync, unlinkSync } from 'fs';
-import { join } from 'path';
+import { spawn, ChildProcess } from 'child_process';
+import { existsSync, unlinkSync } from 'fs';
 import config from '../config.js';
 import { getVideoStreamer } from '../stream/video-streamer.js';
-
-// Vosk model path - download from https://alphacephei.com/vosk/models
-const MODEL_PATH = config.voice.modelPath || '/app/vosk-model';
-const WAKE_WORD = config.voice.wakeWord;
 
 interface VoiceCommand {
   action: string;
@@ -18,13 +13,13 @@ function parseCommand(text: string): VoiceCommand | null {
   const lowerText = text.toLowerCase().trim();
   
   // Check for wake word
-  if (!lowerText.includes(WAKE_WORD)) {
+  if (!lowerText.includes(config.voice.wakeWord)) {
     return null;
   }
   
   // Extract command after wake word
-  const wakeIndex = lowerText.indexOf(WAKE_WORD);
-  const commandPart = lowerText.slice(wakeIndex + WAKE_WORD.length).trim();
+  const wakeIndex = lowerText.indexOf(config.voice.wakeWord);
+  const commandPart = lowerText.slice(wakeIndex + config.voice.wakeWord.length).trim();
   
   // Pause/Play commands
   if (commandPart.includes('pause') || commandPart.includes('stop playing')) {
@@ -160,51 +155,49 @@ async function executeCommand(guildId: string, command: VoiceCommand): Promise<s
   return 'Unknown command';
 }
 
-// Voice listener class
-export class VoiceListener {
+// Python speech recognition listener
+export class PythonVoiceListener {
   private guildId: string;
   private isListening: boolean = false;
+  private pythonProcess: ChildProcess | null = null;
   private audioBuffer: Buffer[] = [];
   private silenceTimeout: NodeJS.Timeout | null = null;
-  private model: any = null;
-  private recognizer: any = null;
+  private tempAudioPath: string;
   
   constructor(guildId: string) {
     this.guildId = guildId;
+    this.tempAudioPath = `/tmp/voice_${guildId}.wav`;
   }
   
   async initialize(): Promise<boolean> {
     if (!config.voice.enabled) {
-      console.log('[VoiceListener] Voice commands disabled');
+      console.log('[PythonVoiceListener] Voice commands disabled');
       return false;
     }
     
-    if (!existsSync(MODEL_PATH)) {
-      console.error(`[VoiceListener] Vosk model not found at ${MODEL_PATH}`);
-      console.error('[VoiceListener] Download a model from https://alphacephei.com/vosk/models');
-      console.error('[VoiceListener] Recommended: vosk-model-small-en-us-0.15 (40MB)');
-      return false;
-    }
-    
+    // Check if Python and speech_recognition are available
     try {
-      const vosk = await import('vosk');
-      vosk.setLogLevel(-1); // Disable vosk logs
-      
-      this.model = new vosk.Model(MODEL_PATH);
-      this.recognizer = new vosk.Recognizer({ model: this.model, sampleRate: 48000 });
-      
-      console.log(`[VoiceListener] Initialized for guild ${this.guildId}`);
-      console.log(`[VoiceListener] Wake word: "${WAKE_WORD}"`);
-      return true;
+      const checkPython = spawn('python3', ['-c', 'import speech_recognition; print("OK")']);
+      await new Promise((resolve, reject) => {
+        checkPython.on('close', (code) => {
+          if (code === 0) resolve(true);
+          else reject(new Error('Python or speech_recognition not available'));
+        });
+        checkPython.on('error', reject);
+      });
     } catch (error) {
-      console.error('[VoiceListener] Failed to initialize:', error);
+      console.error('[PythonVoiceListener] Python not available:', error);
       return false;
     }
+    
+    console.log(`[PythonVoiceListener] Initialized for guild ${this.guildId}`);
+    console.log(`[PythonVoiceListener] Wake word: "${config.voice.wakeWord}"`);
+    return true;
   }
   
   // Process incoming audio data
   processAudio(audioData: Buffer): void {
-    if (!this.isListening || !this.recognizer) return;
+    if (!this.isListening) return;
     
     // Convert to proper format if needed (Discord sends opus, we need PCM)
     this.audioBuffer.push(audioData);
@@ -221,40 +214,84 @@ export class VoiceListener {
   }
   
   private async processBuffer(): Promise<void> {
-    if (this.audioBuffer.length === 0 || !this.recognizer) return;
+    if (this.audioBuffer.length === 0) return;
     
     const fullBuffer = Buffer.concat(this.audioBuffer);
     this.audioBuffer = [];
     
     try {
-      // Feed audio to recognizer
-      if (this.recognizer.acceptWaveform(fullBuffer)) {
-        const result = JSON.parse(this.recognizer.result());
-        if (result.text) {
-          console.log(`[VoiceListener] Heard: "${result.text}"`);
-          
-          const command = parseCommand(result.text);
-          if (command) {
-            console.log(`[VoiceListener] Command: ${command.action}`, command.value || '');
-            const response = await executeCommand(this.guildId, command);
-            console.log(`[VoiceListener] Response: ${response}`);
-          }
-        }
-      } else {
-        // Partial result
-        const partial = JSON.parse(this.recognizer.partialResult());
-        if (partial.partial && partial.partial.includes(WAKE_WORD)) {
-          console.log(`[VoiceListener] Partial (wake word detected): "${partial.partial}"`);
+      // Write audio to temporary file
+      const fs = await import('fs');
+      fs.writeFileSync(this.tempAudioPath, fullBuffer);
+      
+      // Use Python to transcribe
+      const transcription = await this.transcribeAudio();
+      if (transcription) {
+        console.log(`[PythonVoiceListener] Heard: "${transcription}"`);
+        
+        const command = parseCommand(transcription);
+        if (command) {
+          console.log(`[PythonVoiceListener] Command: ${command.action}`, command.value || '');
+          const response = await executeCommand(this.guildId, command);
+          console.log(`[PythonVoiceListener] Response: ${response}`);
         }
       }
+      
+      // Clean up temp file
+      try {
+        fs.unlinkSync(this.tempAudioPath);
+      } catch {
+        // Ignore cleanup errors
+      }
     } catch (error) {
-      console.error('[VoiceListener] Error processing audio:', error);
+      console.error('[PythonVoiceListener] Error processing audio:', error);
     }
+  }
+  
+  private transcribeAudio(): Promise<string | null> {
+    return new Promise((resolve, reject) => {
+      const python = spawn('python3', ['-c', `
+import speech_recognition as sr
+import sys
+
+try:
+    r = sr.Recognizer()
+    with sr.AudioFile("${this.tempAudioPath}") as source:
+        audio = r.record(source, duration=5)
+        text = r.recognize_google(audio)
+        print(text)
+except Exception as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(1)
+      `]);
+      
+      let output = '';
+      python.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+      
+      python.stderr.on('data', (data) => {
+        console.error('[PythonVoiceListener] Transcription error:', data.toString());
+      });
+      
+      python.on('close', (code) => {
+        if (code === 0) {
+          const text = output.trim();
+          if (text && text !== 'ERROR: ' && !text.startsWith('ERROR:')) {
+            resolve(text);
+          } else {
+            resolve(null);
+          }
+        } else {
+          resolve(null);
+        }
+      });
+    });
   }
   
   start(): void {
     this.isListening = true;
-    console.log(`[VoiceListener] Started listening for guild ${this.guildId}`);
+    console.log(`[PythonVoiceListener] Started listening for guild ${this.guildId}`);
   }
   
   stop(): void {
@@ -263,31 +300,27 @@ export class VoiceListener {
       clearTimeout(this.silenceTimeout);
     }
     this.audioBuffer = [];
-    console.log(`[VoiceListener] Stopped listening for guild ${this.guildId}`);
+    console.log(`[PythonVoiceListener] Stopped listening for guild ${this.guildId}`);
   }
   
   cleanup(): void {
     this.stop();
-    if (this.recognizer) {
-      this.recognizer.free();
-      this.recognizer = null;
-    }
-    if (this.model) {
-      this.model.free();
-      this.model = null;
+    if (this.pythonProcess) {
+      this.pythonProcess.kill();
+      this.pythonProcess = null;
     }
   }
 }
 
 // Map of active voice listeners per guild
-const listeners = new Map<string, VoiceListener>();
+const listeners = new Map<string, PythonVoiceListener>();
 
 export async function startVoiceListener(guildId: string): Promise<boolean> {
   if (listeners.has(guildId)) {
     return true; // Already listening
   }
   
-  const listener = new VoiceListener(guildId);
+  const listener = new PythonVoiceListener(guildId);
   const initialized = await listener.initialize();
   
   if (initialized) {
@@ -307,7 +340,7 @@ export function stopVoiceListener(guildId: string): void {
   }
 }
 
-export function getVoiceListener(guildId: string): VoiceListener | undefined {
+export function getVoiceListener(guildId: string): PythonVoiceListener | undefined {
   return listeners.get(guildId);
 }
 
