@@ -399,6 +399,14 @@ export async function initControllerBot(): Promise<Client | null> {
         await handleModalSubmit(interaction);
       }
     } catch (error) {
+      // Check if it's an expired interaction error
+      if (error instanceof Error && 
+          (error.message.includes('Unknown interaction') ||
+           (error as any).code === 10062)) {
+        console.log('[Controller] Interaction expired (15min timeout), ignoring');
+        return;
+      }
+      
       console.error('[Controller] Interaction error:', error);
       if (interaction.isRepliable()) {
         const reply = { content: '❌ An error occurred', ephemeral: true };
@@ -411,10 +419,14 @@ export async function initControllerBot(): Promise<Client | null> {
         } catch (followUpError) {
           // Handle "Unknown Message" error - this happens when the original interaction message
           // has been deleted or expired (15 minute timeout)
+          // Handle "Unknown interaction" error - this happens when the interaction itself
+          // has expired (15 minute timeout)
           if (followUpError instanceof Error && 
               (followUpError.message.includes('Unknown Message') || 
-               (followUpError as any).code === 10008)) {
-            console.log('[Controller] Original interaction message expired or deleted, skipping error response');
+               followUpError.message.includes('Unknown interaction') ||
+               (followUpError as any).code === 10008 ||
+               (followUpError as any).code === 10062)) {
+            console.log('[Controller] Original interaction expired (15min timeout), skipping error response');
           } else {
             console.error('[Controller] Failed to send error response:', followUpError);
           }
