@@ -1670,7 +1670,28 @@ class VideoStreamer {
       
       session.isStopping = false;
       session.startedAt = Date.now();
-      await this.playVideoStream(session, currentTime);
+      
+      // Check if this is a local file or external stream
+      const isLocalFile = session.streamUrl.startsWith('/') || session.streamUrl.startsWith('./') || session.streamUrl.includes('downloads/');
+      
+      try {
+        if (isLocalFile) {
+          await this.playLocalFile(session, currentTime);
+        } else if (session.isExternal) {
+          await this.playExternalStream(session, currentTime);
+        } else {
+          await this.playVideoStream(session, currentTime);
+        }
+        // Wait for old demuxer to fully close before clearing isStopping
+        await new Promise(resolve => setTimeout(resolve, 4000));
+        session.isStopping = false;
+        console.log(`[VideoStreamer] Volume change completed - now at ${session.volume}%`);
+      } catch (error) {
+        console.error('[VideoStreamer] Failed to restart stream after volume change:', error);
+        // Clean up on failure
+        this.sessions.delete(guildId);
+        return false;
+      }
     } else {
       console.log(`[VideoStreamer] Volume set to ${session.volume}% (will apply on resume)`);
     }
