@@ -241,6 +241,9 @@ const commands = [
         .setMaxValue(50)
     ),
   new SlashCommandBuilder()
+    .setName('delete-all-downloads')
+    .setDescription('Delete all downloaded videos'),
+  new SlashCommandBuilder()
     .setName('channels')
     .setDescription('List available Live TV channels'),
   new SlashCommandBuilder()
@@ -546,6 +549,9 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'delete-download':
       await handleDeleteDownload(interaction);
+      break;
+    case 'delete-all-downloads':
+      await handleDeleteAllDownloads(interaction);
       break;
     case 'channels':
       await handleChannels(interaction);
@@ -3833,6 +3839,101 @@ async function handleDeleteDownload(interaction: ChatInputCommandInteraction): P
   } catch (error) {
     console.error('[Controller] Error in handleDeleteDownload:', error);
     await interaction.editReply('❌ Failed to delete downloaded video');
+  }
+}
+
+async function handleDeleteAllDownloads(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply();
+
+  try {
+    const { readdirSync, statSync, unlinkSync } = await import('fs');
+    const { join } = await import('path');
+    
+    const downloadsDir = join(process.cwd(), 'downloads');
+    
+    // Check if downloads directory exists
+    try {
+      readdirSync(downloadsDir);
+    } catch {
+      await interaction.editReply('📁 No downloads directory found');
+      return;
+    }
+
+    // Get all video files
+    const files = readdirSync(downloadsDir);
+    const videoFiles = files.filter(file => 
+      file.endsWith('.mp4') || 
+      file.endsWith('.webm') || 
+      file.endsWith('.mkv') || 
+      file.endsWith('.avi')
+    );
+
+    if (videoFiles.length === 0) {
+      await interaction.editReply('📁 No downloaded videos found');
+      return;
+    }
+
+    let totalSize = 0;
+    let deletedCount = 0;
+    let errorCount = 0;
+    const errors: string[] = [];
+
+    // Delete each video file and its metadata
+    for (const file of videoFiles) {
+      try {
+        const filePath = join(downloadsDir, file);
+        const stats = statSync(filePath);
+        totalSize += stats.size;
+        
+        // Delete the video file
+        unlinkSync(filePath);
+        deletedCount++;
+        
+        // Also delete the metadata file if it exists
+        const metadataPath = filePath.replace(/\.(mp4|webm|mkv|avi)$/, '.json');
+        try {
+          const { existsSync, unlinkSync: fsUnlinkSync } = await import('fs');
+          if (existsSync(metadataPath)) {
+            fsUnlinkSync(metadataPath);
+          }
+        } catch (metaError) {
+          // Don't count metadata errors as critical
+          console.error('[Controller] Failed to delete metadata file:', metaError);
+        }
+      } catch (error) {
+        errorCount++;
+        errors.push(file);
+        console.error(`[Controller] Failed to delete ${file}:`, error);
+      }
+    }
+
+    const totalSizeMB = (totalSize / (1024 * 1024)).toFixed(1);
+    
+    const embed = new EmbedBuilder()
+      .setTitle('🗑️ All Downloads Deleted')
+      .setDescription(`Successfully deleted **${deletedCount}** video file(s)`)
+      .addFields(
+        { name: 'Total Space Freed', value: `${totalSizeMB} MB`, inline: true },
+        { name: 'Files Deleted', value: `${deletedCount}`, inline: true }
+      )
+      .setColor(0xff0000);
+
+    if (errorCount > 0) {
+      embed.addFields(
+        { name: 'Errors', value: `${errorCount} files failed to delete`, inline: true }
+      );
+      if (errors.length > 0) {
+        embed.addFields(
+          { name: 'Failed Files', value: errors.slice(0, 10).join('\n'), inline: false }
+        );
+      }
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+
+  } catch (error) {
+    console.error('[Controller] Error in handleDeleteAllDownloads:', error);
+    await interaction.editReply('❌ Failed to delete all downloads');
   }
 }
 
