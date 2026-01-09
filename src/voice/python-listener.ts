@@ -271,7 +271,13 @@ export class PythonVoiceListener {
   }
   
   private convertOpusToWav(opusPath: string, wavPath: string): Promise<boolean> {
-    return new Promise((resolve) => {
+    return new Promise(async (resolve) => {
+      const fs = await import('fs');
+      
+      // Check input file size
+      const inputSize = fs.statSync(opusPath).size;
+      console.log(`[PythonVoiceListener] Converting ${inputSize} bytes of PCM audio`);
+      
       // Discord @discordjs/voice sends decoded PCM s16le at 48kHz stereo
       // The audio stream is already decoded from Opus by the library
       const ffmpeg = spawn('ffmpeg', [
@@ -290,11 +296,22 @@ export class PythonVoiceListener {
         stderrOutput += data.toString();
       });
       
-      ffmpeg.on('close', (code) => {
+      ffmpeg.on('close', async (code) => {
         if (code !== 0) {
           console.error('[PythonVoiceListener] FFmpeg failed:', stderrOutput.slice(-500));
+          resolve(false);
+          return;
         }
-        resolve(code === 0);
+        
+        // Check output file
+        try {
+          const outputSize = fs.statSync(wavPath).size;
+          console.log(`[PythonVoiceListener] Created WAV file: ${outputSize} bytes`);
+          resolve(outputSize > 44); // WAV header is 44 bytes
+        } catch {
+          console.error('[PythonVoiceListener] WAV file not created');
+          resolve(false);
+        }
       });
       
       ffmpeg.on('error', (error) => {
@@ -309,31 +326,74 @@ export class PythonVoiceListener {
       const python = spawn('python3', ['-c', `
 import speech_recognition as sr
 import sys
+import os
+
+wav_path = "${this.tempAudioPath}"
 
 try:
+    # Check if file exists and has content
+    if not os.path.exists(wav_path):
+        print(f"ERROR: File not found: {wav_path}", file=sys.stderr)
+        sys.exit(1)
+    
+    file_size = os.path.getsize(wav_path)
+    print(f"DEBUG: WAV file size: {file_size} bytes", file=sys.stderr)
+    
+    if file_size < 1000:
+        print(f"ERROR: File too small: {file_size} bytes", file=sys.stderr)
+        sys.exit(1)
+    
     r = sr.Recognizer()
-    with sr.AudioFile("${this.tempAudioPath}") as source:
-        audio = r.record(source, duration=5)
-        text = r.recognize_google(audio)
-        print(text)
+    r.energy_threshold = 300  # Lower threshold for quiet audio
+    
+    with sr.AudioFile(wav_path) as source:
+        print(f"DEBUG: Audio duration: {source.DURATION}s, sample rate: {source.SAMPLE_RATE}, sample width: {source.SAMPLE_WIDTH}", file=sys.stderr)
+        audio = r.record(source)
+        print(f"DEBUG: Recorded {len(audio.get_raw_data())} bytes of audio data", file=sys.stderr)
+        
+        try:
+            text = r.recognize_google(audio)
+            print(text)
+        except sr.UnknownValueError:
+            print("ERROR: Could not understand audio (no speech detected)", file=sys.stderr)
+            sys.exit(1)
+        except sr.RequestError as e:
+            print(f"ERROR: Google API error: {e}", file=sys.stderr)
+            sys.exit(1)
+            
 except Exception as e:
-    print(f"ERROR: {e}", file=sys.stderr)
+    import traceback
+    print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr)
     sys.exit(1)
       `]);
       
       let output = '';
+      let errorOutput = '';
       python.stdout.on('data', (data) => {
         output += data.toString();
       });
       
       python.stderr.on('data', (data) => {
-        console.error('[PythonVoiceListener] Transcription error:', data.toString());
+        errorOutput += data.toString();
       });
       
       python.on('close', (code) => {
+        // Log debug info
+        if (errorOutput) {
+          const lines = errorOutput.trim().split('\n');
+          for (const line of lines) {
+            if (line.startsWith('DEBUG:')) {
+              console.log(`[PythonVoiceListener] ${line}`);
+            } else if (line.includes('ERROR:') || line.includes('Traceback')) {
+              console.error(`[PythonVoiceListener] ${line}`);
+            }
+          }
+        }
+        
         if (code === 0) {
           const text = output.trim();
-          if (text && text !== 'ERROR: ' && !text.startsWith('ERROR:')) {
+          if (text && !text.startsWith('ERROR:')) {
             resolve(text);
           } else {
             resolve(null);
