@@ -58,25 +58,33 @@ export class VoiceAudioReceiver {
         return;
       }
       
-      // Check if there's already a voice connection
+      // Check if there's already a voice connection from @discordjs/voice
       let connection = getVoiceConnection(this.guildId);
       
       if (!connection) {
-        // Create a new voice connection using @discordjs/voice
-        console.log('[VoiceAudioReceiver] Creating new voice connection...');
-        connection = joinVoiceChannel({
-          channelId: this.channelId,
-          guildId: this.guildId,
-          adapterCreator: guild.voiceAdapterCreator as any,
-          selfDeaf: false,
-          selfMute: true,
-        });
+        // Try to adopt the existing connection from discord-video-stream
+        console.log('[VoiceAudioReceiver] No @discordjs/voice connection found, creating adapter...');
         
-        // Wait for connection to be ready
-        await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
-        console.log('[VoiceAudioReceiver] Voice connection ready');
+        // Create voice connection that adopts the existing one
+        try {
+          connection = joinVoiceChannel({
+            channelId: this.channelId,
+            guildId: this.guildId,
+            adapterCreator: guild.voiceAdapterCreator as any,
+            selfDeaf: false,
+            selfMute: true,
+          });
+          
+          // Wait for connection to be ready with shorter timeout
+          await entersState(connection, VoiceConnectionStatus.Ready, 5_000);
+          console.log('[VoiceAudioReceiver] Voice connection ready');
+        } catch (connError) {
+          console.log('[VoiceAudioReceiver] Could not create voice connection (bot already connected via streaming library)');
+          console.log('[VoiceAudioReceiver] Will use Python listener for microphone-based voice commands');
+          return;
+        }
       } else {
-        console.log('[VoiceAudioReceiver] Using existing voice connection');
+        console.log('[VoiceAudioReceiver] Using existing @discordjs/voice connection');
       }
       
       // Get the voice receiver

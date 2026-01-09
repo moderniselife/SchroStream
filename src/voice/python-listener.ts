@@ -292,6 +292,94 @@ except Exception as e:
   start(): void {
     this.isListening = true;
     console.log(`[PythonVoiceListener] Started listening for guild ${this.guildId}`);
+    
+    // Start continuous microphone listening in background
+    this.startContinuousListening();
+  }
+  
+  private startContinuousListening(): void {
+    if (!this.isListening) return;
+    
+    console.log('[PythonVoiceListener] Starting continuous microphone listening...');
+    
+    // Spawn Python process for continuous listening
+    this.pythonProcess = spawn('python3', ['-c', `
+import speech_recognition as sr
+import sys
+
+r = sr.Recognizer()
+r.energy_threshold = 300
+r.dynamic_energy_threshold = True
+r.pause_threshold = 0.8
+
+print("LISTENING", flush=True)
+
+try:
+    with sr.Microphone() as source:
+        r.adjust_for_ambient_noise(source, duration=0.5)
+        print("READY", flush=True)
+        
+        while True:
+            try:
+                audio = r.listen(source, timeout=10, phrase_time_limit=5)
+                try:
+                    text = r.recognize_google(audio)
+                    print(f"HEARD:{text}", flush=True)
+                except sr.UnknownValueError:
+                    pass
+                except sr.RequestError as e:
+                    print(f"ERROR:API error {e}", file=sys.stderr, flush=True)
+            except sr.WaitTimeoutError:
+                pass
+            except Exception as e:
+                print(f"ERROR:{e}", file=sys.stderr, flush=True)
+except Exception as e:
+    print(f"MIC_ERROR:{e}", file=sys.stderr, flush=True)
+    sys.exit(1)
+    `]);
+    
+    this.pythonProcess.stdout?.on('data', async (data) => {
+      const lines = data.toString().trim().split('\n');
+      for (const line of lines) {
+        if (line === 'LISTENING') {
+          console.log('[PythonVoiceListener] Python process starting...');
+        } else if (line === 'READY') {
+          console.log('[PythonVoiceListener] Microphone ready, listening for voice commands');
+        } else if (line.startsWith('HEARD:')) {
+          const text = line.substring(6);
+          console.log(`[PythonVoiceListener] Heard: "${text}"`);
+          
+          const command = parseCommand(text);
+          if (command) {
+            console.log(`[PythonVoiceListener] Command detected: ${command.action}`, command.value || '');
+            try {
+              const response = await executeCommand(this.guildId, command);
+              console.log(`[PythonVoiceListener] Executed: ${response}`);
+            } catch (error) {
+              console.error('[PythonVoiceListener] Command execution error:', error);
+            }
+          }
+        }
+      }
+    });
+    
+    this.pythonProcess.stderr?.on('data', (data) => {
+      const msg = data.toString().trim();
+      if (msg.includes('MIC_ERROR') || msg.includes('No Default Input Device')) {
+        console.log('[PythonVoiceListener] No microphone available in this environment');
+        console.log('[PythonVoiceListener] Voice commands will only work with Discord audio reception');
+      } else {
+        console.error('[PythonVoiceListener] Error:', msg);
+      }
+    });
+    
+    this.pythonProcess.on('close', (code) => {
+      console.log(`[PythonVoiceListener] Python process exited with code ${code}`);
+      if (this.isListening && code !== 0) {
+        console.log('[PythonVoiceListener] Will retry in 5 seconds...');
+        setTimeout(() => this.startContinuousListening(), 5000);
+      }
+    });
   }
   
   stop(): void {
