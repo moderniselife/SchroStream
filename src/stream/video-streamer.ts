@@ -10,6 +10,7 @@ import plexClient from '../plex/client.js';
 import { updateWatchDeck } from '../data/watch-deck.js';
 import { popQueue, peekQueue } from '../data/queue.js';
 import { startVoiceListener, stopVoiceListener } from '../voice/python-listener.js';
+import { startVoiceReceiver, stopVoiceReceiver } from '../voice/receiver.js';
 
 // Playback history file path
 const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
@@ -34,6 +35,7 @@ export interface VideoStreamSession {
   sessionId?: string; // Plex transcode session ID for reuse
   messageId?: string; // Discord message ID for embed updates
   textChannelId?: string; // Discord text channel ID for embed updates
+  mediaUdp?: import('@dank074/discord-video-stream').MediaUdp;
 }
 
 // Store playback positions for resume functionality (ratingKey -> position in ms)
@@ -568,7 +570,7 @@ class VideoStreamer {
   ): Promise<void> {
     await this.stopStream(guildId);
 
-    await this.streamer.joinVoice(guildId, channelId);
+    const mediaUdp = await this.streamer.joinVoice(guildId, channelId);
 
     // Extract session ID from stream URL
     const urlObj = new URL(streamUrl);
@@ -593,12 +595,18 @@ class VideoStreamer {
       isExternal: true,
       audioUrl: audioUrl || undefined,
       sessionId,
+      mediaUdp,
     };
 
     this.sessions.set(guildId, session);
     
     // Start status update timer
     startStatusUpdateTimer(session);
+
+    // Start voice receiver if enabled
+    if (config.voice.enabled) {
+      startVoiceReceiver(guildId, mediaUdp);
+    }
 
     this.playExternalStream(session);
   }
@@ -1207,6 +1215,7 @@ class VideoStreamer {
       // Stop voice listener if running
       if (config.voice.enabled) {
         stopVoiceListener(guildId);
+        stopVoiceReceiver(guildId);
       }
       
       // Stop Plex transcode FIRST (before killing FFmpeg) - only for Plex streams
