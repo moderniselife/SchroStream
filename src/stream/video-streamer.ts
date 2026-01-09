@@ -1563,7 +1563,14 @@ class VideoStreamer {
       await new Promise(resolve => setTimeout(resolve, 500));
       
       // Rejoin voice channel
-      await this.streamer.joinVoice(session.guildId, session.channelId);
+      try {
+        await this.streamer.joinVoice(session.guildId, session.channelId);
+      } catch (error) {
+        console.error('[VideoStreamer] Failed to rejoin voice channel for speed change:', error);
+        // Reset stopping flag so user can try again
+        session.isStopping = false;
+        return;
+      }
       
       session.isStopping = false;
       session.startedAt = Date.now();
@@ -1571,12 +1578,19 @@ class VideoStreamer {
       // Check if this is a local file
       const isLocalFile = session.streamUrl.startsWith('/') || session.streamUrl.startsWith('./') || session.streamUrl.includes('downloads/');
       
-      if (isLocalFile) {
-        await this.playLocalFile(session, currentTime);
-      } else if (session.isExternal) {
-        await this.playExternalStream(session, currentTime);
-      } else {
-        await this.playVideoStream(session, currentTime);
+      try {
+        if (isLocalFile) {
+          await this.playLocalFile(session, currentTime);
+        } else if (session.isExternal) {
+          await this.playExternalStream(session, currentTime);
+        } else {
+          await this.playVideoStream(session, currentTime);
+        }
+        console.log(`[VideoStreamer] Speed change completed - now playing at ${speed}x`);
+      } catch (error) {
+        console.error('[VideoStreamer] Failed to restart stream after speed change:', error);
+        // Clean up on failure
+        this.sessions.delete(guildId);
       }
     } else {
       console.log(`[VideoStreamer] Speed set to ${session.speed}x (will apply on resume)`);
