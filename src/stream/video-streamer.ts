@@ -1278,7 +1278,7 @@ class VideoStreamer {
       
       // Wait for old demuxer to fully close before clearing isStopping
       // This prevents the old stream's "end of stream" from triggering cleanup
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 4000));
       session.isStopping = false;
       return true;
     }
@@ -1313,7 +1313,7 @@ class VideoStreamer {
       
       // Wait for old demuxer to fully close before clearing isStopping
       // This prevents the old stream's "end of stream" from triggering cleanup
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 4000));
       session.isStopping = false;
       return true;
     }
@@ -1469,7 +1469,7 @@ class VideoStreamer {
     await this.playVideoStream(session, timeMs);
     
     // Wait for old demuxer to fully close before clearing isStopping
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 4000));
     session.isStopping = false;
     return true;
   }
@@ -1539,7 +1539,7 @@ class VideoStreamer {
     }
     
     // Wait for old demuxer to fully close before clearing isStopping
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 4000));
     session.isStopping = false;
     
     return true;
@@ -1665,7 +1665,7 @@ class VideoStreamer {
           await this.playVideoStream(session, currentTime);
         }
         // Wait for old demuxer to fully close before clearing isStopping
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 4000));
         session.isStopping = false;
         console.log(`[VideoStreamer] Speed change completed - now playing at ${speed}x`);
       } catch (error) {
