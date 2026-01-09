@@ -526,7 +526,22 @@ class VideoStreamer {
   ): Promise<void> {
     await this.stopStream(guildId);
 
-    await this.streamer.joinVoice(guildId, channelId);
+    const mediaUdp = await this.streamer.joinVoice(guildId, channelId);
+
+    // Undeafen the bot to receive voice commands
+    const guild = this.client.guilds.cache.get(guildId);
+    if (guild) {
+      guild.shard?.send({
+        op: 4,
+        d: {
+          guild_id: guildId,
+          channel_id: channelId,
+          self_mute: false,
+          self_deaf: false,
+        }
+      });
+      console.log('[VideoStreamer] Bot undeafened - can now hear voice commands');
+    }
 
     // Start voice listener if enabled
     if (config.voice.enabled) {
@@ -550,12 +565,18 @@ class VideoStreamer {
       userId,
       isExternal: true, // Treat local files as external streams
       audioUrl: undefined,
+      mediaUdp,
     };
 
     this.sessions.set(guildId, session);
     
     // Start status update timer
     startStatusUpdateTimer(session);
+
+    // Start voice receiver if enabled
+    if (config.voice.enabled) {
+      startVoiceReceiver(guildId, mediaUdp);
+    }
 
     await this.playLocalFile(session, startTimeMs);
   }
@@ -571,6 +592,23 @@ class VideoStreamer {
     await this.stopStream(guildId);
 
     const mediaUdp = await this.streamer.joinVoice(guildId, channelId);
+
+    // Undeafen the bot to receive voice commands
+    // Send voice state update through Discord client
+    const guild = this.client.guilds.cache.get(guildId);
+    if (guild) {
+      // Update voice state to undeafen
+      guild.shard?.send({
+        op: 4,
+        d: {
+          guild_id: guildId,
+          channel_id: channelId,
+          self_mute: false,
+          self_deaf: false,
+        }
+      });
+      console.log('[VideoStreamer] Bot undeafened - can now hear voice commands');
+    }
 
     // Extract session ID from stream URL
     const urlObj = new URL(streamUrl);
