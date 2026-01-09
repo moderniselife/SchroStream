@@ -10,7 +10,7 @@ import plexClient from '../plex/client.js';
 import { updateWatchDeck } from '../data/watch-deck.js';
 import { popQueue, peekQueue } from '../data/queue.js';
 import { startVoiceListener, stopVoiceListener } from '../voice/python-listener.js';
-import { startVoiceReceiver, stopVoiceReceiver } from '../voice/receiver.js';
+import { startVoiceReceiver, stopVoiceReceiver, setDiscordClient } from '../voice/receiver.js';
 
 // Playback history file path
 const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
@@ -575,7 +575,8 @@ class VideoStreamer {
 
     // Start voice receiver if enabled
     if (config.voice.enabled) {
-      startVoiceReceiver(guildId, mediaUdp);
+      setDiscordClient(this.client);
+      startVoiceReceiver(guildId, channelId);
     }
 
     await this.playLocalFile(session, startTimeMs);
@@ -643,7 +644,8 @@ class VideoStreamer {
 
     // Start voice receiver if enabled
     if (config.voice.enabled) {
-      startVoiceReceiver(guildId, mediaUdp);
+      setDiscordClient(this.client);
+      startVoiceReceiver(guildId, channelId);
     }
 
     this.playExternalStream(session);
