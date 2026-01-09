@@ -219,10 +219,32 @@ export class PythonVoiceListener {
     const fullBuffer = Buffer.concat(this.audioBuffer);
     this.audioBuffer = [];
     
+    // Skip if buffer is too small (likely noise)
+    if (fullBuffer.length < 1000) {
+      console.log(`[PythonVoiceListener] Buffer too small (${fullBuffer.length} bytes), skipping`);
+      return;
+    }
+    
     try {
-      // Write audio to temporary file
       const fs = await import('fs');
-      fs.writeFileSync(this.tempAudioPath, fullBuffer);
+      const opusPath = this.tempAudioPath.replace('.wav', '.opus');
+      const wavPath = this.tempAudioPath;
+      
+      // Write raw opus data to file
+      fs.writeFileSync(opusPath, fullBuffer);
+      
+      // Convert Opus to WAV using FFmpeg
+      // Discord audio is 48kHz stereo Opus
+      const converted = await this.convertOpusToWav(opusPath, wavPath);
+      
+      if (!converted) {
+        console.log('[PythonVoiceListener] Failed to convert audio');
+        try { fs.unlinkSync(opusPath); } catch {}
+        return;
+      }
+      
+      // Clean up opus file
+      try { fs.unlinkSync(opusPath); } catch {}
       
       // Use Python to transcribe
       const transcription = await this.transcribeAudio();
@@ -239,13 +261,44 @@ export class PythonVoiceListener {
       
       // Clean up temp file
       try {
-        fs.unlinkSync(this.tempAudioPath);
+        fs.unlinkSync(wavPath);
       } catch {
         // Ignore cleanup errors
       }
     } catch (error) {
       console.error('[PythonVoiceListener] Error processing audio:', error);
     }
+  }
+  
+  private convertOpusToWav(opusPath: string, wavPath: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      // Discord sends raw Opus frames at 48kHz stereo
+      // FFmpeg can decode this to WAV
+      const ffmpeg = spawn('ffmpeg', [
+        '-y',
+        '-f', 's16le',           // Input format: signed 16-bit little-endian PCM
+        '-ar', '48000',          // Input sample rate: 48kHz
+        '-ac', '2',              // Input channels: stereo
+        '-i', opusPath,          // Input file
+        '-ar', '16000',          // Output sample rate: 16kHz (better for speech recognition)
+        '-ac', '1',              // Output channels: mono
+        wavPath                   // Output file
+      ]);
+      
+      ffmpeg.stderr.on('data', (data) => {
+        // FFmpeg outputs to stderr, ignore unless debugging
+        // console.log('[FFmpeg]', data.toString());
+      });
+      
+      ffmpeg.on('close', (code) => {
+        resolve(code === 0);
+      });
+      
+      ffmpeg.on('error', (error) => {
+        console.error('[PythonVoiceListener] FFmpeg error:', error);
+        resolve(false);
+      });
+    });
   }
   
   private transcribeAudio(): Promise<string | null> {
