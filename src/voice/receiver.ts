@@ -3,20 +3,58 @@ import {
   VoiceConnectionStatus, 
   entersState,
   getVoiceConnection,
-  EndBehaviorType
+  EndBehaviorType,
+  VoiceConnection
 } from '@discordjs/voice';
-import { createWriteStream, WriteStream } from 'fs';
-import { join } from 'path';
+import { Client, GatewayIntentBits } from 'discord.js';
 import { processVoiceAudio } from './python-listener.js';
-import type { Client, VoiceBasedChannel } from 'discord.js-selfbot-v13';
-// Note: @discordjs/opus may need to be installed for Opus decoding
+import config from '../config.js';
 
-// Store the Discord client reference
-let discordClient: Client | null = null;
+// Separate bot client for voice listening (not the selfbot)
+let voiceListenerBot: Client | null = null;
+let voiceConnection: VoiceConnection | null = null;
+let isInitialized = false;
 
-export function setDiscordClient(client: Client): void {
-  discordClient = client;
-  console.log('[VoiceReceiver] Discord client set');
+async function initVoiceListenerBot(): Promise<boolean> {
+  if (isInitialized && voiceListenerBot) return true;
+  
+  const botToken = config.discord.botToken;
+  if (!botToken) {
+    console.error('[VoiceReceiver] No BOT_TOKEN configured - voice commands disabled');
+    console.error('[VoiceReceiver] Add BOT_TOKEN to .env for a separate bot to listen for voice commands');
+    return false;
+  }
+  
+  try {
+    voiceListenerBot = new Client({
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildVoiceStates,
+      ],
+    });
+    
+    await voiceListenerBot.login(botToken);
+    
+    voiceListenerBot.once('ready', () => {
+      console.log(`[VoiceReceiver] Voice listener bot ready: ${voiceListenerBot?.user?.tag}`);
+    });
+    
+    // Wait for ready
+    await new Promise<void>((resolve) => {
+      if (voiceListenerBot?.isReady()) {
+        resolve();
+      } else {
+        voiceListenerBot?.once('ready', () => resolve());
+      }
+    });
+    
+    isInitialized = true;
+    console.log('[VoiceReceiver] Voice listener bot initialized successfully');
+    return true;
+  } catch (error) {
+    console.error('[VoiceReceiver] Failed to initialize voice listener bot:', error);
+    return false;
+  }
 }
 
 export class VoiceAudioReceiver {
@@ -34,8 +72,10 @@ export class VoiceAudioReceiver {
   }
   
   async start(): Promise<void> {
-    if (!discordClient) {
-      console.error('[VoiceAudioReceiver] Discord client not set!');
+    // Initialize the separate voice listener bot
+    const initialized = await initVoiceListenerBot();
+    if (!initialized || !voiceListenerBot) {
+      console.error('[VoiceAudioReceiver] Voice listener bot not available');
       return;
     }
     
@@ -45,46 +85,40 @@ export class VoiceAudioReceiver {
     console.log(`[VoiceAudioReceiver] Starting voice receiver for guild ${this.guildId}, channel ${this.channelId}`);
     
     try {
-      // Get the voice channel
-      const guild = discordClient.guilds.cache.get(this.guildId);
+      // Get the guild from the voice listener bot
+      const guild = voiceListenerBot.guilds.cache.get(this.guildId);
       if (!guild) {
-        console.error('[VoiceAudioReceiver] Guild not found');
+        console.error('[VoiceAudioReceiver] Guild not found - make sure the voice listener bot is in the server');
         return;
       }
       
-      const channel = guild.channels.cache.get(this.channelId) as VoiceBasedChannel;
+      const channel = guild.channels.cache.get(this.channelId);
       if (!channel) {
         console.error('[VoiceAudioReceiver] Channel not found');
         return;
       }
       
-      // Check if there's already a voice connection from @discordjs/voice
+      // Check if there's already a voice connection for this guild
       let connection = getVoiceConnection(this.guildId);
       
       if (!connection) {
-        // Try to adopt the existing connection from discord-video-stream
-        console.log('[VoiceAudioReceiver] No @discordjs/voice connection found, creating adapter...');
+        // Create a new voice connection using @discordjs/voice with the voice listener bot
+        console.log('[VoiceAudioReceiver] Voice listener bot joining voice channel...');
+        connection = joinVoiceChannel({
+          channelId: this.channelId,
+          guildId: this.guildId,
+          adapterCreator: guild.voiceAdapterCreator,
+          selfDeaf: false,
+          selfMute: true,
+        });
         
-        // Create voice connection that adopts the existing one
-        try {
-          connection = joinVoiceChannel({
-            channelId: this.channelId,
-            guildId: this.guildId,
-            adapterCreator: guild.voiceAdapterCreator as any,
-            selfDeaf: false,
-            selfMute: true,
-          });
-          
-          // Wait for connection to be ready with shorter timeout
-          await entersState(connection, VoiceConnectionStatus.Ready, 5_000);
-          console.log('[VoiceAudioReceiver] Voice connection ready');
-        } catch (connError) {
-          console.log('[VoiceAudioReceiver] Could not create voice connection (bot already connected via streaming library)');
-          console.log('[VoiceAudioReceiver] Will use Python listener for microphone-based voice commands');
-          return;
-        }
+        voiceConnection = connection;
+        
+        // Wait for connection to be ready
+        await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+        console.log('[VoiceAudioReceiver] Voice listener bot connected and ready');
       } else {
-        console.log('[VoiceAudioReceiver] Using existing @discordjs/voice connection');
+        console.log('[VoiceAudioReceiver] Using existing voice connection');
       }
       
       // Get the voice receiver
