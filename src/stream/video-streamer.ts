@@ -1569,7 +1569,7 @@ class VideoStreamer {
         console.error('[VideoStreamer] Failed to rejoin voice channel for speed change:', error);
         // Reset stopping flag so user can try again
         session.isStopping = false;
-        return;
+        return false;
       }
       
       session.isStopping = false;
@@ -1591,6 +1591,7 @@ class VideoStreamer {
         console.error('[VideoStreamer] Failed to restart stream after speed change:', error);
         // Clean up on failure
         this.sessions.delete(guildId);
+        return false;
       }
     } else {
       console.log(`[VideoStreamer] Speed set to ${session.speed}x (will apply on resume)`);
