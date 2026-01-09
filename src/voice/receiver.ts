@@ -24,18 +24,46 @@ export class VoiceAudioReceiver {
     
     console.log(`[VoiceAudioReceiver] Started listening for voice in guild ${this.guildId}`);
     
-    // Override the handleIncoming method to capture audio
+    // Try to access the private socket through reflection
+    try {
+      const udp = (mediaUdp as any)._socket;
+      if (udp) {
+        console.log(`[VoiceAudioReceiver] Found UDP socket via reflection, intercepting...`);
+        
+        // Store original onMessage handler
+        const originalOnMessage = udp.onmessage;
+        
+        // Override to intercept packets
+        udp.onmessage = (event: any) => {
+          console.log(`[VoiceAudioReceiver] UDP message received: ${event.data?.byteLength || 'N/A'} bytes`);
+          
+          // Call original handler
+          if (originalOnMessage) {
+            originalOnMessage.call(udp, event);
+          }
+          
+          // Process audio data
+          if (this.isRecording && event.data instanceof ArrayBuffer) {
+            const buffer = Buffer.from(event.data);
+            this.processAudio(buffer);
+          }
+        };
+      } else {
+        console.log(`[VoiceAudioReceiver] No UDP socket found via reflection`);
+      }
+    } catch (error) {
+      console.log(`[VoiceAudioReceiver] Failed to access socket: ${error}`);
+    }
+    
+    // Always set up handleIncoming as fallback
     this.originalHandleIncoming = mediaUdp.handleIncoming.bind(mediaUdp);
     mediaUdp.handleIncoming = (buf: unknown) => {
-      // Debug: Log incoming packets
-      console.log(`[VoiceAudioReceiver] Received packet: ${typeof buf}, size: ${Buffer.isBuffer(buf) ? buf.length : 'N/A'}`);
+      console.log(`[VoiceAudioReceiver] handleIncoming: ${typeof buf}`);
       
-      // Call original handler first
       if (this.originalHandleIncoming) {
         this.originalHandleIncoming(buf);
       }
       
-      // Process audio if recording
       if (this.isRecording && Buffer.isBuffer(buf)) {
         this.processAudio(buf);
       }
