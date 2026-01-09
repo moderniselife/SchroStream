@@ -123,6 +123,11 @@ export interface Config {
     frameRate: number;
     showFFmpegLogs: boolean;
   };
+  voice: {
+    enabled: boolean;
+    wakeWord: string;
+    modelPath?: string;
+  };
 }
 
 export interface SearchSession {

@@ -45,6 +45,11 @@ export const config: Config = {
     frameRate: parseInt(getEnvOrDefault('FRAME_RATE', '30'), 10),
     showFFmpegLogs: getEnvOrDefault('SHOW_FFMPEG_LOGS', 'false').toLowerCase() === 'true',
   },
+  voice: {
+    enabled: getEnvOrDefault('VOICE_COMMANDS_ENABLED', 'false').toLowerCase() === 'true',
+    wakeWord: getEnvOrDefault('VOICE_WAKE_WORD', 'bob').toLowerCase(),
+    modelPath: process.env.VOSK_MODEL_PATH,
+  },
 };
 
 export default config;

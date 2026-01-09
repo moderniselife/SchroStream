@@ -19,6 +19,9 @@ COPY package.json package-lock.json* ./
 # Install dependencies with npm
 RUN npm install --production=false
 
+# Install vosk separately (needs native build)
+RUN npm install vosk
+
 # Copy the rest of the files
 COPY . .
 
