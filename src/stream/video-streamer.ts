@@ -1,5 +1,6 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
-import { Client, EmbedBuilder } from 'discord.js-selfbot-v13';
+import { Client } from 'discord.js-selfbot-v13';
+import { EmbedBuilder } from 'discord.js';
 import { spawn } from 'child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
