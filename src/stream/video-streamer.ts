@@ -648,6 +648,12 @@ class VideoStreamer {
       });
 
       ffmpeg.on('exit', (code) => {
+        // If we're intentionally stopping (seek/pause/stop), don't do anything
+        if (session.isStopping) {
+          console.log('[VideoStreamer] FFmpeg exited during intentional stop (code:', code, ')');
+          return;
+        }
+        
         if (code !== 0 && code !== null) {
           console.log('[VideoStreamer] FFmpeg exited with code:', code);
           if (code === 255 && startTimeSec > 0) {
@@ -661,15 +667,11 @@ class VideoStreamer {
         } else if (code === 0) {
           // FFmpeg exited normally (video finished)
           console.log('[VideoStreamer] FFmpeg exited normally - video finished');
+          console.log('[VideoStreamer] Local file playback finished');
+          this.sessions.delete(session.guildId);
           
-          // Use the same cleanup logic as the normal stream end
-          if (!session.isStopping) {
-            console.log('[VideoStreamer] Local file playback finished');
-            this.sessions.delete(session.guildId);
-            
-            // Auto-play next item in queue
-            this.playNextInQueue(session.guildId, session.channelId, session.userId);
-          }
+          // Auto-play next item in queue
+          this.playNextInQueue(session.guildId, session.channelId, session.userId);
         }
       });
 
@@ -690,21 +692,14 @@ class VideoStreamer {
         type: 'go-live',
       });
 
-      console.log('[VideoStreamer] Local file playback finished');
-      
+      // Only handle completion if not intentionally stopping (seek/pause/stop)
       if (!session.isStopping) {
-        this.sessions.delete(session.guildId);
-        
-        // Auto-play next item in queue
-        await this.playNextInQueue(session.guildId, session.channelId, session.userId);
+        console.log('[VideoStreamer] Local file playback finished (stream ended)');
+        // Note: actual cleanup happens in FFmpeg exit handler
       }
     } catch (error) {
       if (!session.isStopping && error instanceof Error && !error.message.includes('abort')) {
         console.error('[VideoStreamer] Local file error:', error);
-      }
-      
-      if (!session.isStopping) {
-        this.sessions.delete(session.guildId);
       }
     }
   }
@@ -861,8 +856,18 @@ class VideoStreamer {
       });
 
       ffmpeg.on('exit', (code) => {
+        // If we're intentionally stopping (seek/pause/stop), don't do anything
+        if (session.isStopping) {
+          console.log('[VideoStreamer] FFmpeg (external) exited during intentional stop (code:', code, ')');
+          return;
+        }
+        
         if (code !== 0 && code !== null) {
           console.log('[VideoStreamer] FFmpeg exited with code:', code);
+        } else if (code === 0) {
+          console.log('[VideoStreamer] External playback finished (FFmpeg exit)');
+          this.sessions.delete(session.guildId);
+          this.playNextInQueue(session.guildId, session.channelId, session.userId);
         }
       });
 
@@ -883,18 +888,15 @@ class VideoStreamer {
         type: 'go-live',
       });
 
-      console.log('[VideoStreamer] External playback finished');
-      
       // Clean up streamlink process if it exists
       if (streamlinkProcess && !streamlinkProcess.killed) {
         streamlinkProcess.kill();
       }
       
+      // Only log if not intentionally stopping (seek/pause/stop)
       if (!session.isStopping) {
-        this.sessions.delete(session.guildId);
-        
-        // Auto-play next item in queue
-        await this.playNextInQueue(session.guildId, session.channelId, session.userId);
+        console.log('[VideoStreamer] External playback finished (stream ended)');
+        // Note: actual cleanup happens in FFmpeg exit handler
       }
     } catch (error) {
       if (!session.isStopping && error instanceof Error && !error.message.includes('abort')) {
@@ -904,10 +906,6 @@ class VideoStreamer {
       // Clean up streamlink process on error
       if (streamlinkProcess && !streamlinkProcess.killed) {
         streamlinkProcess.kill();
-      }
-      
-      if (!session.isStopping) {
-        this.sessions.delete(session.guildId);
       }
     }
   }
