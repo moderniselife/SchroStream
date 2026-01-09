@@ -1271,7 +1271,7 @@ class VideoStreamer {
       }
 
       // Wait for FFmpeg to stop
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       // Note: We're already in the voice channel, no need to rejoin
       await this.playExternalStream(session, timeMs);
@@ -1306,7 +1306,7 @@ class VideoStreamer {
       }
 
       // Wait for FFmpeg to stop
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       // Note: We're already in the voice channel, no need to rejoin
       await this.playLocalFile(session, timeMs);
@@ -1348,7 +1348,7 @@ class VideoStreamer {
       }
       
       // Wait for FFmpeg to stop
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       // Restart with the offset URL directly (don't call playVideoStream which would create new session)
       session.isStopping = false;
@@ -1596,7 +1596,7 @@ class VideoStreamer {
       }
       
       // Wait for FFmpeg to stop
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       // Get fresh stream URL (new Plex session) - but not for Live TV channels
       if (session.mediaItem.type !== 'channel') {
@@ -1646,7 +1646,7 @@ class VideoStreamer {
       }
       
       // Wait for FFmpeg to stop
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       // Note: We're already in the voice channel, no need to rejoin
       // The bot stays connected after stopStream()
