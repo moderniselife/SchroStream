@@ -374,6 +374,49 @@ export class PlexClient {
     return `${this.baseUrl}${thumb}?X-Plex-Token=${this.token}`;
   }
 
+  /**
+   * Send a timeline update to Plex to report playback state
+   * This is how Plex UI reports playing/paused/stopped state
+   */
+  async updateTimeline(
+    ratingKey: string,
+    state: 'playing' | 'paused' | 'stopped',
+    timeMs: number,
+    durationMs: number
+  ): Promise<boolean> {
+    try {
+      const params = new URLSearchParams({
+        ratingKey,
+        key: `/library/metadata/${ratingKey}`,
+        state,
+        time: Math.floor(timeMs).toString(),
+        duration: Math.floor(durationMs).toString(),
+        'X-Plex-Product': 'SchroStream',
+        'X-Plex-Version': '1.0.0',
+        'X-Plex-Client-Identifier': config.plex.clientIdentifier,
+        'X-Plex-Platform': 'Discord',
+        'X-Plex-Device': 'SchroStream Bot',
+        'X-Plex-Token': this.token,
+      });
+
+      const url = `${this.baseUrl}/:/timeline?${params.toString()}`;
+      const response = await fetch(url, {
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (response.ok) {
+        console.log(`[Plex] Timeline updated: ${state} at ${Math.floor(timeMs / 1000)}s`);
+        return true;
+      } else {
+        console.warn(`[Plex] Timeline update failed: ${response.status}`);
+        return false;
+      }
+    } catch (error) {
+      console.error('[Plex] Timeline update error:', error);
+      return false;
+    }
+  }
+
   async stopTranscodeSession(sessionId?: string): Promise<boolean> {
     try {
       // Get the target Plex username from environment

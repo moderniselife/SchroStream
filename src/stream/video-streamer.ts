@@ -30,6 +30,7 @@ export interface VideoStreamSession {
   volume: number;
   speed: number; // Playback speed multiplier (1.0 = normal, 1.5 = 1.5x, etc.)
   ffmpegCommand: any | null;
+  pauseFFmpegCommand: any | null; // FFmpeg process for frozen frame during pause
   userId?: string;
   isExternal?: boolean; // Flag for external streams (YouTube, URLs)
   audioUrl?: string; // Separate audio URL for YouTube streams
@@ -534,6 +535,7 @@ class VideoStreamer {
       volume: 100,
       speed: 1,
       ffmpegCommand: null,
+      pauseFFmpegCommand: null,
       userId,
       isExternal: mediaItem.type === 'channel', // Treat Live TV channels as external streams
     };
@@ -598,6 +600,7 @@ class VideoStreamer {
       volume: 100,
       speed: 1,
       ffmpegCommand: null,
+      pauseFFmpegCommand: null,
       userId,
       isExternal: true, // Treat local files as external streams
       audioUrl: undefined,
@@ -665,6 +668,7 @@ class VideoStreamer {
       volume: 100,
       speed: 1,
       ffmpegCommand: null,
+      pauseFFmpegCommand: null,
       userId,
       isExternal: true,
       audioUrl: audioUrl || undefined,
@@ -1297,12 +1301,29 @@ class VideoStreamer {
       
       // Stop Plex transcode FIRST (before killing FFmpeg) - only for Plex streams
       if (!session.isExternal) {
+        // Send timeline update to Plex with stopped state
+        await plexClient.updateTimeline(
+          session.mediaItem.ratingKey,
+          'stopped',
+          currentPosition,
+          session.duration
+        );
         await plexClient.stopTranscodeSession(session.sessionId);
       }
       
+      // Kill video FFmpeg if running
       if (session.ffmpegCommand) {
         try {
           session.ffmpegCommand.kill('SIGKILL');
+        } catch {
+          // Ignore kill errors
+        }
+      }
+
+      // Kill pause FFmpeg if running
+      if (session.pauseFFmpegCommand) {
+        try {
+          session.pauseFFmpegCommand.kill('SIGKILL');
         } catch {
           // Ignore kill errors
         }
@@ -1580,29 +1601,131 @@ class VideoStreamer {
       session.isPaused = true;
       session.isStopping = true; // Mark as intentional stop
 
+      console.log(`[VideoStreamer] Pausing at position ${session.currentTime}ms`);
+
+      // Kill the video FFmpeg process
       if (session.ffmpegCommand) {
         try {
-          session.ffmpegCommand.kill('SIGTERM'); // Use SIGTERM instead of SIGKILL for graceful shutdown
+          session.ffmpegCommand.kill('SIGKILL');
         } catch {
           // Ignore
         }
+        session.ffmpegCommand = null;
       }
 
-      this.streamer.stopStream();
-      
-      // Stop status updater when paused
-      stopStatusUpdateTimer();
-      
       // Save position for later resume
       savePlaybackPosition(session.mediaItem.ratingKey, session.currentTime);
+
+      // Start frozen frame stream to keep Discord stream alive
+      await this.startPauseStream(session);
+      
+      // Update status to show paused
+      const { getControllerBot } = await import('../controller/bot.js');
+      const controllerBot = getControllerBot();
+      if (controllerBot?.user) {
+        const mediaItem = session.mediaItem as any;
+        const titleText = mediaItem.grandparentTitle 
+          ? `${mediaItem.grandparentTitle} - ${session.mediaItem.title}`
+          : session.mediaItem.title;
+        await controllerBot.user.setPresence({
+          status: 'idle',
+          activities: [{
+            name: `⏸️ ${titleText} (Paused)`,
+            type: 0
+          }]
+        });
+      }
     }
 
     return true;
   }
 
+  private async startPauseStream(session: VideoStreamSession): Promise<void> {
+    const height = config.stream.defaultQuality;
+    const width = Math.round(height * (16 / 9));
+
+    // Generate a "Paused" screen using FFmpeg's lavfi source
+    // This creates a black screen with "PAUSED" text and the title
+    const mediaItem = session.mediaItem as any;
+    const titleText = mediaItem.grandparentTitle 
+      ? `${mediaItem.grandparentTitle}\\n${session.mediaItem.title}`
+      : session.mediaItem.title;
+    
+    const escapedTitle = titleText.replace(/'/g, "\\'").replace(/:/g, "\\:");
+
+    const ffmpegArgs = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-re', // Real-time output
+      '-f', 'lavfi',
+      '-i', `color=c=black:s=${width}x${height}:r=${config.stream.frameRate}`,
+      '-f', 'lavfi',
+      '-i', 'anullsrc=r=48000:cl=stereo', // Silent audio
+      '-vf', `drawtext=fontfile=/System/Library/Fonts/Helvetica.ttc:text='⏸ PAUSED':fontcolor=white:fontsize=72:x=(w-text_w)/2:y=(h-text_h)/2-50,drawtext=fontfile=/System/Library/Fonts/Helvetica.ttc:text='${escapedTitle}':fontcolor=gray:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+50`,
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-tune', 'zerolatency',
+      '-pix_fmt', 'yuv420p',
+      '-r', String(config.stream.frameRate),
+      '-g', '50',
+      '-b:v', '1000k', // Low bitrate for pause screen
+      '-c:a', 'libopus',
+      '-b:a', '64k',
+      '-ar', '48000',
+      '-ac', '2',
+      '-f', 'matroska',
+      '-'
+    ];
+
+    console.log('[VideoStreamer] Starting pause stream (frozen frame)...');
+    const pauseFFmpeg = spawn('ffmpeg', ffmpegArgs);
+    session.pauseFFmpegCommand = pauseFFmpeg;
+
+    pauseFFmpeg.stderr.on('data', (data) => {
+      const msg = data.toString();
+      if (msg.includes('Error') || msg.includes('error')) {
+        console.error('[FFmpeg Pause]', msg);
+      }
+    });
+
+    pauseFFmpeg.on('error', (err) => {
+      console.error('[VideoStreamer] Pause FFmpeg spawn error:', err.message);
+    });
+
+    pauseFFmpeg.on('exit', (code) => {
+      if (code !== 0 && code !== null && session.isPaused) {
+        console.log('[VideoStreamer] Pause FFmpeg exited with code:', code);
+      }
+    });
+
+    // Stream the pause screen to Discord
+    try {
+      await playStream(pauseFFmpeg.stdout, this.streamer, {
+        type: 'go-live',
+      });
+    } catch (error) {
+      // Expected when we kill it on resume
+      if (session.isPaused) {
+        console.log('[VideoStreamer] Pause stream ended');
+      }
+    }
+  }
+
   async resumeStream(guildId: string): Promise<boolean> {
     const session = this.sessions.get(guildId);
     if (!session || !session.isPaused) return false;
+
+    console.log(`[VideoStreamer] Resuming from position ${session.currentTime}ms`);
+
+    // Kill the pause FFmpeg process
+    if (session.pauseFFmpegCommand) {
+      try {
+        session.pauseFFmpegCommand.kill('SIGKILL');
+      } catch {
+        // Ignore
+      }
+      session.pauseFFmpegCommand = null;
+    }
 
     // For Plex streams, get fresh stream URL (new Plex session)
     // For YouTube/external, reuse the same URL
@@ -1615,13 +1738,11 @@ class VideoStreamer {
     }
 
     session.isPaused = false;
+    session.isStopping = false;
     session.startedAt = Date.now();
 
     // Check if this is a local file
     const isLocalFile = session.streamUrl.startsWith('/') || session.streamUrl.startsWith('./') || session.streamUrl.includes('downloads/');
-
-    // Note: We're already in the voice channel, no need to rejoin
-    // The bot stays connected after pause
 
     // Start status update timer
     startStatusUpdateTimer(session);
@@ -1634,10 +1755,6 @@ class VideoStreamer {
     } else {
       await this.playVideoStream(session, session.currentTime);
     }
-    
-    // Wait for old demuxer to fully close before clearing isStopping
-    await new Promise(resolve => setTimeout(resolve, 4000));
-    session.isStopping = false;
     
     return true;
   }
