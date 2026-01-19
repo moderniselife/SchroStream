@@ -11,6 +11,7 @@ import { updateWatchDeck } from '../data/watch-deck.js';
 import { popQueue, peekQueue } from '../data/queue.js';
 import { startVoiceListener, stopVoiceListener } from '../voice/python-listener.js';
 import { startVoiceReceiver, stopVoiceReceiver } from '../voice/receiver.js';
+import { getNextEpisode } from '../plex/library.js';
 
 // Playback history file path
 const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
@@ -365,7 +366,42 @@ class VideoStreamer {
     return this.sessions.has(guildId);
   }
 
-  private async playNextInQueue(guildId: string, channelId: string, userId?: string): Promise<void> {
+  private async playNextInQueue(guildId: string, channelId: string, userId?: string, lastPlayedItem?: MediaItem): Promise<void> {
+    // Check if the last played item was a Plex TV episode - auto-play next episode
+    if (lastPlayedItem && lastPlayedItem.type === 'episode') {
+      console.log('[VideoStreamer] Last played was a Plex episode, checking for next episode...');
+      
+      try {
+        const nextEpisode = await getNextEpisode(lastPlayedItem);
+        
+        if (nextEpisode) {
+          const seasonNum = nextEpisode.parentIndex || 0;
+          const episodeNum = nextEpisode.index || 0;
+          const showName = nextEpisode.grandparentTitle || 'Unknown Show';
+          
+          console.log(`[VideoStreamer] Auto-playing next episode: ${showName} S${String(seasonNum).padStart(2, '0')}E${String(episodeNum).padStart(2, '0')} - ${nextEpisode.title}`);
+          
+          // Get stream URL for next episode
+          const streamInfo = await plexClient.getDirectStreamUrl(nextEpisode.ratingKey);
+          if (streamInfo) {
+            // Clear saved position for next episode (start from beginning)
+            clearPlaybackPosition(nextEpisode.ratingKey);
+            
+            // Start streaming the next episode
+            await this.startStream(guildId, channelId, nextEpisode, streamInfo.url, 0, userId);
+            return;
+          } else {
+            console.error('[VideoStreamer] Could not get stream URL for next episode');
+          }
+        } else {
+          console.log('[VideoStreamer] No more episodes in this series');
+        }
+      } catch (error) {
+        console.error('[VideoStreamer] Error getting next episode:', error);
+      }
+    }
+    
+    // Fall back to queue
     const nextItem = popQueue();
     if (!nextItem) {
       console.log('[VideoStreamer] Queue is empty, playback stopped');
@@ -796,10 +832,11 @@ class VideoStreamer {
           // FFmpeg exited normally (video finished)
           console.log('[VideoStreamer] FFmpeg exited normally - video finished');
           console.log('[VideoStreamer] Local file playback finished');
+          const finishedMediaItem = session.mediaItem;
           this.sessions.delete(session.guildId);
           
-          // Auto-play next item in queue
-          this.playNextInQueue(session.guildId, session.channelId, session.userId);
+          // Auto-play next episode (for Plex TV) or next item in queue
+          this.playNextInQueue(session.guildId, session.channelId, session.userId, finishedMediaItem);
         }
       });
 
@@ -994,8 +1031,9 @@ class VideoStreamer {
           console.log('[VideoStreamer] FFmpeg exited with code:', code);
         } else if (code === 0) {
           console.log('[VideoStreamer] External playback finished (FFmpeg exit)');
+          const finishedMediaItem = session.mediaItem;
           this.sessions.delete(session.guildId);
-          this.playNextInQueue(session.guildId, session.channelId, session.userId);
+          this.playNextInQueue(session.guildId, session.channelId, session.userId, finishedMediaItem);
         }
       });
 
@@ -1221,10 +1259,11 @@ class VideoStreamer {
         if (session.isPlaying) {
           savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(session.guildId));
         }
+        const finishedMediaItem = session.mediaItem;
         this.sessions.delete(session.guildId);
         
-        // Auto-play next item in queue
-        await this.playNextInQueue(session.guildId, session.channelId, session.userId);
+        // Auto-play next episode (for Plex TV) or next item in queue
+        await this.playNextInQueue(session.guildId, session.channelId, session.userId, finishedMediaItem);
       }
     } catch (error) {
       // Only log error if not intentionally stopped
