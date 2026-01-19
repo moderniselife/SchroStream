@@ -519,6 +519,18 @@ class VideoStreamer {
   ): Promise<void> {
     await this.stopStream(guildId);
 
+    // Always leave and rejoin voice to properly reset Discord Go Live stream
+    // This ensures the Go Live connection is fresh, especially when transitioning between episodes
+    try {
+      this.streamer.stopStream();
+      this.streamer.leaveVoice();
+    } catch {
+      // Ignore errors - may already be disconnected
+    }
+    
+    // Brief delay to let Discord register the disconnect
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
     await this.streamer.joinVoice(guildId, channelId);
 
     const session: VideoStreamSession = {
@@ -1709,6 +1721,88 @@ class VideoStreamer {
         console.log('[VideoStreamer] Pause stream ended');
       }
     }
+  }
+
+  private async showLoadingScreen(guildId: string, channelId: string, nextEpisode: MediaItem): Promise<void> {
+    const height = config.stream.defaultQuality;
+    const width = Math.round(height * (16 / 9));
+
+    // Build episode info text
+    const episodeItem = nextEpisode as any;
+    const showName = episodeItem.grandparentTitle || 'Unknown Show';
+    const seasonNum = episodeItem.parentIndex || 0;
+    const episodeNum = episodeItem.index || 0;
+    const episodeTitle = nextEpisode.title;
+    
+    const headerText = 'Loading Next Episode...';
+    const showText = showName.replace(/'/g, "\\'").replace(/:/g, "\\:");
+    const episodeText = `S${String(seasonNum).padStart(2, '0')}E${String(episodeNum).padStart(2, '0')} - ${episodeTitle}`.replace(/'/g, "\\'").replace(/:/g, "\\:");
+
+    console.log(`[VideoStreamer] Showing loading screen for: ${showName} S${seasonNum}E${episodeNum}`);
+
+    // Stop current stream and leave voice to properly reset Discord connection
+    try {
+      this.streamer.stopStream();
+      this.streamer.leaveVoice();
+    } catch {
+      // Ignore errors
+    }
+
+    // Wait a moment for Discord to register the disconnect
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Rejoin voice channel with fresh connection
+    await this.streamer.joinVoice(guildId, channelId);
+
+    const ffmpegArgs = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-re',
+      '-f', 'lavfi',
+      '-i', `color=c=black:s=${width}x${height}:r=${config.stream.frameRate}`,
+      '-f', 'lavfi',
+      '-i', 'anullsrc=r=48000:cl=stereo',
+      '-vf', `drawtext=fontfile=/System/Library/Fonts/Helvetica.ttc:text='${headerText}':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h-text_h)/2-100,drawtext=fontfile=/System/Library/Fonts/Helvetica.ttc:text='${showText}':fontcolor=orange:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,drawtext=fontfile=/System/Library/Fonts/Helvetica.ttc:text='${episodeText}':fontcolor=gray:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+60`,
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-tune', 'zerolatency',
+      '-pix_fmt', 'yuv420p',
+      '-r', String(config.stream.frameRate),
+      '-g', '50',
+      '-b:v', '1000k',
+      '-c:a', 'libopus',
+      '-b:a', '64k',
+      '-ar', '48000',
+      '-ac', '2',
+      '-t', '30', // Max 30 seconds - should be killed sooner by startStream
+      '-f', 'matroska',
+      '-'
+    ];
+
+    const loadingFFmpeg = spawn('ffmpeg', ffmpegArgs);
+
+    loadingFFmpeg.stderr.on('data', (data) => {
+      const msg = data.toString();
+      if (msg.includes('Error') || msg.includes('error')) {
+        console.error('[FFmpeg Loading]', msg);
+      }
+    });
+
+    loadingFFmpeg.on('error', (err) => {
+      console.error('[VideoStreamer] Loading FFmpeg spawn error:', err.message);
+    });
+
+    // Stream the loading screen to Discord (non-blocking - will be killed by startStream)
+    playStream(loadingFFmpeg.stdout, this.streamer, {
+      type: 'go-live',
+    }).catch(() => {
+      // Expected when killed by startStream
+    });
+
+    // Give the loading screen a moment to start streaming
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    console.log('[VideoStreamer] Loading screen started, preparing next episode...');
   }
 
   async resumeStream(guildId: string): Promise<boolean> {

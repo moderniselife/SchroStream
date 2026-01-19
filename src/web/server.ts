@@ -68,15 +68,16 @@ app.get('/api/streams', (req: Request, res: Response) => {
 // Get specific stream details
 app.get('/api/stream/:guildId', (req: Request, res: Response) => {
   const { guildId } = req.params;
+  const guildIdStr = Array.isArray(guildId) ? guildId[0] : guildId;
   const streamer = getVideoStreamer();
-  const session = streamer.getSession(guildId);
+  const session = streamer.getSession(guildIdStr);
   
   if (!session) {
     return res.status(404).json({ error: 'Stream not found' });
   }
   
-  const progress = streamer.getProgress(guildId);
-  const webSession = webStreamSessions.get(guildId);
+  const progress = streamer.getProgress(guildIdStr);
+  const webSession = webStreamSessions.get(guildIdStr);
   
   res.json({
     guildId,
@@ -126,8 +127,9 @@ app.get('/api/stream/:guildId', (req: Request, res: Response) => {
 // Get stream URL for web player
 app.get('/api/stream/:guildId/url', (req: Request, res: Response) => {
   const { guildId } = req.params;
+  const guildIdStr = Array.isArray(guildId) ? guildId[0] : guildId;
   const streamer = getVideoStreamer();
-  const session = streamer.getSession(guildId);
+  const session = streamer.getSession(guildIdStr);
   
   if (!session) {
     return res.status(404).json({ error: 'Stream not found' });
@@ -201,7 +203,8 @@ app.post('/api/control/play', async (req: Request, res: Response) => {
 app.get('/api/plex/seasons/:ratingKey', async (req: Request, res: Response) => {
   try {
     const { ratingKey } = req.params;
-    const seasons = await plexClient.getSeasons(ratingKey);
+    const ratingKeyStr = Array.isArray(ratingKey) ? ratingKey[0] : ratingKey;
+    const seasons = await plexClient.getSeasons(ratingKeyStr);
     res.json({ success: true, seasons });
   } catch (error) {
     res.json({ success: false, error: 'Failed to get seasons' });
@@ -212,7 +215,8 @@ app.get('/api/plex/seasons/:ratingKey', async (req: Request, res: Response) => {
 app.get('/api/plex/episodes/:seasonKey', async (req: Request, res: Response) => {
   try {
     const { seasonKey } = req.params;
-    const episodes = await plexClient.getSeasonEpisodes(seasonKey);
+    const seasonKeyStr = Array.isArray(seasonKey) ? seasonKey[0] : seasonKey;
+    const episodes = await plexClient.getSeasonEpisodes(seasonKeyStr);
     res.json({ success: true, episodes });
   } catch (error) {
     res.json({ success: false, error: 'Failed to get episodes' });
@@ -526,8 +530,9 @@ app.post('/api/control/url', async (req: Request, res: Response) => {
 // Stream proxy endpoint - serves FFmpeg-processed stream synced to Discord
 app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
   const { guildId } = req.params;
+  const guildIdStr = Array.isArray(guildId) ? guildId[0] : guildId;
   const streamer = getVideoStreamer();
-  const session = streamer.getSession(guildId);
+  const session = streamer.getSession(guildIdStr);
   
   if (!session) {
     return res.status(404).json({ error: 'Stream not found' });
@@ -548,7 +553,7 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
                             !session.streamUrl.includes('plex');
     
     // Get current playback position from Discord stream to sync
-    const progress = streamer.getProgress(guildId);
+    const progress = streamer.getProgress(guildIdStr);
     const STARTUP_OFFSET = 15; // seconds to add for FFmpeg startup time
     const seekSeconds = Math.max(0, Math.floor(progress.current / 1000) + STARTUP_OFFSET);
     
@@ -556,7 +561,7 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
     let ffmpegArgs: string[];
     
     if (needsHLSFetcher) {
-      console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildId} (HLS via custom fetcher)`);
+      console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildIdStr} (HLS via custom fetcher)`);
       
       // Use custom HLS fetcher that downloads segments directly
       const { createHLSFetcherProcess } = await import('../stream/hls-fetcher.js');
@@ -570,7 +575,7 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
         '-i', 'pipe:0', // Read from stdin
       ];
     } else {
-      console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildId}, seeking to ${seekSeconds}s (current: ${Math.floor(progress.current / 1000)}s + ${STARTUP_OFFSET}s offset)`);
+      console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildIdStr}, seeking to ${seekSeconds}s (current: ${Math.floor(progress.current / 1000)}s + ${STARTUP_OFFSET}s offset)`);
       console.log(`[WebServer] Stream URL: ${session.streamUrl}, isLocalFile: ${isLocalFile}`);
       
       // Check if file exists for local files
@@ -642,7 +647,7 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
       'pipe:1'
     );
 
-    console.log('[WebServer] Starting FFmpeg proxy for guild:', guildId);
+    console.log('[WebServer] Starting FFmpeg proxy for guild:', guildIdStr);
     
     const ffmpeg = spawn('ffmpeg', ffmpegArgs);
     
