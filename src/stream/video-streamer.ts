@@ -1678,22 +1678,39 @@ class VideoStreamer {
     return true;
   }
 
-  // Capture a frame from the stream at the current position
+  // Capture a frame from Plex at the current position using photo/transcode API
   private async captureFrame(session: VideoStreamSession, outputPath: string): Promise<boolean> {
-    const { existsSync } = await import('fs');
-    const { execSync } = await import('child_process');
+    const { existsSync, writeFileSync } = await import('fs');
     
     try {
       const positionSec = Math.floor(session.currentTime / 1000);
-      console.log(`[VideoStreamer] Capturing frame at ${positionSec}s to ${outputPath}`);
+      const height = config.stream.defaultQuality;
+      const width = Math.round(height * (16 / 9));
       
-      // Use FFmpeg to grab a single frame from the Plex stream
-      const ffmpegCmd = `ffmpeg -hide_banner -loglevel error -ss ${positionSec} -i "${session.streamUrl}" -frames:v 1 -y "${outputPath}" 2>&1`;
-      execSync(ffmpegCmd, { timeout: 10000 });
+      console.log(`[VideoStreamer] Capturing frame at ${positionSec}s using Plex photo API`);
       
-      if (existsSync(outputPath)) {
-        console.log('[VideoStreamer] Frame captured successfully');
-        return true;
+      // Use Plex's photo/transcode API to get a frame at the specific timestamp
+      // This generates a thumbnail/preview image at the given time offset
+      const photoUrl = `${config.plex.url}/photo/:/transcode?` + new URLSearchParams({
+        'width': String(width),
+        'height': String(height),
+        'minSize': '1',
+        'upscale': '1',
+        'url': `/library/metadata/${session.mediaItem.ratingKey}/thumb?time=${positionSec}`,
+        'X-Plex-Token': config.plex.token,
+      }).toString();
+      
+      const response = await fetch(photoUrl);
+      if (response.ok) {
+        const buffer = await response.arrayBuffer();
+        writeFileSync(outputPath, Buffer.from(buffer));
+        
+        if (existsSync(outputPath)) {
+          console.log('[VideoStreamer] Frame captured successfully via Plex API');
+          return true;
+        }
+      } else {
+        console.log(`[VideoStreamer] Plex photo API returned ${response.status}`);
       }
     } catch (error) {
       console.log('[VideoStreamer] Frame capture failed, will use solid color:', error);
