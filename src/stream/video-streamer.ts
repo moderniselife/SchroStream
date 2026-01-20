@@ -1637,6 +1637,10 @@ class VideoStreamer {
 
       console.log(`[VideoStreamer] Pausing at position ${session.currentTime}ms`);
 
+      // Capture the current frame before killing FFmpeg
+      const pauseFramePath = `/tmp/pause_frame_${guildId}.png`;
+      await this.captureFrame(session, pauseFramePath);
+
       // Kill the video FFmpeg process
       if (session.ffmpegCommand) {
         try {
@@ -1651,7 +1655,7 @@ class VideoStreamer {
       savePlaybackPosition(session.mediaItem.ratingKey, session.currentTime);
 
       // Start frozen frame stream to keep Discord stream alive
-      await this.startPauseStream(session);
+      await this.startPauseStream(session, pauseFramePath);
       
       // Update status to show paused
       const { getControllerBot } = await import('../controller/bot.js');
@@ -1674,12 +1678,38 @@ class VideoStreamer {
     return true;
   }
 
-  private async startPauseStream(session: VideoStreamSession): Promise<void> {
+  // Capture a frame from the stream at the current position
+  private async captureFrame(session: VideoStreamSession, outputPath: string): Promise<boolean> {
+    const { existsSync } = await import('fs');
+    const { execSync } = await import('child_process');
+    
+    try {
+      const positionSec = Math.floor(session.currentTime / 1000);
+      console.log(`[VideoStreamer] Capturing frame at ${positionSec}s to ${outputPath}`);
+      
+      // Use FFmpeg to grab a single frame from the Plex stream
+      const ffmpegCmd = `ffmpeg -hide_banner -loglevel error -ss ${positionSec} -i "${session.streamUrl}" -frames:v 1 -y "${outputPath}" 2>&1`;
+      execSync(ffmpegCmd, { timeout: 10000 });
+      
+      if (existsSync(outputPath)) {
+        console.log('[VideoStreamer] Frame captured successfully');
+        return true;
+      }
+    } catch (error) {
+      console.log('[VideoStreamer] Frame capture failed, will use solid color:', error);
+    }
+    return false;
+  }
+
+  private async startPauseStream(session: VideoStreamSession, framePath?: string): Promise<void> {
+    const { existsSync } = await import('fs');
     const height = config.stream.defaultQuality;
     const width = Math.round(height * (16 / 9));
 
-    // Generate a "Paused" screen using FFmpeg's lavfi source
-    // This creates a black screen with "PAUSED" text and the title
+    // Check if we have a captured frame to use
+    const hasFrame = framePath && existsSync(framePath);
+
+    // Generate a "Paused" screen using FFmpeg
     const mediaItem = session.mediaItem as any;
     const titleText = mediaItem.grandparentTitle 
       ? `${mediaItem.grandparentTitle}\\n${session.mediaItem.title}`
@@ -1701,30 +1731,50 @@ class VideoStreamer {
     
     await this.streamer.joinVoice(session.guildId, session.channelId);
 
-    // Pause screen with text using FFmpeg's default font (no fontfile needed)
-    const ffmpegArgs = [
-      '-hide_banner',
-      '-loglevel', 'warning',
-      '-re', // Real-time output
-      '-f', 'lavfi',
-      '-i', `color=c=#1a1a2e:s=${width}x${height}:r=${config.stream.frameRate}`,
-      '-f', 'lavfi',
-      '-i', 'anullsrc=r=48000:cl=stereo', // Silent audio
-      '-vf', `drawtext=text='PAUSED':fontcolor=white:fontsize=72:x=(w-text_w)/2:y=(h-text_h)/2-50,drawtext=text='${escapedTitle}':fontcolor=gray:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+50`,
+    // Build FFmpeg args - use captured frame if available, otherwise solid color
+    let ffmpegArgs: string[];
+    if (hasFrame) {
+      // Use captured frame as background with PAUSED text overlay
+      ffmpegArgs = [
+        '-hide_banner',
+        '-loglevel', 'warning',
+        '-loop', '1', // Loop the image
+        '-re', // Real-time output
+        '-i', framePath,
+        '-f', 'lavfi',
+        '-i', 'anullsrc=r=48000:cl=stereo', // Silent audio
+        '-vf', `scale=${width}:${height},drawtext=text='PAUSED':fontcolor=white:fontsize=72:x=(w-text_w)/2:y=(h-text_h)/2:boxcolor=black@0.5:box=1:boxborderw=10`,
+      ];
+    } else {
+      // Fallback to solid color background
+      ffmpegArgs = [
+        '-hide_banner',
+        '-loglevel', 'warning',
+        '-re', // Real-time output
+        '-f', 'lavfi',
+        '-i', `color=c=#1a1a2e:s=${width}x${height}:r=${config.stream.frameRate}`,
+        '-f', 'lavfi',
+        '-i', 'anullsrc=r=48000:cl=stereo', // Silent audio
+        '-vf', `drawtext=text='PAUSED':fontcolor=white:fontsize=72:x=(w-text_w)/2:y=(h-text_h)/2-50,drawtext=text='${escapedTitle}':fontcolor=gray:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+50`,
+      ];
+    }
+
+    // Common encoding options
+    ffmpegArgs.push(
       '-c:v', 'libx264',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
       '-pix_fmt', 'yuv420p',
       '-r', String(config.stream.frameRate),
       '-g', '50',
-      '-b:v', '500k', // Low bitrate for pause screen
+      '-b:v', '500k',
       '-c:a', 'libopus',
       '-b:a', '64k',
       '-ar', '48000',
       '-ac', '2',
       '-f', 'matroska',
       '-'
-    ];
+    );
 
     console.log('[VideoStreamer] Starting pause stream (frozen frame)...');
     console.log('[VideoStreamer] Pause FFmpeg args:', ffmpegArgs.join(' '));
