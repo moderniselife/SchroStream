@@ -1865,6 +1865,20 @@ class VideoStreamer {
       session.pauseFFmpegCommand = null;
     }
 
+    // Leave and rejoin voice to properly reset Discord Go Live stream
+    // This is needed because pause screen did a leave/rejoin
+    try {
+      this.streamer.stopStream();
+      this.streamer.leaveVoice();
+    } catch {
+      // Ignore errors - may already be disconnected
+    }
+    
+    // Brief delay to let Discord register the disconnect
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    await this.streamer.joinVoice(session.guildId, session.channelId);
+
     session.isPaused = false;
     session.isStopping = false;
     session.startedAt = Date.now();
