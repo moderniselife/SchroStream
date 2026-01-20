@@ -1701,8 +1701,7 @@ class VideoStreamer {
     
     await this.streamer.joinVoice(session.guildId, session.channelId);
 
-    // Simple pause screen - just solid color with no text (font issues on Docker)
-    // The color creates a dark blue-ish screen that indicates paused state
+    // Pause screen with text using FFmpeg's default font (no fontfile needed)
     const ffmpegArgs = [
       '-hide_banner',
       '-loglevel', 'warning',
@@ -1711,6 +1710,7 @@ class VideoStreamer {
       '-i', `color=c=#1a1a2e:s=${width}x${height}:r=${config.stream.frameRate}`,
       '-f', 'lavfi',
       '-i', 'anullsrc=r=48000:cl=stereo', // Silent audio
+      '-vf', `drawtext=text='PAUSED':fontcolor=white:fontsize=72:x=(w-text_w)/2:y=(h-text_h)/2-50,drawtext=text='${escapedTitle}':fontcolor=gray:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+50`,
       '-c:v', 'libx264',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
