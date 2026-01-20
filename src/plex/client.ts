@@ -507,16 +507,49 @@ export class PlexClient {
   async cleanupOldSessions(): Promise<void> {
     loadSessions();
     const sessions = getActiveSessions();
-    if (sessions.length === 0) return;
-
-    console.log(`[Plex] Cleaning up ${sessions.length} stale session(s)...`);
-    for (const sessionId of sessions) {
-      const stopped = await this.stopTranscodeSession(sessionId);
-      if (!stopped) {
-        // If stop failed, still untrack to prevent infinite retries on non-existent sessions
-        untrackSession(sessionId);
+    
+    // Always try to stop any active transcodes for our user on startup
+    // This catches transcodes that weren't properly cleaned up
+    console.log('[Plex] Cleaning up any stale transcode sessions...');
+    
+    try {
+      // Query transcode sessions endpoint
+      const transcodeUrl = `${this.baseUrl}/transcode/sessions?X-Plex-Token=${this.token}`;
+      const response = await fetch(transcodeUrl, {
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      if (response.ok) {
+        const data = await response.json() as any;
+        const transcodes = data?.MediaContainer?.TranscodeSession || [];
+        console.log(`[Plex] Found ${transcodes.length} active transcode(s)`);
+        
+        for (const transcode of transcodes) {
+          const key = transcode.key;
+          if (key) {
+            console.log(`[Plex] Stopping transcode: ${key}`);
+            await fetch(`${this.baseUrl}/transcode/sessions/${key}?X-Plex-Token=${this.token}`, {
+              method: 'DELETE'
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.log('[Plex] Could not query transcode sessions:', error);
+    }
+    
+    // Also clean up tracked sessions
+    if (sessions.length > 0) {
+      console.log(`[Plex] Cleaning up ${sessions.length} tracked session(s)...`);
+      for (const sessionId of sessions) {
+        const stopped = await this.stopTranscodeSession(sessionId);
+        if (!stopped) {
+          // If stop failed, still untrack to prevent infinite retries on non-existent sessions
+          untrackSession(sessionId);
+        }
       }
     }
+    
     console.log('[Plex] Cleanup complete');
   }
 
