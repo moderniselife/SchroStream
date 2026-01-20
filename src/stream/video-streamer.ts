@@ -1693,6 +1693,20 @@ class VideoStreamer {
       ? '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'  // Common Linux font
       : '/System/Library/Fonts/Helvetica.ttc';  // macOS font
 
+    // Leave and rejoin voice to properly reset Discord Go Live stream
+    // This ensures the pause screen displays correctly
+    try {
+      this.streamer.stopStream();
+      this.streamer.leaveVoice();
+    } catch {
+      // Ignore errors - may already be disconnected
+    }
+    
+    // Brief delay to let Discord register the disconnect
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    await this.streamer.joinVoice(session.guildId, session.channelId);
+
     const ffmpegArgs = [
       '-hide_banner',
       '-loglevel', 'error',
