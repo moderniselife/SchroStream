@@ -1687,12 +1687,6 @@ class VideoStreamer {
     
     const escapedTitle = titleText.replace(/'/g, "\\'").replace(/:/g, "\\:");
 
-    // Use platform-appropriate font path
-    const isLinux = process.platform === 'linux';
-    const fontPath = isLinux 
-      ? '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'  // Common Linux font
-      : '/System/Library/Fonts/Helvetica.ttc';  // macOS font
-
     // Leave and rejoin voice to properly reset Discord Go Live stream
     // This ensures the pause screen displays correctly
     try {
@@ -1707,22 +1701,23 @@ class VideoStreamer {
     
     await this.streamer.joinVoice(session.guildId, session.channelId);
 
+    // Simple pause screen - just solid color with no text (font issues on Docker)
+    // The color creates a dark blue-ish screen that indicates paused state
     const ffmpegArgs = [
       '-hide_banner',
-      '-loglevel', 'error',
+      '-loglevel', 'warning',
       '-re', // Real-time output
       '-f', 'lavfi',
       '-i', `color=c=#1a1a2e:s=${width}x${height}:r=${config.stream.frameRate}`,
       '-f', 'lavfi',
       '-i', 'anullsrc=r=48000:cl=stereo', // Silent audio
-      '-vf', `drawtext=fontfile=${fontPath}:text='PAUSED':fontcolor=white:fontsize=72:x=(w-text_w)/2:y=(h-text_h)/2-50,drawtext=fontfile=${fontPath}:text='${escapedTitle}':fontcolor=gray:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+50`,
       '-c:v', 'libx264',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
       '-pix_fmt', 'yuv420p',
       '-r', String(config.stream.frameRate),
       '-g', '50',
-      '-b:v', '1000k', // Low bitrate for pause screen
+      '-b:v', '500k', // Low bitrate for pause screen
       '-c:a', 'libopus',
       '-b:a', '64k',
       '-ar', '48000',
@@ -1732,13 +1727,14 @@ class VideoStreamer {
     ];
 
     console.log('[VideoStreamer] Starting pause stream (frozen frame)...');
+    console.log('[VideoStreamer] Pause FFmpeg args:', ffmpegArgs.join(' '));
     const pauseFFmpeg = spawn('ffmpeg', ffmpegArgs);
     session.pauseFFmpegCommand = pauseFFmpeg;
 
     pauseFFmpeg.stderr.on('data', (data) => {
-      const msg = data.toString();
-      if (msg.includes('Error') || msg.includes('error')) {
-        console.error('[FFmpeg Pause]', msg);
+      const msg = data.toString().trim();
+      if (msg) {
+        console.log('[FFmpeg Pause]', msg);
       }
     });
 
