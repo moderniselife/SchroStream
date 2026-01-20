@@ -1092,7 +1092,7 @@ class VideoStreamer {
     }
   }
 
-  private async playVideoStream(session: VideoStreamSession, startTimeMs = 0): Promise<void> {
+  private async playVideoStream(session: VideoStreamSession, startTimeMs = 0, isResume = false): Promise<void> {
     const startTimeSec = Math.floor(startTimeMs / 1000);
     
     const height = config.stream.defaultQuality;
@@ -1104,31 +1104,35 @@ class VideoStreamer {
       if (session.mediaItem.type === 'channel') {
         console.log('[VideoStreamer] Using Live TV channel URL directly');
         freshStreamInfo = { url: session.streamUrl };
+      } else if (isResume && session.streamUrl) {
+        // On resume, try to reuse existing stream URL first (transcode might still be running)
+        console.log('[VideoStreamer] Resuming with existing stream URL...');
+        freshStreamInfo = { url: session.streamUrl };
       } else {
-        // Always get a fresh stream URL to avoid stale session IDs
+        // Get a fresh stream URL for new playback
         console.log('[VideoStreamer] Getting fresh stream URL...');
         freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
         if (!freshStreamInfo) {
           throw new Error('Failed to get stream URL from Plex');
         }
-      }
-      
-      // Update session with fresh URL and extract session ID
-      session.streamUrl = freshStreamInfo.url;
-      const urlObj = new URL(freshStreamInfo.url);
-      session.sessionId = urlObj.searchParams.get('X-Plex-Session-Identifier') || 
-                        urlObj.searchParams.get('session') || undefined;
-      
-      console.log('[VideoStreamer] Fresh Stream URL:', session.streamUrl.substring(0, 100) + '...');
+        
+        // Update session with fresh URL and extract session ID
+        session.streamUrl = freshStreamInfo.url;
+        const urlObj = new URL(freshStreamInfo.url);
+        session.sessionId = urlObj.searchParams.get('X-Plex-Session-Identifier') || 
+                          urlObj.searchParams.get('session') || undefined;
+        
+        console.log('[VideoStreamer] Fresh Stream URL:', session.streamUrl.substring(0, 100) + '...');
 
-      // Stop any existing transcode sessions first to avoid 400 errors
-      console.log('[VideoStreamer] Stopping existing transcode sessions...');
-      const stopped = await plexClient.stopTranscodeSession();
-      
-      // Wait a moment for Plex to clean up
-      if (stopped) {
-        console.log('[VideoStreamer] Waiting for cleanup to complete...');
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Only stop existing transcode sessions for fresh starts (not resume)
+        console.log('[VideoStreamer] Stopping existing transcode sessions...');
+        const stopped = await plexClient.stopTranscodeSession();
+        
+        // Wait a moment for Plex to clean up
+        if (stopped) {
+          console.log('[VideoStreamer] Waiting for cleanup to complete...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
       
       // Initialize Plex session by fetching the m3u8 first
@@ -1821,16 +1825,6 @@ class VideoStreamer {
       session.pauseFFmpegCommand = null;
     }
 
-    // For Plex streams, get fresh stream URL (new Plex session)
-    // For YouTube/external, reuse the same URL
-    // For Live TV channels, reuse the same URL
-    if (!session.isExternal && session.mediaItem.type !== 'channel') {
-      const freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
-      if (freshStreamInfo) {
-        session.streamUrl = freshStreamInfo.url;
-      }
-    }
-
     session.isPaused = false;
     session.isStopping = false;
     session.startedAt = Date.now();
@@ -1841,13 +1835,13 @@ class VideoStreamer {
     // Start status update timer
     startStatusUpdateTimer(session);
 
-    // Resume from saved position
+    // Resume from saved position - pass isResume=true for Plex to reuse existing transcode
     if (isLocalFile) {
       await this.playLocalFile(session, session.currentTime);
     } else if (session.isExternal) {
       await this.playExternalStream(session, session.currentTime);
     } else {
-      await this.playVideoStream(session, session.currentTime);
+      await this.playVideoStream(session, session.currentTime, true); // isResume = true
     }
     
     return true;
