@@ -1,10 +1,10 @@
 # Node.js base with FFmpeg (Bun has zeromq/libuv compatibility issues)
 FROM node:20-bookworm-slim
 
-# Install FFmpeg, yt-dlp, and Python packages for voice recognition
+# Install FFmpeg, yt-dlp, fonts, and Python packages for voice recognition
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg python3 python3-pip curl ca-certificates \
-    build-essential make g++ unzip wget portaudio19-dev python3-dev gcc && \
+    build-essential make g++ unzip wget portaudio19-dev python3-dev gcc fonts-dejavu-core && \
     pip3 install --break-system-packages SpeechRecognition pyaudio && \
     curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp && \

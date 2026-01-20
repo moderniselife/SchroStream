@@ -1669,15 +1669,21 @@ class VideoStreamer {
     
     const escapedTitle = titleText.replace(/'/g, "\\'").replace(/:/g, "\\:");
 
+    // Use platform-appropriate font path
+    const isLinux = process.platform === 'linux';
+    const fontPath = isLinux 
+      ? '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'  // Common Linux font
+      : '/System/Library/Fonts/Helvetica.ttc';  // macOS font
+
     const ffmpegArgs = [
       '-hide_banner',
       '-loglevel', 'error',
       '-re', // Real-time output
       '-f', 'lavfi',
-      '-i', `color=c=black:s=${width}x${height}:r=${config.stream.frameRate}`,
+      '-i', `color=c=#1a1a2e:s=${width}x${height}:r=${config.stream.frameRate}`,
       '-f', 'lavfi',
       '-i', 'anullsrc=r=48000:cl=stereo', // Silent audio
-      '-vf', `drawtext=fontfile=/System/Library/Fonts/Helvetica.ttc:text='⏸ PAUSED':fontcolor=white:fontsize=72:x=(w-text_w)/2:y=(h-text_h)/2-50,drawtext=fontfile=/System/Library/Fonts/Helvetica.ttc:text='${escapedTitle}':fontcolor=gray:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+50`,
+      '-vf', `drawtext=fontfile=${fontPath}:text='PAUSED':fontcolor=white:fontsize=72:x=(w-text_w)/2:y=(h-text_h)/2-50,drawtext=fontfile=${fontPath}:text='${escapedTitle}':fontcolor=gray:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+50`,
       '-c:v', 'libx264',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
@@ -1758,15 +1764,21 @@ class VideoStreamer {
     // Rejoin voice channel with fresh connection
     await this.streamer.joinVoice(guildId, channelId);
 
+    // Use platform-appropriate font path
+    const isLinux = process.platform === 'linux';
+    const fontPath = isLinux 
+      ? '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+      : '/System/Library/Fonts/Helvetica.ttc';
+
     const ffmpegArgs = [
       '-hide_banner',
       '-loglevel', 'error',
       '-re',
       '-f', 'lavfi',
-      '-i', `color=c=black:s=${width}x${height}:r=${config.stream.frameRate}`,
+      '-i', `color=c=#1a1a2e:s=${width}x${height}:r=${config.stream.frameRate}`,
       '-f', 'lavfi',
       '-i', 'anullsrc=r=48000:cl=stereo',
-      '-vf', `drawtext=fontfile=/System/Library/Fonts/Helvetica.ttc:text='${headerText}':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h-text_h)/2-100,drawtext=fontfile=/System/Library/Fonts/Helvetica.ttc:text='${showText}':fontcolor=orange:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,drawtext=fontfile=/System/Library/Fonts/Helvetica.ttc:text='${episodeText}':fontcolor=gray:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+60`,
+      '-vf', `drawtext=fontfile=${fontPath}:text='${headerText}':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h-text_h)/2-100,drawtext=fontfile=${fontPath}:text='${showText}':fontcolor=orange:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,drawtext=fontfile=${fontPath}:text='${episodeText}':fontcolor=gray:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+60`,
       '-c:v', 'libx264',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
