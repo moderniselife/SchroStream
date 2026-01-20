@@ -1123,22 +1123,12 @@ class VideoStreamer {
                           urlObj.searchParams.get('session') || undefined;
         
         console.log('[VideoStreamer] Fresh Stream URL:', session.streamUrl.substring(0, 100) + '...');
-
-        // Only stop existing transcode sessions for fresh starts (not resume)
-        console.log('[VideoStreamer] Stopping existing transcode sessions...');
-        const stopped = await plexClient.stopTranscodeSession();
-        
-        // Wait a moment for Plex to clean up
-        if (stopped) {
-          console.log('[VideoStreamer] Waiting for cleanup to complete...');
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
       }
       
       // Initialize Plex session by fetching the m3u8 first
       // This tells Plex to start the transcode session
       console.log('[VideoStreamer] Initializing Plex transcode session...');
-      const initResponse = await fetch(session.streamUrl, {
+      let initResponse = await fetch(session.streamUrl, {
         headers: {
           'Accept': '*/*',
           'X-Plex-Client-Identifier': config.plex.clientIdentifier,
@@ -1148,6 +1138,34 @@ class VideoStreamer {
           'X-Plex-Device': 'Linux',
         }
       });
+      
+      // If we get a 400 error, try stopping existing sessions and retry
+      if (!initResponse.ok && initResponse.status === 400) {
+        console.log('[VideoStreamer] Got 400 error, cleaning up existing sessions and retrying...');
+        await plexClient.stopTranscodeSession();
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        // Get a fresh URL after cleanup
+        freshStreamInfo = await plexClient.getDirectStreamUrl(session.mediaItem.ratingKey);
+        if (freshStreamInfo) {
+          session.streamUrl = freshStreamInfo.url;
+          const urlObj = new URL(freshStreamInfo.url);
+          session.sessionId = urlObj.searchParams.get('X-Plex-Session-Identifier') || 
+                            urlObj.searchParams.get('session') || undefined;
+        }
+        
+        // Retry initialization
+        initResponse = await fetch(session.streamUrl, {
+          headers: {
+            'Accept': '*/*',
+            'X-Plex-Client-Identifier': config.plex.clientIdentifier,
+            'X-Plex-Product': 'Plex Web',
+            'X-Plex-Version': '4.0',
+            'X-Plex-Platform': 'Chrome',
+            'X-Plex-Device': 'Linux',
+          }
+        });
+      }
       
       if (!initResponse.ok) {
         throw new Error(`Failed to initialize Plex session: ${initResponse.status} ${initResponse.statusText}`);
