@@ -40,6 +40,14 @@ export class DIALServer extends EventEmitter {
     this.port = port;
     this.router = Router();
     
+    // Handle OPTIONS for CORS preflight
+    this.router.options('*', (req: Request, res: Response) => {
+      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.status(200).send();
+    });
+    
     // Initialize YouTube app as stopped
     this.apps.set('YouTube', { state: 'stopped' });
     
@@ -171,6 +179,8 @@ export class DIALServer extends EventEmitter {
       res.status(201);
       res.set('Location', `http://${this.localIp}:${this.port}/apps/YouTube/${instanceId}`);
       res.set('Access-Control-Allow-Origin', '*');
+      res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.set('Access-Control-Allow-Headers', 'Content-Type');
       res.send();
     });
 
