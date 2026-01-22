@@ -121,6 +121,14 @@ export class DIALServer extends EventEmitter {
         if (timeParam) currentTime = parseInt(timeParam, 10) || 0;
         const indexParam = params.get('index') || params.get('currentIndex');
         if (indexParam) currentIndex = parseInt(indexParam, 10) || 0;
+        
+        // Check for pairing code
+        const pairingCode = params.get('pairingCode');
+        if (pairingCode) {
+          console.log(`[DIAL] Received pairing code: ${pairingCode}`);
+          // For now, accept any pairing code
+          // In a real implementation, you might want to validate this
+        }
       }
       
       // Also check query params (some clients send data this way)
@@ -178,6 +186,58 @@ export class DIALServer extends EventEmitter {
       res.set('Content-Type', 'application/xml');
       res.set('Access-Control-Allow-Origin', '*');
       res.send(this.buildAppStateXml('YouTube', app.state, app.additionalData));
+    });
+    
+    // Update YouTube app instance (PUT for video data)
+    this.router.put('/apps/YouTube/:instanceId', (req: Request, res: Response) => {
+      const { instanceId } = req.params;
+      const app = this.apps.get('YouTube');
+      
+      console.log(`[DIAL] YouTube app update requested for instance: ${instanceId}`);
+      console.log(`[DIAL] Content-Type:`, req.headers['content-type']);
+      console.log(`[DIAL] Body:`, req.body);
+      
+      if (!app || app.state === 'stopped' || app.pid !== instanceId) {
+        return res.status(404).send('App instance not found');
+      }
+      
+      // Parse the update data (URL-encoded form data)
+      const bodyStr = typeof req.body === 'string' ? req.body : '';
+      if (bodyStr) {
+        const params = new URLSearchParams(bodyStr);
+        const videoId = params.get('v') || params.get('videoId') || undefined;
+        const listId = params.get('list') || params.get('listId') || undefined;
+        const timeParam = params.get('t') || params.get('currentTime');
+        const currentTime = timeParam ? parseInt(timeParam, 10) || 0 : 0;
+        
+        if (videoId) {
+          console.log(`[DIAL] Received video via PUT: ${videoId}`);
+          
+          // Update app state
+          this.apps.set('YouTube', {
+            state: 'running',
+            pid: instanceId,
+            additionalData: {
+              videoId,
+              listId: listId || '',
+            },
+          });
+          
+          // Emit event for the video streamer to handle
+          const playRequest: YouTubePlayRequest = {
+            videoId,
+            listId,
+            currentTime,
+            currentIndex: 0,
+          };
+          
+          console.log(`[DIAL] Emitting youtube-play event for video: ${videoId}`);
+          this.emit('youtube-play', playRequest);
+        }
+      }
+      
+      res.set('Access-Control-Allow-Origin', '*');
+      res.status(200).send();
     });
 
     // Stop YouTube app instance
