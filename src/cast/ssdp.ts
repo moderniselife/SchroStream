@@ -49,6 +49,7 @@ export class SSDPServer extends EventEmitter {
 
   private buildSearchResponse(searchTarget: string): string {
     const location = `http://${this.localIp}:${this.config.port}/ssdp/device-desc.xml`;
+    const applicationUrl = `http://${this.localIp}:${this.config.port}/apps`;
     const usn = `uuid:${this.config.uuid}`;
     
     return [
@@ -60,6 +61,7 @@ export class SSDPServer extends EventEmitter {
       `SERVER: SchroStream/1.0 UPnP/1.1 DIAL/2.2`,
       `ST: ${searchTarget}`,
       `USN: ${usn}::${searchTarget}`,
+      `APPLICATION-URL: ${applicationUrl}`,
       `BOOTID.UPNP.ORG: 1`,
       `CONFIGID.UPNP.ORG: 1`,
       `WAKEUP: MAC=${this.getMacAddress()};Timeout=10`,
@@ -170,8 +172,15 @@ export class SSDPServer extends EventEmitter {
       // Add random delay (0-1s) to prevent network congestion
       const delay = Math.random() * 1000;
       setTimeout(() => {
-        this.sendResponse(searchTarget, rinfo);
-        console.log(`[SSDP] ✓ Sent DIAL response to ${rinfo.address}:${rinfo.port}`);
+        const response = this.buildSearchResponse(searchTarget);
+        console.log(`[SSDP] Sending DIAL response with APPLICATION-URL: http://${this.localIp}:${this.config.port}/apps`);
+        this.socket!.send(response, 0, response.length, rinfo.port, rinfo.address, (err) => {
+          if (err) {
+            console.error('[SSDP] Failed to send response:', err);
+          } else {
+            console.log(`[SSDP] ✓ Sent DIAL response to ${rinfo.address}:${rinfo.port}`);
+          }
+        });
       }, delay);
     } else {
       // For malformed searches like "239.255.255.250:1900", still respond with DIAL info
