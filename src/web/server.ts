@@ -9,6 +9,7 @@ import { client as selfbotClient } from '../bot/client.js';
 import config from '../config.js';
 import { spawn } from 'child_process';
 import { initCastReceiver } from '../cast/index.js';
+import { initPlexCastReceiver } from '../plex-cast/index.js';
 
 const app = express();
 const PORT = process.env.WEB_PORT || 3105;
@@ -783,11 +784,17 @@ export async function startWebServer(): Promise<void> {
     console.log(`[WebServer] Started on http://localhost:${port}`);
     console.log(`[WebServer] Stream viewer available at http://localhost:${port}`);
     
-    // Initialize Cast receiver after server is listening
+    // Initialize Cast receivers after server is listening
     try {
       await initCastReceiver(app, port);
     } catch (error) {
-      console.error('[WebServer] Failed to initialize Cast receiver:', error);
+      console.error('[WebServer] Failed to initialize YouTube Cast receiver:', error);
+    }
+    
+    try {
+      await initPlexCastReceiver(app);
+    } catch (error) {
+      console.error('[WebServer] Failed to initialize Plex Cast receiver:', error);
     }
   });
 }
