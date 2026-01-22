@@ -1,4 +1,5 @@
-import { Express } from 'express';
+import { Express, Request, Response } from 'express';
+import { join } from 'path';
 import { SSDPServer } from './ssdp.js';
 import { DIALServer } from './dial.js';
 import type { YouTubePlayRequest } from './dial.js';
@@ -283,9 +284,23 @@ export async function initCastReceiver(app: Express, port: number): Promise<void
     console.log('[Cast] YouTube app launched (no video)');
   });
   
-  // Mount DIAL routes on the Express app
-  app.use('/', dialServer.getRouter());
+  // Mount DIAL routes
+  app.use('/ssdp', dialServer.getRouter());
+  app.use('/apps', dialServer.getRouter());
+  app.use('/', dialServer.getRouter()); // For /cast-test and other routes
   
+  // Now mount the SPA catch-all AFTER Cast routes
+  app.get('/{*path}', (req: Request, res: Response) => {
+    // Don't serve HTML for API routes or Cast routes
+    if (req.path.startsWith('/api/') || 
+        req.path.startsWith('/ssdp/') || 
+        req.path.startsWith('/apps') ||
+        req.path === '/cast-test') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.sendFile(join(process.cwd(), 'public', 'index.html'));
+  });
+
   // Start SSDP discovery
   try {
     await ssdpServer.start();
