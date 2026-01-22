@@ -86,27 +86,24 @@ export class SchroStreamPlayer extends Player {
       // Get the video streamer
       const streamer = getVideoStreamer();
       
-      // Create a media item for the streamer
+      // Create a media item for the streamer (same format as /yt command)
       const mediaItem = {
-        ratingKey: video.id,
-        key: `/youtube/${video.id}`,
-        type: 'youtube' as const,
+        ratingKey: `yt-${Date.now()}`,
+        key: youtubeUrl,
         title: videoTitle,
-        url: youtubeUrl,
-        videoId: video.id,
+        type: 'movie' as const,
         duration: videoDuration,
-        thumbnail: downloaded.thumbnail || video.thumbnail || '',
-        filePath: downloaded.filePath,
+        thumb: downloaded.thumbnail || video.thumbnail || '',
       };
       
-      // Start the stream from local file
-      await streamer.startStream(
+      // Start the stream from local file (same as /yt command)
+      await streamer.startLocalFile(
         guildId,
         channelId,
         mediaItem,
         downloaded.filePath,
-        0, // Start position
-        userId
+        userId,
+        0 // Start position
       );
       
       console.log(`[CastPlayer] ✓ Started playing: ${videoTitle}`);
