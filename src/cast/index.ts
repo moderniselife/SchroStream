@@ -1,6 +1,7 @@
 import { Express } from 'express';
 import { SSDPServer } from './ssdp.js';
-import { DIALServer, YouTubePlayRequest } from './dial.js';
+import { DIALServer } from './dial.js';
+import type { YouTubePlayRequest } from './dial.js';
 import { getVideoStreamer } from '../stream/video-streamer.js';
 import { spawn } from 'child_process';
 import config from '../config.js';
