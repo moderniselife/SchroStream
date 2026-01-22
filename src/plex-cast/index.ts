@@ -65,9 +65,9 @@ export async function initPlexCastReceiver(app: Express): Promise<void> {
     }
   });
 
-  // Mount player routes - use specific paths to avoid conflicts with YouTube Cast
-  app.use('/player', playerServer.getRouter());
-  app.get('/resources', (req, res) => {
+  // Mount player routes under /plex prefix to avoid ANY conflicts with YouTube Cast
+  app.use('/plex/player', playerServer.getRouter());
+  app.get('/plex/resources', (req, res) => {
     // Plex resources endpoint
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <MediaContainer>
