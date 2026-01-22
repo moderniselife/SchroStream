@@ -43,7 +43,7 @@ export async function initCastReceiver(app: Express, port: number): Promise<void
       model: 'Discord Media Streamer',
     },
     dial: {
-      port: port,
+      port: 8008, // Use a separate port for DIAL (8008 is common for Chromecast)
       corsAllowOrigins: true,
     },
     logLevel: 'debug',
