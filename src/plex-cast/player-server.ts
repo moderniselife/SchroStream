@@ -254,14 +254,14 @@ export class PlexPlayerServer extends EventEmitter {
     });
 
     // Navigation commands (for completeness)
-    this.router.get('/player/navigation/*', (req, res) => {
-      console.log(`[PlexPlayer] Navigation: ${req.path}`);
+    this.router.get('/player/navigation/:action', (req, res) => {
+      console.log(`[PlexPlayer] Navigation: ${req.params.action}`);
       res.sendStatus(200);
     });
 
     // Mirror commands (for completeness)
-    this.router.get('/player/mirror/*', (req, res) => {
-      console.log(`[PlexPlayer] Mirror: ${req.path}`);
+    this.router.get('/player/mirror/:action', (req, res) => {
+      console.log(`[PlexPlayer] Mirror: ${req.params.action}`);
       res.sendStatus(200);
     });
   }
