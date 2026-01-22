@@ -49,12 +49,25 @@ export class DIALServer extends EventEmitter {
   private setupRoutes(): void {
     // Device description XML (UPnP device descriptor)
     this.router.get('/ssdp/device-desc.xml', (req: Request, res: Response) => {
-      console.log('[DIAL] Device description requested');
+      console.log(`[DIAL] Device description requested from ${req.ip}`);
       
       const xml = this.buildDeviceDescription();
       res.set('Content-Type', 'application/xml');
       res.set('Application-URL', `http://${this.localIp}:${this.port}/apps`);
       res.send(xml);
+    });
+    
+    // Test endpoint for debugging
+    this.router.get('/cast-test', (req: Request, res: Response) => {
+      console.log(`[DIAL] Cast test endpoint accessed from ${req.ip}`);
+      res.json({
+        message: 'SchroStream Cast Receiver is running',
+        deviceName: this.config.friendlyName,
+        localIp: this.localIp,
+        port: this.port,
+        deviceDescUrl: `http://${this.localIp}:${this.port}/ssdp/device-desc.xml`,
+        appsUrl: `http://${this.localIp}:${this.port}/apps`,
+      });
     });
 
     // DIAL Application Resource (list available apps)

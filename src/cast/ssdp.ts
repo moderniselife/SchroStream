@@ -51,6 +51,7 @@ export class SSDPServer extends EventEmitter {
     const location = `http://${this.localIp}:${this.config.port}/ssdp/device-desc.xml`;
     const applicationUrl = `http://${this.localIp}:${this.config.port}/apps`;
     const usn = `uuid:${this.config.uuid}`;
+    const bootid = Math.floor(Date.now() / 1000);
     
     return [
       'HTTP/1.1 200 OK',
@@ -62,9 +63,8 @@ export class SSDPServer extends EventEmitter {
       `ST: ${searchTarget}`,
       `USN: ${usn}::${searchTarget}`,
       `APPLICATION-URL: ${applicationUrl}`,
-      `BOOTID.UPNP.ORG: 1`,
-      `CONFIGID.UPNP.ORG: 1`,
-      `WAKEUP: MAC=${this.getMacAddress()};Timeout=10`,
+      `BOOTID.UPNP.ORG: ${bootid}`,
+      `CONFIGID.UPNP.ORG: ${bootid}`,
       '',
       '',
     ].join('\r\n');
@@ -174,6 +174,7 @@ export class SSDPServer extends EventEmitter {
       setTimeout(() => {
         const response = this.buildSearchResponse(searchTarget);
         console.log(`[SSDP] Sending DIAL response with APPLICATION-URL: http://${this.localIp}:${this.config.port}/apps`);
+        console.log(`[SSDP] Full response:\n${response.substring(0, 300)}...`);
         this.socket!.send(response, 0, response.length, rinfo.port, rinfo.address, (err) => {
           if (err) {
             console.error('[SSDP] Failed to send response:', err);
