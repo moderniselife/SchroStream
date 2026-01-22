@@ -65,9 +65,26 @@ export async function initPlexCastReceiver(app: Express): Promise<void> {
     }
   });
 
-  // Mount player routes
+  // Mount player routes - use specific paths to avoid conflicts with YouTube Cast
   app.use('/player', playerServer.getRouter());
-  app.use('/', playerServer.getRouter()); // Also mount at root for /resources
+  app.get('/resources', (req, res) => {
+    // Plex resources endpoint
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer>
+  <Player 
+    title="${playerName}"
+    machineIdentifier="${gdmServer?.getMachineIdentifier()}"
+    product="SchroStream"
+    version="1.0.0"
+    platform="Node.js"
+    platformVersion="${process.version}"
+    protocolVersion="1"
+    protocolCapabilities="timeline,playback,navigation,playqueues"
+    deviceClass="stb"
+  />
+</MediaContainer>`;
+    res.type('application/xml').send(xml);
+  });
 
   // Start GDM server
   try {
