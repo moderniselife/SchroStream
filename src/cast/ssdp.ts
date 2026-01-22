@@ -130,14 +130,22 @@ export class SSDPServer extends EventEmitter {
   private handleMessage(msg: Buffer, rinfo: dgram.RemoteInfo): void {
     const message = msg.toString();
     
+    // Log all incoming SSDP traffic for debugging
+    const firstLine = message.split('\n')[0].trim();
+    console.log(`[SSDP] Received packet from ${rinfo.address}:${rinfo.port} - ${firstLine}`);
+    
     // Only handle M-SEARCH requests
     if (!message.startsWith('M-SEARCH')) return;
     
     // Parse the search target (ST header)
     const stMatch = message.match(/ST:\s*(.+?)(?:\r\n|\r|\n)/i);
-    if (!stMatch) return;
+    if (!stMatch) {
+      console.log(`[SSDP] M-SEARCH missing ST header`);
+      return;
+    }
     
     const searchTarget = stMatch[1].trim();
+    console.log(`[SSDP] M-SEARCH ST: "${searchTarget}"`);
     
     // Respond to DIAL-related searches
     const dialTargets = [
@@ -148,13 +156,15 @@ export class SSDPServer extends EventEmitter {
     ];
     
     if (dialTargets.includes(searchTarget)) {
-      console.log(`[SSDP] Received M-SEARCH for "${searchTarget}" from ${rinfo.address}:${rinfo.port}`);
+      console.log(`[SSDP] Responding to M-SEARCH for "${searchTarget}" from ${rinfo.address}:${rinfo.port}`);
       
       // Add random delay (0-1s) to prevent network congestion
       const delay = Math.random() * 1000;
       setTimeout(() => {
         this.sendResponse(searchTarget, rinfo);
       }, delay);
+    } else {
+      console.log(`[SSDP] Ignoring M-SEARCH for non-DIAL target: "${searchTarget}"`);
     }
   }
 
