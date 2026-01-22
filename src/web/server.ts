@@ -8,6 +8,7 @@ import { parseTimeString } from '../plex/library.js';
 import { client as selfbotClient } from '../bot/client.js';
 import config from '../config.js';
 import { spawn } from 'child_process';
+import { initCastReceiver } from '../cast/index.js';
 
 const app = express();
 const PORT = process.env.WEB_PORT || 3105;
@@ -778,10 +779,23 @@ export function unregisterWebStream(guildId: string): void {
   console.log(`[WebServer] Unregistered stream for guild ${guildId}`);
 }
 
-export function startWebServer(): void {
-  app.listen(PORT, () => {
-    console.log(`[WebServer] Started on http://localhost:${PORT}`);
-    console.log(`[WebServer] Stream viewer available at http://localhost:${PORT}`);
+export async function startWebServer(): Promise<void> {
+  // Add URL-encoded body parser for DIAL requests
+  app.use(express.urlencoded({ extended: true }));
+  app.use(express.text({ type: 'text/plain' }));
+  
+  const port = typeof PORT === 'string' ? parseInt(PORT, 10) : PORT;
+  
+  app.listen(port, async () => {
+    console.log(`[WebServer] Started on http://localhost:${port}`);
+    console.log(`[WebServer] Stream viewer available at http://localhost:${port}`);
+    
+    // Initialize Cast receiver after server is listening
+    try {
+      await initCastReceiver(app, port);
+    } catch (error) {
+      console.error('[WebServer] Failed to initialize Cast receiver:', error);
+    }
   });
 }
 
