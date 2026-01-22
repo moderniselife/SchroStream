@@ -53,6 +53,7 @@ export class DIALServer extends EventEmitter {
       
       const xml = this.buildDeviceDescription();
       res.set('Content-Type', 'application/xml');
+      res.set('Access-Control-Allow-Origin', '*');
       res.set('Application-URL', `http://${this.localIp}:${this.port}/apps`);
       res.send(xml);
     });
@@ -74,6 +75,7 @@ export class DIALServer extends EventEmitter {
     this.router.get('/apps', (req: Request, res: Response) => {
       console.log('[DIAL] Apps list requested');
       res.set('Content-Type', 'application/xml');
+      res.set('Access-Control-Allow-Origin', '*');
       res.send(this.buildAppsListXml());
     });
 
@@ -84,10 +86,13 @@ export class DIALServer extends EventEmitter {
       const app = this.apps.get('YouTube');
       const state = app?.state || 'stopped';
       
+      console.log(`[DIAL] Current YouTube state: ${state}`);
+      
       res.set('Content-Type', 'application/xml');
       res.set('Access-Control-Allow-Origin', '*');
       
       const xml = this.buildAppStateXml('YouTube', state, app?.additionalData);
+      console.log(`[DIAL] Sending app state XML:\n${xml}`);
       res.send(xml);
     });
 
