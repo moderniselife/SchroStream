@@ -130,22 +130,28 @@ export class SSDPServer extends EventEmitter {
   private handleMessage(msg: Buffer, rinfo: dgram.RemoteInfo): void {
     const message = msg.toString();
     
-    // Log all incoming SSDP traffic for debugging
-    const firstLine = message.split('\n')[0].trim();
-    console.log(`[SSDP] Received packet from ${rinfo.address}:${rinfo.port} - ${firstLine}`);
-    
     // Only handle M-SEARCH requests
     if (!message.startsWith('M-SEARCH')) return;
     
+    // Log M-SEARCH requests
+    const lines = message.split('\n');
+    const firstLine = lines[0].trim();
+    const stLine = lines.find(l => l.toUpperCase().startsWith('ST:'))?.trim();
+    console.log(`[SSDP] Received M-SEARCH from ${rinfo.address}:${rinfo.port}`);
+    console.log(`[SSDP]   ${firstLine}`);
+    if (stLine) console.log(`[SSDP]   ${stLine}`);
+    
     // Parse the search target (ST header)
     const stMatch = message.match(/ST:\s*(.+?)(?:\r\n|\r|\n)/i);
+    const mxMatch = message.match(/MX:\s*(.+?)(?:\r\n|\r|\n)/i);
+    
     if (!stMatch) {
       console.log(`[SSDP] M-SEARCH missing ST header`);
       return;
     }
     
     const searchTarget = stMatch[1].trim();
-    console.log(`[SSDP] M-SEARCH ST: "${searchTarget}"`);
+    const mx = mxMatch ? mxMatch[1].trim() : '3';
     
     // Respond to DIAL-related searches
     const dialTargets = [
@@ -153,18 +159,32 @@ export class SSDPServer extends EventEmitter {
       'urn:dial-multiscreen-org:device:dial:1',
       'ssdp:all',
       'upnp:rootdevice',
+      'dial:1',  // Some clients use shortened form
+      'urn:dial-multiscreen-org:service:dial',
+      'urn:dial-multiscreen-org:device:dial',
     ];
     
     if (dialTargets.includes(searchTarget)) {
-      console.log(`[SSDP] Responding to M-SEARCH for "${searchTarget}" from ${rinfo.address}:${rinfo.port}`);
+      console.log(`[SSDP] ✓ Responding to DIAL search "${searchTarget}"`);
       
       // Add random delay (0-1s) to prevent network congestion
       const delay = Math.random() * 1000;
       setTimeout(() => {
         this.sendResponse(searchTarget, rinfo);
+        console.log(`[SSDP] ✓ Sent DIAL response to ${rinfo.address}:${rinfo.port}`);
       }, delay);
     } else {
-      console.log(`[SSDP] Ignoring M-SEARCH for non-DIAL target: "${searchTarget}"`);
+      // For malformed searches like "239.255.255.250:1900", still respond with DIAL info
+      if (searchTarget.includes('239.255.255.250') || searchTarget.includes('1900')) {
+        console.log(`[SSDP] ✓ Responding to malformed search "${searchTarget}" as DIAL device`);
+        const delay = Math.random() * 1000;
+        setTimeout(() => {
+          this.sendResponse('urn:dial-multiscreen-org:service:dial:1', rinfo);
+          console.log(`[SSDP] ✓ Sent DIAL response to ${rinfo.address}:${rinfo.port}`);
+        }, delay);
+      } else {
+        console.log(`[SSDP] ✗ Ignoring non-DIAL target: "${searchTarget}"`);
+      }
     }
   }
 
@@ -182,9 +202,8 @@ export class SSDPServer extends EventEmitter {
     this.socket.send(responseBuffer, 0, responseBuffer.length, rinfo.port, rinfo.address, (err) => {
       if (err) {
         console.error('[SSDP] Failed to send response:', err);
-      } else {
-        console.log(`[SSDP] Sent discovery response to ${rinfo.address}:${rinfo.port}`);
       }
+      // Success is logged in the caller
     });
   }
 
