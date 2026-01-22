@@ -108,6 +108,7 @@ export class DIALServer extends EventEmitter {
     this.router.post('/apps/YouTube', (req: Request, res: Response) => {
       console.log('[DIAL] YouTube app launch requested');
       console.log('[DIAL] Content-Type:', req.headers['content-type']);
+      console.log('[DIAL] Raw body type:', typeof req.body);
       console.log('[DIAL] Body:', req.body);
       
       // Parse the launch data (URL-encoded form data)
@@ -120,9 +121,16 @@ export class DIALServer extends EventEmitter {
       const bodyStr = typeof req.body === 'string' ? req.body : 
                       typeof req.body === 'object' ? new URLSearchParams(req.body as Record<string, string>).toString() : '';
       
+      console.log('[DIAL] Parsed body string:', bodyStr);
+      
       // YouTube sends data as URL-encoded: v=VIDEO_ID&t=TIME&list=PLAYLIST_ID
       if (bodyStr) {
         const params = new URLSearchParams(bodyStr);
+        console.log('[DIAL] All URL params:');
+        for (const [key, value] of params) {
+          console.log(`  ${key}: ${value}`);
+        }
+        
         videoId = params.get('v') || params.get('videoId') || undefined;
         listId = params.get('list') || params.get('listId') || undefined;
         const timeParam = params.get('t') || params.get('currentTime');
@@ -136,6 +144,11 @@ export class DIALServer extends EventEmitter {
           console.log(`[DIAL] Received pairing code: ${pairingCode}`);
           // For now, accept any pairing code
           // In a real implementation, you might want to validate this
+        }
+        
+        // Check for other potential video ID fields
+        if (!videoId) {
+          videoId = params.get('videoId') || params.get('id') || params.get('video_id') || undefined;
         }
       }
       
