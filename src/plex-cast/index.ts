@@ -20,9 +20,11 @@ export async function initPlexCastReceiver(app: Express): Promise<void> {
 
   const playerName = process.env.PLEX_CAST_NAME || 'SchroStream (Bob)';
   const playerPort = parseInt(process.env.PLEX_CAST_PORT || '32500');
+  const serverIP = process.env.SERVER_IP || '192.168.1.124'; // Use same IP as YouTube Cast
 
   console.log('[PlexCast] Initializing Plex Cast receiver...');
   console.log(`[PlexCast] Player name: ${playerName}`);
+  console.log(`[PlexCast] Server IP: ${serverIP}`);
 
   // Create GDM server for discovery
   gdmServer = new PlexGDMServer({
@@ -30,7 +32,7 @@ export async function initPlexCastReceiver(app: Express): Promise<void> {
     port: playerPort,
     product: 'SchroStream Discord Streamer',
     deviceClass: 'stb',
-  });
+  }, serverIP);
 
   // Create player server for handling commands
   playerServer = new PlexPlayerServer(gdmServer.getMachineIdentifier(), playerName);

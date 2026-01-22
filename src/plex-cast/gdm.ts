@@ -27,7 +27,7 @@ export class PlexGDMServer {
   private running = false;
   private advertiseInterval: NodeJS.Timeout | null = null;
 
-  constructor(config: Partial<PlexPlayerConfig> = {}) {
+  constructor(config: Partial<PlexPlayerConfig> = {}, explicitIP?: string) {
     this.config = {
       name: config.name || 'SchroStream',
       port: config.port || 32500,
@@ -36,7 +36,8 @@ export class PlexGDMServer {
       version: config.version || '1.0.0',
       deviceClass: config.deviceClass || 'stb',
     };
-    this.localIP = this.getLocalIP();
+    this.localIP = explicitIP || process.env.SERVER_IP || this.getLocalIP();
+    console.log(`[PlexGDM] Using IP: ${this.localIP}`);
   }
 
   private getLocalIP(): string {
@@ -70,6 +71,7 @@ export class PlexGDMServer {
       'HTTP/1.0 200 OK',
       'Content-Type: plex/media-player',
       `Name: ${this.config.name}`,
+      `Host: ${this.localIP}`,
       `Port: ${this.config.port}`,
       `Product: ${this.config.product}`,
       'Protocol: plex',
@@ -87,6 +89,7 @@ export class PlexGDMServer {
       'HELLO * HTTP/1.0',
       'Content-Type: plex/media-player',
       `Name: ${this.config.name}`,
+      `Host: ${this.localIP}`,
       `Port: ${this.config.port}`,
       `Product: ${this.config.product}`,
       'Protocol: plex',
@@ -116,13 +119,14 @@ export class PlexGDMServer {
         
         if (message.includes('M-SEARCH')) {
           console.log(`[PlexGDM] Received M-SEARCH from ${rinfo.address}:${rinfo.port}`);
+          console.log(`[PlexGDM] Search content: ${message.trim().split('\n')[0]}`);
           
           const response = Buffer.from(this.buildResponse());
           this.socket?.send(response, 0, response.length, rinfo.port, rinfo.address, (err) => {
             if (err) {
               console.error('[PlexGDM] Error sending response:', err.message);
             } else {
-              console.log(`[PlexGDM] Sent response to ${rinfo.address}:${rinfo.port}`);
+              console.log(`[PlexGDM] Sent response to ${rinfo.address}:${rinfo.port} (Player at ${this.localIP}:${this.config.port})`);
             }
           });
         }
