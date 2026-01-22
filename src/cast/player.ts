@@ -129,10 +129,20 @@ export class SchroStreamPlayer extends Player {
       const guild = selfbotClient.guilds.cache.get(guildId);
       if (!guild) return;
       
-      // Find the first text channel we can send to
-      const textChannel = guild.channels.cache.find(
-        (ch) => ch.type === 'GUILD_TEXT' && ch.permissionsFor(selfbotClient.user!)?.has('SEND_MESSAGES')
-      ) as TextChannel | undefined;
+      let textChannel: TextChannel | undefined;
+      
+      // Check for configured notification channel
+      const notificationChannelId = process.env.CAST_NOTIFICATION_CHANNEL_ID;
+      if (notificationChannelId) {
+        textChannel = guild.channels.cache.get(notificationChannelId) as TextChannel | undefined;
+      }
+      
+      // Fallback to first available text channel
+      if (!textChannel) {
+        textChannel = guild.channels.cache.find(
+          (ch) => ch.type === 'GUILD_TEXT' && ch.permissionsFor(selfbotClient.user!)?.has('SEND_MESSAGES')
+        ) as TextChannel | undefined;
+      }
       
       if (textChannel) {
         await textChannel.send({

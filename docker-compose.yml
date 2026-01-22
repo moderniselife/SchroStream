@@ -37,6 +37,7 @@ services:
       - CAST_ENABLED=${CAST_ENABLED:-false}
       - CAST_DEVICE_NAME=${CAST_DEVICE_NAME:-SchroStream}
       - CAST_FRIENDLY_NAME=${CAST_FRIENDLY_NAME:-SchroStream (Bob)}
+      - CAST_NOTIFICATION_CHANNEL_ID=${CAST_NOTIFICATION_CHANNEL_ID:-}
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads
