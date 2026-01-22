@@ -34,6 +34,9 @@ services:
       - VOICE_COMMANDS_ENABLED=${VOICE_COMMANDS_ENABLED:-false}
       - VOICE_WAKE_WORD=${VOICE_WAKE_WORD:-bob}
       - VOSK_MODEL_PATH=/app/vosk-model
+      - CAST_ENABLED=${CAST_ENABLED:-false}
+      - CAST_DEVICE_NAME=${CAST_DEVICE_NAME:-SchroStream}
+      - CAST_FRIENDLY_NAME=${CAST_FRIENDLY_NAME:-SchroStream (Bob)}
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads
