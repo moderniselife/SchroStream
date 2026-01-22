@@ -41,11 +41,15 @@ export class DIALServer extends EventEmitter {
     this.router = Router();
     
     // Handle OPTIONS for CORS preflight
-    this.router.options('*', (req: Request, res: Response) => {
-      res.set('Access-Control-Allow-Origin', '*');
-      res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-      res.status(200).send();
+    this.router.use((req: Request, res: Response, next: Function) => {
+      if (req.method === 'OPTIONS') {
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        res.status(200).send();
+      } else {
+        next();
+      }
     });
     
     // Initialize YouTube app as stopped
