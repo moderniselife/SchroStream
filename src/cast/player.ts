@@ -56,9 +56,6 @@ export class SchroStreamPlayer extends Player {
       
       const youtubeUrl = `https://www.youtube.com/watch?v=${video.id}`;
       
-      // Send notification to text channel
-      await this.sendTextChannelNotification(guildId, video, youtubeUrl);
-      
       // Get video info first
       console.log(`[CastPlayer] Getting video info for ${video.id}...`);
       const videoInfo = await getYouTubeInfo(youtubeUrl);
@@ -66,18 +63,65 @@ export class SchroStreamPlayer extends Player {
       const videoDuration = videoInfo?.duration || video.duration || 0;
       this.currentDuration = videoDuration;
       
-      // Download the video using existing downloader
+      // Get text channel for progress updates
+      const textChannel = await this.getNotificationChannel(guildId);
+      let progressMessage: any = null;
+      
+      // Send initial "Cast received" message
+      if (textChannel) {
+        progressMessage = await textChannel.send(
+          `📺 **YouTube Cast Received**\n` +
+          `🎬 **${videoTitle}**\n\n` +
+          `📥 *Starting download...*`
+        );
+      }
+      
+      // Download the video using existing downloader with progress updates
       console.log(`[CastPlayer] Downloading video: ${videoTitle}`);
+      let lastUpdateTime = 0;
+      const UPDATE_COOLDOWN = 2000;
+      
       const downloaded = await downloadYouTubeVideo(youtubeUrl, {
-        onProgress: (progress) => {
-          if (progress.percent % 20 < 1) {
-            console.log(`[CastPlayer] Download: ${progress.percent.toFixed(0)}%`);
+        onProgress: async (progress) => {
+          const now = Date.now();
+          if (now - lastUpdateTime < UPDATE_COOLDOWN) return;
+          lastUpdateTime = now;
+          
+          console.log(`[CastPlayer] Download: ${progress.percent.toFixed(0)}%`);
+          
+          if (progressMessage) {
+            const progressBar = this.createProgressBar(progress.percent);
+            try {
+              await progressMessage.edit(
+                `📺 **YouTube Cast - Downloading**\n` +
+                `🎬 **${videoTitle}**\n\n` +
+                `${progressBar}\n` +
+                `📊 ${progress.speed} | ⏱️ ETA: ${progress.eta}\n` +
+                `📁 Total: ${progress.total}\n\n` +
+                `*Will auto-start streaming when complete...*`
+              );
+            } catch (e) { /* ignore edit errors */ }
+          }
+        },
+        onComplete: async () => {
+          if (progressMessage) {
+            try {
+              await progressMessage.edit(
+                `📺 **YouTube Cast - Download Complete!**\n` +
+                `🎬 **${videoTitle}**\n\n` +
+                `✅ Video downloaded successfully\n\n` +
+                `🎬 *Starting stream automatically...*`
+              );
+            } catch (e) { /* ignore edit errors */ }
           }
         }
       });
       
       if (!downloaded) {
         console.error('[CastPlayer] Failed to download video');
+        if (progressMessage) {
+          await progressMessage.edit(`📺 **YouTube Cast - Failed**\n❌ Download failed`).catch(() => {});
+        }
         return false;
       }
       
@@ -108,6 +152,18 @@ export class SchroStreamPlayer extends Player {
       
       console.log(`[CastPlayer] ✓ Started playing: ${videoTitle}`);
       
+      // Update message to show now playing
+      if (progressMessage) {
+        const durationStr = videoDuration ? this.formatDuration(videoDuration) : 'Unknown';
+        await progressMessage.edit(
+          `📺 **YouTube Cast - Now Playing**\n` +
+          `🎬 **${videoTitle}**\n\n` +
+          `⏱️ Duration: ${durationStr}\n` +
+          `📺 Channel: ${downloaded.uploader || 'Unknown'}\n` +
+          `📥 Source: Local file (no buffering!)`
+        ).catch(() => {});
+      }
+      
       // Start position tracking
       this.startPositionTracking();
       
@@ -119,12 +175,36 @@ export class SchroStreamPlayer extends Player {
   }
   
   /**
-   * Send notification to text channel about Cast playback
+   * Create a progress bar string
    */
-  private async sendTextChannelNotification(guildId: string, video: Video, url: string): Promise<void> {
+  private createProgressBar(percent: number): string {
+    const barLength = 20;
+    const filledLength = Math.round((percent / 100) * barLength);
+    const bar = '█'.repeat(filledLength) + '░'.repeat(barLength - filledLength);
+    return `[${bar}] ${percent.toFixed(1)}%`;
+  }
+  
+  /**
+   * Format duration in seconds to MM:SS or HH:MM:SS
+   */
+  private formatDuration(seconds: number): string {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+  }
+  
+  /**
+   * Get the notification channel for Cast messages
+   */
+  private async getNotificationChannel(guildId: string): Promise<TextChannel | null> {
     try {
       const guild = selfbotClient.guilds.cache.get(guildId);
-      if (!guild) return;
+      if (!guild) return null;
       
       let textChannel: TextChannel | undefined;
       
@@ -141,14 +221,10 @@ export class SchroStreamPlayer extends Player {
         ) as TextChannel | undefined;
       }
       
-      if (textChannel) {
-        await textChannel.send({
-          content: `📺 **YouTube Cast** - Now playing via Cast:\n${url}`,
-        });
-        console.log(`[CastPlayer] Sent notification to #${textChannel.name}`);
-      }
+      return textChannel || null;
     } catch (error) {
-      console.error('[CastPlayer] Failed to send text channel notification:', error);
+      console.error('[CastPlayer] Failed to get notification channel:', error);
+      return null;
     }
   }
 
