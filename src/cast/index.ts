@@ -49,6 +49,7 @@ export async function initCastReceiver(app: Express, port: number): Promise<void
     dial: {
       port: 8008, // Use a separate port for DIAL (8008 is common for Chromecast)
       corsAllowOrigins: true,
+      bindToAddresses: ['192.168.1.124'], // Bind to server's IP
     },
     dataStore: dataStore as any, // Use in-memory store
     logLevel: 'debug',
