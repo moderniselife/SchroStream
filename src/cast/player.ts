@@ -1,7 +1,9 @@
 import { Player } from 'yt-cast-receiver';
 import { getVideoStreamer } from '../stream/video-streamer.js';
-import { spawn } from 'child_process';
+import { downloadYouTubeVideo, getYouTubeInfo } from '../youtube/downloader.js';
+import { client as selfbotClient } from '../bot/client.js';
 import config from '../config.js';
+import { TextChannel } from 'discord.js-selfbot-v13';
 
 interface Video {
   id: string;
@@ -43,30 +45,6 @@ export class SchroStreamPlayer extends Player {
     this.isPlaying = true;
     
     try {
-      // Get stream URL using yt-dlp
-      const streamUrl = await this.getYouTubeStreamUrl(video.id);
-      if (!streamUrl) {
-        console.error('[CastPlayer] Failed to get stream URL');
-        return false;
-      }
-      
-      console.log(`[CastPlayer] Got stream URL for ${video.id}`);
-      
-      // Get the video streamer
-      const streamer = getVideoStreamer();
-      
-      // Create a media item for the streamer (using ExternalStreamItem type)
-      const mediaItem = {
-        ratingKey: video.id,
-        key: `/youtube/${video.id}`,
-        type: 'external' as const,
-        title: video.title || `YouTube Video ${video.id}`,
-        url: `https://www.youtube.com/watch?v=${video.id}`,
-        duration: video.duration || 0,
-        thumbnail: video.thumbnail || '',
-      };
-      
-      // Ensure required config values exist
       const guildId = config.discord.webGuildId || '';
       const channelId = config.discord.webChannelId || '';
       const userId = config.discord.webUserId || '';
@@ -76,16 +54,62 @@ export class SchroStreamPlayer extends Player {
         return false;
       }
       
-      // Start the stream
-      await streamer.startExternalStream(
+      const youtubeUrl = `https://www.youtube.com/watch?v=${video.id}`;
+      
+      // Send notification to text channel
+      await this.sendTextChannelNotification(guildId, video, youtubeUrl);
+      
+      // Get video info first
+      console.log(`[CastPlayer] Getting video info for ${video.id}...`);
+      const videoInfo = await getYouTubeInfo(youtubeUrl);
+      const videoTitle = videoInfo?.title || video.title || `YouTube Video ${video.id}`;
+      const videoDuration = videoInfo?.duration || video.duration || 0;
+      this.currentDuration = videoDuration;
+      
+      // Download the video using existing downloader
+      console.log(`[CastPlayer] Downloading video: ${videoTitle}`);
+      const downloaded = await downloadYouTubeVideo(youtubeUrl, {
+        onProgress: (progress) => {
+          if (progress.percent % 20 < 1) {
+            console.log(`[CastPlayer] Download: ${progress.percent.toFixed(0)}%`);
+          }
+        }
+      });
+      
+      if (!downloaded) {
+        console.error('[CastPlayer] Failed to download video');
+        return false;
+      }
+      
+      console.log(`[CastPlayer] ✓ Downloaded: ${downloaded.filePath}`);
+      
+      // Get the video streamer
+      const streamer = getVideoStreamer();
+      
+      // Create a media item for the streamer
+      const mediaItem = {
+        ratingKey: video.id,
+        key: `/youtube/${video.id}`,
+        type: 'youtube' as const,
+        title: videoTitle,
+        url: youtubeUrl,
+        videoId: video.id,
+        duration: videoDuration,
+        thumbnail: downloaded.thumbnail || video.thumbnail || '',
+        filePath: downloaded.filePath,
+      };
+      
+      // Start the stream from local file
+      await streamer.startStream(
         guildId,
         channelId,
         mediaItem,
-        streamUrl,
+        downloaded.filePath,
+        0, // Start position
         userId
       );
       
-      console.log(`[CastPlayer] ✓ Started playing: ${video.title || video.id}`);
+      console.log(`[CastPlayer] ✓ Started playing: ${videoTitle}`);
       
       // Start position tracking
       this.startPositionTracking();
@@ -94,6 +118,30 @@ export class SchroStreamPlayer extends Player {
     } catch (error) {
       console.error('[CastPlayer] Error playing video:', error);
       return false;
+    }
+  }
+  
+  /**
+   * Send notification to text channel about Cast playback
+   */
+  private async sendTextChannelNotification(guildId: string, video: Video, url: string): Promise<void> {
+    try {
+      const guild = selfbotClient.guilds.cache.get(guildId);
+      if (!guild) return;
+      
+      // Find the first text channel we can send to
+      const textChannel = guild.channels.cache.find(
+        (ch) => ch.type === 'GUILD_TEXT' && ch.permissionsFor(selfbotClient.user!)?.has('SEND_MESSAGES')
+      ) as TextChannel | undefined;
+      
+      if (textChannel) {
+        await textChannel.send({
+          content: `📺 **YouTube Cast** - Now playing via Cast:\n${url}`,
+        });
+        console.log(`[CastPlayer] Sent notification to #${textChannel.name}`);
+      }
+    } catch (error) {
+      console.error('[CastPlayer] Failed to send text channel notification:', error);
     }
   }
 
@@ -180,47 +228,6 @@ export class SchroStreamPlayer extends Player {
    */
   async doGetDuration(): Promise<number> {
     return this.currentDuration;
-  }
-
-  /**
-   * Get YouTube stream URL using yt-dlp
-   */
-  private getYouTubeStreamUrl(videoId: string): Promise<string | null> {
-    return new Promise((resolve) => {
-      const url = `https://www.youtube.com/watch?v=${videoId}`;
-      
-      const ytdlp = spawn('yt-dlp', [
-        '-f', 'best[height<=1080]',
-        '-g',
-        '--no-playlist',
-        url
-      ]);
-      
-      let stdout = '';
-      let stderr = '';
-      
-      ytdlp.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-      
-      ytdlp.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-      
-      ytdlp.on('close', (code) => {
-        if (code === 0 && stdout.trim()) {
-          resolve(stdout.trim().split('\n')[0]);
-        } else {
-          console.error('[CastPlayer] yt-dlp error:', stderr);
-          resolve(null);
-        }
-      });
-      
-      ytdlp.on('error', (err) => {
-        console.error('[CastPlayer] yt-dlp spawn error:', err);
-        resolve(null);
-      });
-    });
   }
 
   /**
