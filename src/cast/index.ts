@@ -2,6 +2,7 @@ import { Express, Request, Response } from 'express';
 import { join } from 'path';
 import YouTubeCastReceiver from 'yt-cast-receiver';
 import { SchroStreamPlayer } from './player.js';
+import { InMemoryDataStore } from './datastore.js';
 import config from '../config.js';
 
 let receiver: YouTubeCastReceiver | null = null;
@@ -34,6 +35,9 @@ export async function initCastReceiver(app: Express, port: number): Promise<void
   // Create the player implementation
   const player = new SchroStreamPlayer();
 
+  // Create custom data store to avoid node-persist issues in Docker
+  const dataStore = new InMemoryDataStore();
+
   // Create the receiver instance
   receiver = new YouTubeCastReceiver(player, {
     device: {
@@ -46,6 +50,7 @@ export async function initCastReceiver(app: Express, port: number): Promise<void
       port: 8008, // Use a separate port for DIAL (8008 is common for Chromecast)
       corsAllowOrigins: true,
     },
+    dataStore: dataStore as any, // Use in-memory store
     logLevel: 'debug',
   });
 
