@@ -4,6 +4,11 @@
  */
 export class InMemoryDataStore {
   private data: Map<string, unknown> = new Map();
+  private logger: any = null;
+
+  setLogger(logger: any): void {
+    this.logger = logger;
+  }
 
   async get<T>(key: string): Promise<T | null> {
     const value = this.data.get(key);
