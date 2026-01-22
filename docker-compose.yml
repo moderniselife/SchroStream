@@ -38,6 +38,9 @@ services:
       - CAST_DEVICE_NAME=${CAST_DEVICE_NAME:-SchroStream}
       - CAST_FRIENDLY_NAME=${CAST_FRIENDLY_NAME:-SchroStream (Bob)}
       - CAST_NOTIFICATION_CHANNEL_ID=${CAST_NOTIFICATION_CHANNEL_ID:-}
+      - PLEX_CAST_ENABLED=${PLEX_CAST_ENABLED:-false}
+      - PLEX_CAST_NAME=${PLEX_CAST_NAME:-SchroStream (Bob)}
+      - PLEX_CAST_PORT=${PLEX_CAST_PORT:-32500}
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads
