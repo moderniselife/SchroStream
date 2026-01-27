@@ -1851,6 +1851,20 @@ class VideoStreamer {
     // Check if we have a captured frame to use
     const hasFrame = framePath && existsSync(framePath);
 
+    // Format the current timestamp
+    const formatTime = (ms: number): string => {
+      const seconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      
+      if (hours > 0) {
+        return `${hours}:${String(minutes % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+      }
+      return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+    };
+
+    const currentTimeStr = formatTime(session.currentTime);
+
     // Generate a "Paused" screen using FFmpeg
     const mediaItem = session.mediaItem as any;
     const titleText = mediaItem.grandparentTitle 
@@ -1858,6 +1872,7 @@ class VideoStreamer {
       : session.mediaItem.title;
     
     const escapedTitle = titleText.replace(/'/g, "\\'").replace(/:/g, "\\:");
+    const escapedTime = currentTimeStr.replace(/'/g, "\\'");
 
     // Leave and rejoin voice to properly reset Discord Go Live stream
     // This ensures the pause screen displays correctly
@@ -1885,7 +1900,7 @@ class VideoStreamer {
         '-i', framePath,
         '-f', 'lavfi',
         '-i', 'anullsrc=r=48000:cl=stereo', // Silent audio
-        '-vf', `scale=${width}:${height},drawtext=text='PAUSED':fontcolor=white:fontsize=72:x=(w-text_w)/2:y=(h-text_h)/2:boxcolor=black@0.5:box=1:boxborderw=10`,
+        '-vf', `scale=${width}:${height},drawtext=text='PAUSED':fontcolor=white:fontsize=72:x=(w-text_w)/2:y=(h-text_h)/2-60:boxcolor=black@0.5:box=1:boxborderw=10,drawtext=text='${escapedTime}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2+20`,
       ];
     } else {
       // Fallback to solid color background
@@ -1897,7 +1912,7 @@ class VideoStreamer {
         '-i', `color=c=#1a1a2e:s=${width}x${height}:r=${config.stream.frameRate}`,
         '-f', 'lavfi',
         '-i', 'anullsrc=r=48000:cl=stereo', // Silent audio
-        '-vf', `drawtext=text='PAUSED':fontcolor=white:fontsize=72:x=(w-text_w)/2:y=(h-text_h)/2-50,drawtext=text='${escapedTitle}':fontcolor=gray:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+50`,
+        '-vf', `drawtext=text='PAUSED':fontcolor=white:fontsize=72:x=(w-text_w)/2:y=(h-text_h)/2-90:boxcolor=black@0.5:box=1:boxborderw=10,drawtext=text='${escapedTime}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2-20,drawtext=text='${escapedTitle}':fontcolor=gray:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+50`,
       ];
     }
 
@@ -2303,7 +2318,6 @@ let cleanupInterval: NodeJS.Timeout | null = null;
 function killOrphanedFFmpegProcesses(): void {
   // Only run cleanup if we have no active sessions
   if (videoStreamerInstance && videoStreamerInstance.getActiveSessions().length === 0) {
-    const { execSync } = require('child_process');
     try {
       // Find FFmpeg processes started by our app (node process)
       // Use pkill to kill FFmpeg processes that are children of our node process
