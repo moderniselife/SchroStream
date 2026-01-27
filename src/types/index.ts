@@ -129,6 +129,10 @@ export interface Config {
     wakeWord: string;
     modelPath?: string;
   };
+  youtube: {
+    cookiesPath?: string;
+    preferHighBitrate: boolean;
+  };
 }
 
 export interface SearchSession {

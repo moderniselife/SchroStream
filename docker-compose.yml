@@ -26,6 +26,8 @@ services:
       - SHOW_FFMPEG_LOGS=${SHOW_FFMPEG_LOGS:-false}
       - GPU_TRANSCODING=${GPU_TRANSCODING:-false}
       - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+      - YOUTUBE_COOKIES_PATH=${YOUTUBE_COOKIES_PATH:-/app/cookies.txt}
+      - YOUTUBE_PREFER_HIGH_BITRATE=${YOUTUBE_PREFER_HIGH_BITRATE:-true}
       - PREFIX=${PREFIX:-!}
       - WEB_PORT=${WEB_PORT:-3105}
       - WEB_USER_ID=${WEB_USER_ID}
@@ -48,6 +50,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads
+      - ./cookies.txt:/app/cookies.txt:ro  # YouTube Premium cookies (optional)
     # GPU passthrough for NVIDIA NVENC transcoding
     # Requires nvidia-container-toolkit installed on host
     deploy:

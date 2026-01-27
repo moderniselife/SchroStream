@@ -3,6 +3,33 @@ import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync
 import { join } from 'path';
 import config from '../config';
 
+// Build common yt-dlp args for authentication
+function getYtDlpAuthArgs(): string[] {
+  const args: string[] = [];
+  
+  // Add cookies if configured (required for YT Premium high bitrate streams)
+  if (config.youtube?.cookiesPath && existsSync(config.youtube.cookiesPath)) {
+    args.push('--cookies', config.youtube.cookiesPath);
+    console.log('[YouTubeDownloader] Using cookies for YouTube Premium access');
+  }
+  
+  return args;
+}
+
+// Get format string based on quality preference
+// YouTube Premium unlocks higher bitrate streams at all resolutions
+// We prefer high bitrate even if it means downloading 4K/1440p and downscaling
+function getFormatString(): string {
+  if (config.youtube?.preferHighBitrate) {
+    // Prefer best quality by bitrate, not resolution
+    // This will grab 4K/1440p with high bitrate, we downscale in FFmpeg anyway
+    // Sort by bitrate (tbr) descending, then height
+    return 'bestvideo[vcodec^=avc1]+bestaudio/bestvideo+bestaudio/best';
+  }
+  // Fallback to resolution-limited
+  return 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';
+}
+
 export interface DownloadedVideo {
   filePath: string;
   title: string;
@@ -56,7 +83,13 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
     const timestamp = Date.now();
     const outputPath = join(DOWNLOADS_DIR, `video-${timestamp}.mp4`);
     
-    const ytdlp = spawn('yt-dlp', [
+    const authArgs = getYtDlpAuthArgs();
+    const formatString = getFormatString();
+    
+    console.log(`[YouTubeDownloader] Format selection: ${formatString}`);
+    
+    const ytdlpArgs = [
+      ...authArgs,
       '--newline', // Show progress line by line
       '--progress', // Show progress
       '--no-playlist',
@@ -64,13 +97,15 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
       '--embed-thumbnail', // Embed thumbnail in video
       '--embed-metadata', // Embed metadata
       '--merge-output-format', 'mp4', // Ensure MP4 output
-      '--format', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best', // Quality selection
+      '--format', formatString, // Quality selection (prefers high bitrate with Premium)
       // SponsorBlock integration - remove sponsor segments during download
       '--sponsorblock-remove', 'sponsor,selfpromo,interaction,intro,outro,preview,filler',
       '--output', outputPath,
       '--exec', 'echo "DOWNLOAD_COMPLETE"', // Execute command when download completes
       url
-    ]);
+    ];
+    
+    const ytdlp = spawn('yt-dlp', ytdlpArgs);
 
     let output = '';
     let error = '';
@@ -250,7 +285,10 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
 
 async function getYouTubeInfo(url: string): Promise<{ title: string; duration: number; thumbnail?: string; uploader?: string; view_count?: number; upload_date?: string; description?: string } | null> {
   return new Promise((resolve) => {
+    const authArgs = getYtDlpAuthArgs();
+    
     const ytdlp = spawn('yt-dlp', [
+      ...authArgs,
       '--dump-json',
       '--no-playlist',
       '--no-warnings',

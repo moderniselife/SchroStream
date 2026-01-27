@@ -51,6 +51,10 @@ export const config: Config = {
     wakeWord: getEnvOrDefault('VOICE_WAKE_WORD', 'bob').toLowerCase(),
     modelPath: process.env.VOSK_MODEL_PATH,
   },
+  youtube: {
+    cookiesPath: process.env.YOUTUBE_COOKIES_PATH, // Path to cookies.txt for YT Premium
+    preferHighBitrate: getEnvOrDefault('YOUTUBE_PREFER_HIGH_BITRATE', 'true').toLowerCase() === 'true',
+  },
 };
 
 export default config;
