@@ -347,6 +347,29 @@ export function clearPlaybackPosition(ratingKey: string): void {
   persistPlaybackHistory();
 }
 
+// Helper to kill all FFmpeg processes for a session
+function killSessionFFmpeg(session: VideoStreamSession): void {
+  if (session.ffmpegCommand) {
+    try {
+      session.ffmpegCommand.kill('SIGKILL');
+      console.log('[VideoStreamer] Killed main FFmpeg process');
+    } catch {
+      // Ignore kill errors
+    }
+    session.ffmpegCommand = null;
+  }
+  
+  if (session.pauseFFmpegCommand) {
+    try {
+      session.pauseFFmpegCommand.kill('SIGKILL');
+      console.log('[VideoStreamer] Killed pause FFmpeg process');
+    } catch {
+      // Ignore kill errors
+    }
+    session.pauseFFmpegCommand = null;
+  }
+}
+
 class VideoStreamer {
   public streamer: Streamer;
   private sessions: Map<string, VideoStreamSession> = new Map();
@@ -849,6 +872,7 @@ class VideoStreamer {
           console.log('[VideoStreamer] FFmpeg exited normally - video finished');
           console.log('[VideoStreamer] Local file playback finished');
           const finishedMediaItem = session.mediaItem;
+          killSessionFFmpeg(session); // Kill any lingering FFmpeg processes
           this.sessions.delete(session.guildId);
           
           // Auto-play next episode (for Plex TV) or next item in queue
@@ -1047,6 +1071,7 @@ class VideoStreamer {
         } else if (code === 0) {
           console.log('[VideoStreamer] External playback finished (FFmpeg exit)');
           const finishedMediaItem = session.mediaItem;
+          killSessionFFmpeg(session); // Kill any lingering FFmpeg processes
           this.sessions.delete(session.guildId);
           this.playNextInQueue(session.guildId, session.channelId, session.userId, finishedMediaItem);
         }
@@ -1297,6 +1322,7 @@ class VideoStreamer {
           savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(session.guildId));
         }
         const finishedMediaItem = session.mediaItem;
+        killSessionFFmpeg(session); // Kill any lingering FFmpeg processes
         this.sessions.delete(session.guildId);
         
         // Auto-play next episode (for Plex TV) or next item in queue
@@ -1313,6 +1339,7 @@ class VideoStreamer {
         if (session.isPlaying) {
           savePlaybackPosition(session.mediaItem.ratingKey, this.getCurrentTime(session.guildId));
         }
+        killSessionFFmpeg(session); // Kill any lingering FFmpeg processes
         this.sessions.delete(session.guildId);
       }
     }
@@ -1344,23 +1371,8 @@ class VideoStreamer {
         await plexClient.stopTranscodeSession(session.sessionId);
       }
       
-      // Kill video FFmpeg if running
-      if (session.ffmpegCommand) {
-        try {
-          session.ffmpegCommand.kill('SIGKILL');
-        } catch {
-          // Ignore kill errors
-        }
-      }
-
-      // Kill pause FFmpeg if running
-      if (session.pauseFFmpegCommand) {
-        try {
-          session.pauseFFmpegCommand.kill('SIGKILL');
-        } catch {
-          // Ignore kill errors
-        }
-      }
+      // Kill all FFmpeg processes
+      killSessionFFmpeg(session);
 
       // Save position AFTER stopping (only if actually played)
       if (session.isPlaying && currentPosition > 0) {
@@ -2053,6 +2065,7 @@ class VideoStreamer {
       } catch (error) {
         console.error('[VideoStreamer] Failed to restart stream after volume change:', error);
         // Clean up on failure
+        killSessionFFmpeg(session);
         this.sessions.delete(guildId);
         return false;
       }
@@ -2118,6 +2131,7 @@ class VideoStreamer {
       } catch (error) {
         console.error('[VideoStreamer] Failed to restart stream after speed change:', error);
         // Clean up on failure
+        killSessionFFmpeg(session);
         this.sessions.delete(guildId);
         return false;
       }
