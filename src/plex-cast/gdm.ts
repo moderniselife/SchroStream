@@ -114,19 +114,25 @@ export class PlexGDMServer {
         reject(err);
       });
 
+      // Rate limit logging to avoid spam during streaming
+      let lastLogTime = 0;
+      const LOG_INTERVAL = 30000; // Only log every 30 seconds
+      
       this.socket.on('message', (msg, rinfo) => {
         const message = msg.toString();
         
         if (message.includes('M-SEARCH')) {
-          console.log(`[PlexGDM] Received M-SEARCH from ${rinfo.address}:${rinfo.port}`);
-          console.log(`[PlexGDM] Search content: ${message.trim().split('\n')[0]}`);
-          
           const response = Buffer.from(this.buildResponse());
           this.socket?.send(response, 0, response.length, rinfo.port, rinfo.address, (err) => {
             if (err) {
               console.error('[PlexGDM] Error sending response:', err.message);
             } else {
-              console.log(`[PlexGDM] Sent response to ${rinfo.address}:${rinfo.port} (Player at ${this.localIP}:${this.config.port})`);
+              // Rate-limited logging
+              const now = Date.now();
+              if (now - lastLogTime > LOG_INTERVAL) {
+                console.log(`[PlexGDM] Responding to M-SEARCH requests (Player at ${this.localIP}:${this.config.port})`);
+                lastLogTime = now;
+              }
             }
           });
         }
