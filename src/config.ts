@@ -44,6 +44,7 @@ export const config: Config = {
     audioBitrate: parseInt(getEnvOrDefault('AUDIO_BITRATE', '256'), 10),
     frameRate: parseInt(getEnvOrDefault('FRAME_RATE', '30'), 10),
     showFFmpegLogs: getEnvOrDefault('SHOW_FFMPEG_LOGS', 'false').toLowerCase() === 'true',
+    gpuTranscoding: getEnvOrDefault('GPU_TRANSCODING', 'false').toLowerCase() === 'true',
   },
   voice: {
     enabled: getEnvOrDefault('VOICE_COMMANDS_ENABLED', 'false').toLowerCase() === 'true',
