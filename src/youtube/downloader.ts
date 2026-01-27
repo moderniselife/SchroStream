@@ -101,20 +101,38 @@ if (!existsSync(DOWNLOADS_DIR)) {
 }
 
 export async function downloadYouTubeVideo(url: string, options: DownloadOptions = {}): Promise<DownloadedVideo | null> {
+  // Try with cookies first, then without if it fails
+  console.log('[YouTubeDownloader] Starting download for:', url);
+  
+  const result = await downloadYouTubeVideoInternal(url, options, true);
+  if (result) return result;
+  
+  console.log('[YouTubeDownloader] Retrying download without cookies...');
+  return downloadYouTubeVideoInternal(url, options, false);
+}
+
+async function downloadYouTubeVideoInternal(url: string, options: DownloadOptions, useCookies: boolean): Promise<DownloadedVideo | null> {
   return new Promise((resolve) => {
-    console.log('[YouTubeDownloader] Starting accelerated download for:', url);
+    console.log(`[YouTubeDownloader] Download attempt (cookies=${useCookies})`);
     
     // Generate unique filename based on timestamp
     const timestamp = Date.now();
     const outputPath = join(DOWNLOADS_DIR, `video-${timestamp}.mp4`);
     
-    const authArgs = getYtDlpAuthArgs();
-    const formatString = getFormatString();
+    const ytdlpArgs: string[] = [];
+    
+    // Only add cookies if requested
+    if (useCookies) {
+      const authArgs = getYtDlpAuthArgs();
+      ytdlpArgs.push(...authArgs);
+    }
+    
+    // Use simpler format string that works without premium
+    const formatString = useCookies ? getFormatString() : 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';
     
     console.log(`[YouTubeDownloader] Format selection: ${formatString}`);
     
-    const ytdlpArgs = [
-      ...authArgs,
+    ytdlpArgs.push(
       '--newline', // Show progress line by line
       '--progress', // Show progress
       '--no-playlist',
@@ -122,13 +140,13 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
       '--embed-thumbnail', // Embed thumbnail in video
       '--embed-metadata', // Embed metadata
       '--merge-output-format', 'mp4', // Ensure MP4 output
-      '--format', formatString, // Quality selection (prefers high bitrate with Premium)
+      '--format', formatString, // Quality selection
       // SponsorBlock integration - remove sponsor segments during download
       '--sponsorblock-remove', 'sponsor,selfpromo,interaction,intro,outro,preview,filler',
       '--output', outputPath,
       '--exec', 'echo "DOWNLOAD_COMPLETE"', // Execute command when download completes
       url
-    ];
+    );
     
     const ytdlp = spawn('yt-dlp', ytdlpArgs);
 
@@ -379,12 +397,13 @@ function formatFilesize(bytes?: number): string {
 
 // List available formats for a YouTube video
 export async function listVideoFormats(url: string): Promise<{ formats: VideoFormat[]; title: string; thumbnail?: string } | null> {
-  // Try with cookies first, then without if it fails
-  const result = await listVideoFormatsInternal(url, true);
+  // Try WITHOUT cookies first (more reliable for just listing)
+  // Then with cookies if that fails (might unlock premium formats)
+  const result = await listVideoFormatsInternal(url, false);
   if (result) return result;
   
-  console.log('[YouTubeDownloader] Retrying format list without cookies...');
-  return listVideoFormatsInternal(url, false);
+  console.log('[YouTubeDownloader] Retrying format list with cookies...');
+  return listVideoFormatsInternal(url, true);
 }
 
 async function listVideoFormatsInternal(url: string, useCookies: boolean): Promise<{ formats: VideoFormat[]; title: string; thumbnail?: string } | null> {
