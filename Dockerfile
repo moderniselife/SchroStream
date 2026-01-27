@@ -30,7 +30,7 @@ RUN apt-get update && \
     ln -sf /usr/lib/jellyfin-ffmpeg/ffmpeg /usr/local/bin/ffmpeg && \
     ln -sf /usr/lib/jellyfin-ffmpeg/ffprobe /usr/local/bin/ffprobe && \
     # Install Python packages
-    pip3 install --break-system-packages SpeechRecognition pyaudio && \
+    pip3 install SpeechRecognition pyaudio && \
     # Install yt-dlp
     curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp && \
