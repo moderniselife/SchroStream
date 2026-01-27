@@ -836,19 +836,20 @@ class VideoStreamer {
         // NVIDIA NVENC GPU encoding - offloads encoding to GPU, much lower CPU usage
         // Note: Using software decode + NVENC encode (simpler & more compatible than full hwaccel)
         console.log(`[VideoStreamer] Using NVIDIA NVENC for H.264 encoding at ${qualityBitrate}k bitrate`);
+        const gopSize = config.stream.frameRate * 2; // GOP = 2 seconds
         ffmpegArgs.push(
-          '-map', '0:v:0?',
-          '-map', '0:a:0?',
+          '-map', '0:v:0', // Explicit first video stream only (skip PNG thumbnails)
+          '-map', '0:a:0', // Explicit first audio stream only
           '-c:v', 'h264_nvenc',
           '-preset', 'p4', // p4 = medium quality/speed balance for streaming
           '-profile:v', 'high',
-          '-level', '4.1',
+          '-level', '4.2', // Level 4.2 for better compatibility
           '-tune', 'll', // Low latency for streaming
           '-rc', 'cbr', // Constant bitrate for stable streaming
           '-pix_fmt', 'yuv420p',
           '-r', String(config.stream.frameRate),
-          '-g', String(config.stream.frameRate * 2), // GOP = 2 seconds
-          '-keyint_min', String(config.stream.frameRate),
+          '-g', String(gopSize),
+          '-keyint_min', String(gopSize), // Match keyint_min to GOP size
           '-b:v', `${qualityBitrate}k`,
           '-maxrate', `${qualityBitrate}k`,
           '-bufsize', `${qualityBitrate * 2}k`,
@@ -869,18 +870,21 @@ class VideoStreamer {
       } else {
         // CPU encoding fallback (libx264)
         console.log(`[VideoStreamer] Using CPU encoding (libx264) at ${qualityBitrate}k bitrate`);
+        const gopSize = config.stream.frameRate * 2; // GOP = 2 seconds (60 frames at 30fps)
         
         // NOTE: Do NOT use ultrafast - it causes bitrate spikes and stuttering!
         ffmpegArgs.push(
-          '-map', '0:v:0?',
-          '-map', '0:a:0?',
+          '-map', '0:v:0', // Explicit first video stream only (skip PNG thumbnails)
+          '-map', '0:a:0', // Explicit first audio stream only
           '-c:v', 'libx264',
           '-preset', 'superfast', // superfast prevents bitrate spikes (ultrafast causes stutter!)
+          '-profile:v', 'high',
+          '-level', '4.2',
           '-tune', 'zerolatency',
           '-pix_fmt', 'yuv420p',
           '-r', String(config.stream.frameRate),
-          '-g', '50',
-          '-keyint_min', '25',
+          '-g', String(gopSize),
+          '-keyint_min', String(gopSize), // Match keyint_min to GOP size
           '-b:v', `${qualityBitrate}k`,
           '-maxrate', `${qualityBitrate}k`,
           '-bufsize', `${qualityBitrate * 2}k`,
@@ -1072,23 +1076,24 @@ class VideoStreamer {
 
       // Map video from first input, audio from second (or first if no separate audio)
       const useGPU = checkNVENCSupport();
+      const gopSize = config.stream.frameRate * 2; // GOP = 2 seconds
       
       if (useGPU) {
         // NVIDIA NVENC GPU encoding for external streams
         console.log(`[VideoStreamer] Using NVIDIA NVENC for external stream encoding`);
         ffmpegArgs.push(
-          '-map', '0:v:0?',
-          '-map', session.audioUrl ? '1:a:0?' : '0:a:0?',
+          '-map', '0:v:0',
+          '-map', session.audioUrl ? '1:a:0' : '0:a:0',
           '-c:v', 'h264_nvenc',
           '-preset', 'p4', // p4 = medium quality/speed balance
           '-profile:v', 'high',
-          '-level', '4.1',
+          '-level', '4.2',
           '-tune', 'll', // Low latency
           '-rc', 'cbr',
           '-pix_fmt', 'yuv420p',
           '-r', String(config.stream.frameRate),
-          '-g', String(config.stream.frameRate * 2),
-          '-keyint_min', String(config.stream.frameRate),
+          '-g', String(gopSize),
+          '-keyint_min', String(gopSize), // Match keyint_min to GOP size
           '-b:v', `${config.stream.maxBitrate}k`,
           '-maxrate', `${config.stream.maxBitrate}k`,
           '-bufsize', `${config.stream.maxBitrate * 2}k`,
@@ -1110,15 +1115,17 @@ class VideoStreamer {
         // CPU encoding fallback
         console.log(`[VideoStreamer] Using CPU encoding for external stream`);
         ffmpegArgs.push(
-          '-map', '0:v:0?',
-          '-map', session.audioUrl ? '1:a:0?' : '0:a:0?',
+          '-map', '0:v:0',
+          '-map', session.audioUrl ? '1:a:0' : '0:a:0',
           '-c:v', 'libx264',
           '-preset', 'superfast', // superfast prevents bitrate spikes (ultrafast causes stutter!)
+          '-profile:v', 'high',
+          '-level', '4.2',
           '-tune', 'zerolatency',
           '-pix_fmt', 'yuv420p',
           '-r', String(config.stream.frameRate),
-          '-g', '50', // GOP size ~1.7 seconds at 30fps
-          '-keyint_min', '25',
+          '-g', String(gopSize),
+          '-keyint_min', String(gopSize), // Match keyint_min to GOP size
           '-b:v', `${config.stream.maxBitrate}k`,
           '-maxrate', `${config.stream.maxBitrate}k`,
           '-bufsize', `${config.stream.maxBitrate * 2}k`,
