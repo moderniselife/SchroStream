@@ -1,7 +1,7 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
 import { Client } from 'discord.js-selfbot-v13';
 import { EmbedBuilder } from 'discord.js';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { MediaItem } from '../types/index.js';
@@ -12,6 +12,61 @@ import { popQueue, peekQueue } from '../data/queue.js';
 import { startVoiceListener, stopVoiceListener } from '../voice/python-listener.js';
 import { startVoiceReceiver, stopVoiceReceiver } from '../voice/receiver.js';
 import { getNextEpisode } from '../plex/library.js';
+
+// NVENC GPU transcoding support - cached at startup
+let nvencSupported: boolean | null = null;
+
+function checkNVENCSupport(): boolean {
+  // Return cached result if available
+  if (nvencSupported !== null) {
+    return nvencSupported;
+  }
+  
+  // If GPU transcoding is disabled in config, skip all checks
+  if (!config.stream.gpuTranscoding) {
+    console.log('[VideoStreamer] GPU transcoding disabled via config');
+    nvencSupported = false;
+    return false;
+  }
+  
+  try {
+    // Check if NVIDIA GPU is available
+    try {
+      execSync('nvidia-smi --query-gpu=name --format=csv,noheader,nounits', { encoding: 'utf-8', stdio: 'pipe' });
+      console.log('[VideoStreamer] NVIDIA GPU detected');
+    } catch {
+      console.warn('[VideoStreamer] NVIDIA GPU not detected or nvidia-smi not available');
+      nvencSupported = false;
+      return false;
+    }
+    
+    // Check FFmpeg NVENC encoder support
+    try {
+      const result = execSync('ffmpeg -encoders 2>&1 | grep h264_nvenc', { encoding: 'utf-8', stdio: 'pipe' });
+      if (result.includes('h264_nvenc')) {
+        console.log('[VideoStreamer] FFmpeg NVENC support confirmed');
+        nvencSupported = true;
+        return true;
+      }
+    } catch {
+      // grep returns non-zero if no match
+    }
+    
+    console.warn('[VideoStreamer] FFmpeg does not have NVENC support');
+    nvencSupported = false;
+    return false;
+  } catch (error) {
+    console.warn('[VideoStreamer] Could not verify NVENC support:', (error as Error).message);
+    nvencSupported = false;
+    return false;
+  }
+}
+
+// Initialize NVENC check on module load
+setTimeout(() => {
+  const hasNvenc = checkNVENCSupport();
+  console.log(`[VideoStreamer] GPU transcoding: ${hasNvenc ? 'ENABLED (NVENC)' : 'DISABLED (CPU fallback)'}`);
+}, 1000);
 
 // Playback history file path
 const HISTORY_FILE = join(process.cwd(), 'data', 'playback-history.json');
@@ -765,15 +820,50 @@ class VideoStreamer {
       // Video and audio output settings - maximum compatibility for processed videos
       // Force re-encoding to ensure H.264 compatibility with Discord
       // AV1 and other codecs are not supported by Discord video streaming
-      const needsReencode = true; // Always re-encode for Discord compatibility
       
-      if (needsReencode) {
-        // Adjust bitrate based on quality for optimal encoding
-        const qualityBitrate = height >= 1080 ? config.stream.maxBitrate : 
-                              height >= 720 ? Math.floor(config.stream.maxBitrate * 0.6) :
-                              Math.floor(config.stream.maxBitrate * 0.4);
-        
-        console.log(`[VideoStreamer] Re-encoding at ${qualityBitrate}k bitrate for ${height}p video`);
+      // Adjust bitrate based on quality for optimal encoding
+      const qualityBitrate = height >= 1080 ? config.stream.maxBitrate : 
+                            height >= 720 ? Math.floor(config.stream.maxBitrate * 0.6) :
+                            Math.floor(config.stream.maxBitrate * 0.4);
+      
+      const useGPU = checkNVENCSupport();
+      
+      if (useGPU) {
+        // NVIDIA NVENC GPU encoding - offloads encoding to GPU, much lower CPU usage
+        // Note: Using software decode + NVENC encode (simpler & more compatible than full hwaccel)
+        console.log(`[VideoStreamer] Using NVIDIA NVENC for H.264 encoding at ${qualityBitrate}k bitrate`);
+        ffmpegArgs.push(
+          '-map', '0:v:0?',
+          '-map', '0:a:0?',
+          '-c:v', 'h264_nvenc',
+          '-preset', 'p4', // p4 = medium quality/speed balance for streaming
+          '-profile:v', 'high',
+          '-level', '4.1',
+          '-tune', 'll', // Low latency for streaming
+          '-rc', 'cbr', // Constant bitrate for stable streaming
+          '-pix_fmt', 'yuv420p',
+          '-r', String(config.stream.frameRate),
+          '-g', String(config.stream.frameRate * 2), // GOP = 2 seconds
+          '-keyint_min', String(config.stream.frameRate),
+          '-b:v', `${qualityBitrate}k`,
+          '-maxrate', `${qualityBitrate}k`,
+          '-bufsize', `${qualityBitrate * 2}k`,
+          '-vf', session.speed !== 1 
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+          '-c:a', 'libopus',
+          '-b:a', '128k',
+          '-ar', '48000',
+          '-ac', '2',
+          '-af', session.speed !== 1
+            ? `volume=${volumeMultiplier},atempo=${session.speed}`
+            : `volume=${volumeMultiplier}`,
+          '-f', 'matroska',
+          '-'
+        );
+      } else {
+        // CPU encoding fallback (libx264)
+        console.log(`[VideoStreamer] Using CPU encoding (libx264) at ${qualityBitrate}k bitrate`);
         
         // NOTE: Do NOT use ultrafast - it causes bitrate spikes and stuttering!
         ffmpegArgs.push(
@@ -793,24 +883,6 @@ class VideoStreamer {
             ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
             : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
           '-c:a', 'libopus',
-          '-b:a', '128k',
-          '-ar', '48000',
-          '-ac', '2',
-          '-af', session.speed !== 1
-            ? `volume=${volumeMultiplier},atempo=${session.speed}`
-            : `volume=${volumeMultiplier}`,
-          '-f', 'matroska',
-          '-'
-        );
-      } else {
-        // Stream copy - minimal processing, maximum performance
-        console.log(`[VideoStreamer] Using stream copy for local file (no re-encoding)`);
-        
-        ffmpegArgs.push(
-          '-map', '0:v:0?',
-          '-map', '0:a:0?',
-          '-c:v', 'copy', // Copy video stream directly - no re-encoding
-          '-c:a', 'libopus', // Audio needs re-encoding for Discord
           '-b:a', '128k',
           '-ar', '48000',
           '-ac', '2',
@@ -989,32 +1061,70 @@ class VideoStreamer {
       }
 
       // Map video from first input, audio from second (or first if no separate audio)
-      ffmpegArgs.push(
-        '-map', '0:v:0?',
-        '-map', session.audioUrl ? '1:a:0?' : '0:a:0?',
-        '-c:v', 'libx264',
-        '-preset', 'superfast', // superfast prevents bitrate spikes (ultrafast causes stutter!)
-        '-tune', 'zerolatency',
-        '-pix_fmt', 'yuv420p',
-        '-r', String(config.stream.frameRate),
-        '-g', '50', // GOP size ~1.7 seconds at 30fps
-        '-keyint_min', '25',
-        '-b:v', `${config.stream.maxBitrate}k`,
-        '-maxrate', `${config.stream.maxBitrate}k`,
-        '-bufsize', `${config.stream.maxBitrate * 2}k`, // Larger buffer for smoother output
-        '-vf', session.speed !== 1
-          ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
-          : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
-        '-c:a', 'libopus',
-        '-b:a', '320k', // Reduced from 320k (Discord limit is 128k anyway)
-        '-ar', '48000',
-        '-ac', '2',
-        '-af', session.speed !== 1
-          ? `volume=${volumeMultiplier},atempo=${session.speed}`
-          : `volume=${volumeMultiplier}`, // Removed speechnorm (CPU intensive)
-        '-f', 'matroska',
-        '-'
-      );
+      const useGPU = checkNVENCSupport();
+      
+      if (useGPU) {
+        // NVIDIA NVENC GPU encoding for external streams
+        console.log(`[VideoStreamer] Using NVIDIA NVENC for external stream encoding`);
+        ffmpegArgs.push(
+          '-map', '0:v:0?',
+          '-map', session.audioUrl ? '1:a:0?' : '0:a:0?',
+          '-c:v', 'h264_nvenc',
+          '-preset', 'p4', // p4 = medium quality/speed balance
+          '-profile:v', 'high',
+          '-level', '4.1',
+          '-tune', 'll', // Low latency
+          '-rc', 'cbr',
+          '-pix_fmt', 'yuv420p',
+          '-r', String(config.stream.frameRate),
+          '-g', String(config.stream.frameRate * 2),
+          '-keyint_min', String(config.stream.frameRate),
+          '-b:v', `${config.stream.maxBitrate}k`,
+          '-maxrate', `${config.stream.maxBitrate}k`,
+          '-bufsize', `${config.stream.maxBitrate * 2}k`,
+          '-vf', session.speed !== 1
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+          '-c:a', 'libopus',
+          '-b:a', '128k',
+          '-ar', '48000',
+          '-ac', '2',
+          '-af', session.speed !== 1
+            ? `volume=${volumeMultiplier},atempo=${session.speed}`
+            : `volume=${volumeMultiplier}`,
+          '-f', 'matroska',
+          '-'
+        );
+      } else {
+        // CPU encoding fallback
+        console.log(`[VideoStreamer] Using CPU encoding for external stream`);
+        ffmpegArgs.push(
+          '-map', '0:v:0?',
+          '-map', session.audioUrl ? '1:a:0?' : '0:a:0?',
+          '-c:v', 'libx264',
+          '-preset', 'superfast', // superfast prevents bitrate spikes (ultrafast causes stutter!)
+          '-tune', 'zerolatency',
+          '-pix_fmt', 'yuv420p',
+          '-r', String(config.stream.frameRate),
+          '-g', '50', // GOP size ~1.7 seconds at 30fps
+          '-keyint_min', '25',
+          '-b:v', `${config.stream.maxBitrate}k`,
+          '-maxrate', `${config.stream.maxBitrate}k`,
+          '-bufsize', `${config.stream.maxBitrate * 2}k`,
+          '-vf', session.speed !== 1
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+          '-c:a', 'libopus',
+          '-b:a', '128k',
+          '-ar', '48000',
+          '-ac', '2',
+          '-af', session.speed !== 1
+            ? `volume=${volumeMultiplier},atempo=${session.speed}`
+            : `volume=${volumeMultiplier}`,
+          '-f', 'matroska',
+          '-'
+        );
+      }
 
       if (session.speed !== 1) {
         console.log(`[VideoStreamer] Playing external stream at ${session.speed}x speed`);

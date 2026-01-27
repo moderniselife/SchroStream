@@ -122,6 +122,7 @@ export interface Config {
     audioBitrate: number;
     frameRate: number;
     showFFmpegLogs: boolean;
+    gpuTranscoding: boolean;
   };
   voice: {
     enabled: boolean;
