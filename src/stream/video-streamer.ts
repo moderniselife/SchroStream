@@ -390,6 +390,10 @@ class VideoStreamer {
     return this.sessions.has(guildId);
   }
 
+  getActiveSessions(): VideoStreamSession[] {
+    return Array.from(this.sessions.values());
+  }
+
   private async playNextInQueue(guildId: string, channelId: string, userId?: string, lastPlayedItem?: MediaItem): Promise<void> {
     // Check if the last played item was a Plex TV episode - auto-play next episode
     if (lastPlayedItem && lastPlayedItem.type === 'episode') {
@@ -2160,6 +2164,7 @@ let videoStreamerInstance: VideoStreamer | null = null;
 
 export function initVideoStreamer(client: Client): VideoStreamer {
   videoStreamerInstance = new VideoStreamer(client);
+  startIdleCleanup(); // Start periodic cleanup of orphaned FFmpeg processes
   return videoStreamerInstance;
 }
 
@@ -2179,6 +2184,57 @@ export function leaveAllVoiceChannels(): void {
     } catch {
       // Ignore errors
     }
+  }
+}
+
+// Periodic cleanup of orphaned FFmpeg processes when idle
+let cleanupInterval: NodeJS.Timeout | null = null;
+
+function killOrphanedFFmpegProcesses(): void {
+  // Only run cleanup if we have no active sessions
+  if (videoStreamerInstance && videoStreamerInstance.getActiveSessions().length === 0) {
+    const { execSync } = require('child_process');
+    try {
+      // Find FFmpeg processes started by our app (node process)
+      // Use pkill to kill FFmpeg processes that are children of our node process
+      const ppid = process.pid;
+      
+      // Get list of ffmpeg processes that are children of our process
+      const result = execSync(`pgrep -P ${ppid} -x ffmpeg 2>/dev/null || true`, { encoding: 'utf-8' });
+      const pids = result.trim().split('\n').filter((p: string) => p);
+      
+      if (pids.length > 0) {
+        console.log(`[VideoStreamer] Found ${pids.length} orphaned FFmpeg process(es), killing...`);
+        for (const pid of pids) {
+          try {
+            process.kill(parseInt(pid, 10), 'SIGKILL');
+            console.log(`[VideoStreamer] Killed orphaned FFmpeg process ${pid}`);
+          } catch {
+            // Process may have already exited
+          }
+        }
+      }
+    } catch (error) {
+      // Silently ignore errors - pgrep might not be available
+    }
+  }
+}
+
+export function startIdleCleanup(): void {
+  if (cleanupInterval) return;
+  
+  // Run cleanup every 60 seconds
+  cleanupInterval = setInterval(() => {
+    killOrphanedFFmpegProcesses();
+  }, 60000);
+  
+  console.log('[VideoStreamer] Started idle FFmpeg cleanup (every 60s)');
+}
+
+export function stopIdleCleanup(): void {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
   }
 }
 
