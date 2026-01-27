@@ -965,16 +965,15 @@ class VideoStreamer {
         '-map', '0:v:0?',
         '-map', session.audioUrl ? '1:a:0?' : '0:a:0?',
         '-c:v', 'libx264',
-        '-preset', 'ultrafast',
+        '-preset', 'superfast', // superfast prevents bitrate spikes (ultrafast causes stutter!)
         '-tune', 'zerolatency',
         '-pix_fmt', 'yuv420p',
         '-r', String(config.stream.frameRate),
-        '-g', String(config.stream.frameRate), // Keyframe every 1 second (was 2)
-        '-keyint_min', String(config.stream.frameRate), // Minimum keyframe interval
+        '-g', '50', // GOP size ~1.7 seconds at 30fps
+        '-keyint_min', '25',
         '-b:v', `${config.stream.maxBitrate}k`,
-        '-maxrate', `${config.stream.maxBitrate}k`, // Strict CBR (was 1.5x)
-        '-bufsize', `${Math.floor(config.stream.maxBitrate / 2)}k`, // Smaller buffer for more consistent frames
-        '-x264-params', 'nal-hrd=cbr:force-cfr=1', // Force constant bitrate and frame rate
+        '-maxrate', `${config.stream.maxBitrate}k`,
+        '-bufsize', `${config.stream.maxBitrate * 2}k`, // Larger buffer for smoother output
         '-vf', session.speed !== 1
           ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
           : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
