@@ -862,6 +862,7 @@ class VideoStreamer {
           '-af', session.speed !== 1
             ? `volume=${volumeMultiplier},atempo=${session.speed}`
             : `volume=${volumeMultiplier}`,
+          '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
           '-f', 'matroska',
           '-'
         );
@@ -893,6 +894,7 @@ class VideoStreamer {
           '-af', session.speed !== 1
             ? `volume=${volumeMultiplier},atempo=${session.speed}`
             : `volume=${volumeMultiplier}`,
+          '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
           '-f', 'matroska',
           '-'
         );
@@ -1100,6 +1102,7 @@ class VideoStreamer {
           '-af', session.speed !== 1
             ? `volume=${volumeMultiplier},atempo=${session.speed}`
             : `volume=${volumeMultiplier}`,
+          '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
           '-f', 'matroska',
           '-'
         );
@@ -1129,6 +1132,7 @@ class VideoStreamer {
           '-af', session.speed !== 1
             ? `volume=${volumeMultiplier},atempo=${session.speed}`
             : `volume=${volumeMultiplier}`,
+          '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
           '-f', 'matroska',
           '-'
         );
