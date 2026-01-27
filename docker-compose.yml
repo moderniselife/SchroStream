@@ -6,6 +6,7 @@ services:
     container_name: schrostream
     restart: unless-stopped
     network_mode: host
+    runtime: nvidia
     ports:
       - "3105:3105"
     env_file: .env
