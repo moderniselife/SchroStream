@@ -799,9 +799,13 @@ class VideoStreamer {
       const volumeMultiplier = (session.volume / 100).toFixed(2);
 
       // Build FFmpeg args for local file input
+      // Use multi-threaded decoding for CPU-intensive codecs like AV1
       const ffmpegArgs = [
         '-hide_banner',
         '-loglevel', 'error',
+        '-threads', '0', // Auto-detect thread count for decoding (uses all cores)
+        '-filter_threads', '0', // Multi-threaded filtering
+        '-thread_queue_size', '512', // Larger queue to prevent buffer underruns
       ];
 
       ffmpegArgs.push('-i', session.streamUrl);
@@ -849,8 +853,8 @@ class VideoStreamer {
           '-maxrate', `${qualityBitrate}k`,
           '-bufsize', `${qualityBitrate * 2}k`,
           '-vf', session.speed !== 1 
-            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
@@ -880,8 +884,8 @@ class VideoStreamer {
           '-maxrate', `${qualityBitrate}k`,
           '-bufsize', `${qualityBitrate * 2}k`,
           '-vf', session.speed !== 1 
-            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
@@ -1022,6 +1026,8 @@ class VideoStreamer {
         ffmpegArgs = [
           '-hide_banner',
           '-loglevel', 'error',
+          '-threads', '0', // Multi-threaded decoding
+          '-filter_threads', '0', // Multi-threaded filtering
           '-f', 'mpegts', // Raw MPEG-TS input
           '-i', 'pipe:0', // Read from stdin
         ];
@@ -1030,6 +1036,8 @@ class VideoStreamer {
         ffmpegArgs = [
           '-hide_banner',
           '-loglevel', 'error',
+          '-threads', '0', // Multi-threaded decoding
+          '-filter_threads', '0', // Multi-threaded filtering
           '-reconnect', '1',
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '5',
@@ -1083,8 +1091,8 @@ class VideoStreamer {
           '-maxrate', `${config.stream.maxBitrate}k`,
           '-bufsize', `${config.stream.maxBitrate * 2}k`,
           '-vf', session.speed !== 1
-            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
@@ -1112,8 +1120,8 @@ class VideoStreamer {
           '-maxrate', `${config.stream.maxBitrate}k`,
           '-bufsize', `${config.stream.maxBitrate * 2}k`,
           '-vf', session.speed !== 1
-            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
