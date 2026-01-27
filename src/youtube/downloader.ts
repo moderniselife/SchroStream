@@ -379,16 +379,33 @@ function formatFilesize(bytes?: number): string {
 
 // List available formats for a YouTube video
 export async function listVideoFormats(url: string): Promise<{ formats: VideoFormat[]; title: string; thumbnail?: string } | null> {
+  // Try with cookies first, then without if it fails
+  const result = await listVideoFormatsInternal(url, true);
+  if (result) return result;
+  
+  console.log('[YouTubeDownloader] Retrying format list without cookies...');
+  return listVideoFormatsInternal(url, false);
+}
+
+async function listVideoFormatsInternal(url: string, useCookies: boolean): Promise<{ formats: VideoFormat[]; title: string; thumbnail?: string } | null> {
   return new Promise((resolve) => {
-    const authArgs = getYtDlpAuthArgs();
+    const args: string[] = [];
     
-    const ytdlp = spawn('yt-dlp', [
-      ...authArgs,
+    // Only add cookies if requested and available
+    if (useCookies) {
+      const authArgs = getYtDlpAuthArgs();
+      args.push(...authArgs);
+    }
+    
+    args.push(
       '--dump-json',
       '--no-playlist',
       '--no-warnings',
+      '--skip-download', // Don't try to download anything
       url
-    ]);
+    );
+    
+    const ytdlp = spawn('yt-dlp', args);
 
     let output = '';
     let error = '';
@@ -403,7 +420,7 @@ export async function listVideoFormats(url: string): Promise<{ formats: VideoFor
 
     ytdlp.on('close', (code) => {
       if (code !== 0 || !output) {
-        console.error('[YouTubeDownloader] yt-dlp list formats error:', error);
+        console.error(`[YouTubeDownloader] yt-dlp list formats error (cookies=${useCookies}):`, error.substring(0, 200));
         resolve(null);
         return;
       }
