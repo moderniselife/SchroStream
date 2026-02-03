@@ -130,8 +130,7 @@ export interface Config {
     modelPath?: string;
   };
   youtube: {
-    cookiesPath?: string;
-    preferHighBitrate: boolean;
+    cookiesFile: string;
   };
 }
 

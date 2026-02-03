@@ -26,7 +26,7 @@ SSH_PORT=22
 MAIN_REPO_DIR="/Users/josephshenton/SchroStream"
 
 # Files to copy to the server
-FILES=("docker-compose.yml" "Dockerfile" "src/" "web/" "docs/" "vite.config.ts" "package.json" "tsconfig.json" "tailwind.config.js" "postcss.config.js" "cookies.txt")
+FILES=("docker-compose.yml" "Dockerfile" "src/" "web/" "docs/" "vite.config.ts" "package.json" "tsconfig.json" "tailwind.config.js" "postcss.config.js")
 
 # Function to print section headers
 section() {
@@ -126,7 +126,7 @@ ssh -p $SSH_PORT $REMOTE_USER@$REMOTE_HOST "
     
     # Build and start containers
     echo -e '\n${GREEN}${ROCKET} Building and starting containers...${NC}'
-    docker compose up -d --build
+    docker compose build --no-cache && docker compose up -d
     
     if [ \$? -eq 0 ]; then
         echo -e '\n${GREEN}${SUCCESS} Deployment completed successfully!${NC}'

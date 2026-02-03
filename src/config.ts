@@ -52,8 +52,7 @@ export const config: Config = {
     modelPath: process.env.VOSK_MODEL_PATH,
   },
   youtube: {
-    cookiesPath: process.env.YOUTUBE_COOKIES_PATH, // Path to cookies.txt for YT Premium
-    preferHighBitrate: getEnvOrDefault('YOUTUBE_PREFER_HIGH_BITRATE', 'true').toLowerCase() === 'true',
+    cookiesFile: process.env.YOUTUBE_COOKIES_FILE || '',
   },
 };
 
