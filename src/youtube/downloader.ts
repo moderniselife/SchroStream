@@ -1,58 +1,45 @@
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync, copyFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
-import config from '../config';
+import config from '../config.js';
 
-// Build common yt-dlp args for authentication
-function getYtDlpAuthArgs(): string[] {
-  const args: string[] = [];
+// Get cookies file path - check config and common locations
+function getCookiesFile(): string | null {
+  // First check config
+  if (config.youtube?.cookiesFile && existsSync(config.youtube.cookiesFile)) {
+    return config.youtube.cookiesFile;
+  }
   
-  // Add cookies if configured (required for YT Premium high bitrate streams)
-  if (config.youtube?.cookiesPath && existsSync(config.youtube.cookiesPath)) {
-    // Copy cookies to writable location since mounted file is read-only
-    const writableCookiesPath = '/tmp/cookies.txt';
-    try {
-      copyFileSync(config.youtube.cookiesPath, writableCookiesPath);
-      args.push('--cookies', writableCookiesPath);
-      console.log('[YouTubeDownloader] Using cookies for YouTube Premium access');
-    } catch (err) {
-      console.error('[YouTubeDownloader] Failed to copy cookies:', err);
+  // Check common locations in the app directory
+  const commonPaths = [
+    join(process.cwd(), 'cookies.txt'),
+    join(process.cwd(), 'data', 'cookies.txt'),
+    join(process.cwd(), 'youtube-cookies.txt'),
+    '/app/cookies.txt',
+    '/app/data/cookies.txt',
+  ];
+  
+  for (const path of commonPaths) {
+    if (existsSync(path)) {
+      console.log('[YouTubeDownloader] Found cookies file at:', path);
+      return path;
     }
   }
   
-  return args;
+  return null;
 }
 
-// Get format string based on quality preference
-// YouTube Premium unlocks higher bitrate streams at all resolutions
-// We prefer high bitrate even if it means downloading 4K/1440p and downscaling
-function getFormatString(): string {
-  if (config.youtube?.preferHighBitrate) {
-    // Prefer best quality by bitrate, not resolution
-    // This will grab 4K/1440p with high bitrate, we downscale in FFmpeg anyway
-    // Sort by bitrate (tbr) descending, then height
-    // Note: Not all videos have AVC, so fallback to any codec
-    return 'bestvideo+bestaudio/best';
+// Build common yt-dlp args including cookies if available
+function getYtdlpBaseArgs(): string[] {
+  const args: string[] = [];
+  
+  const cookiesFile = getCookiesFile();
+  if (cookiesFile) {
+    args.push('--cookies', cookiesFile);
+    console.log('[YouTubeDownloader] Using cookies from:', cookiesFile);
   }
-  // Fallback to resolution-limited
-  return 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';
-}
-
-export interface VideoFormat {
-  format_id: string;
-  ext: string;
-  resolution: string;
-  fps?: number;
-  vcodec?: string;
-  acodec?: string;
-  filesize?: number;
-  tbr?: number; // total bitrate
-  vbr?: number; // video bitrate
-  abr?: number; // audio bitrate
-  format_note?: string;
-  quality?: number;
-  has_video: boolean;
-  has_audio: boolean;
+  
+  return args;
 }
 
 export interface DownloadedVideo {
@@ -101,38 +88,16 @@ if (!existsSync(DOWNLOADS_DIR)) {
 }
 
 export async function downloadYouTubeVideo(url: string, options: DownloadOptions = {}): Promise<DownloadedVideo | null> {
-  // Try with cookies first, then without if it fails
-  console.log('[YouTubeDownloader] Starting download for:', url);
-  
-  const result = await downloadYouTubeVideoInternal(url, options, true);
-  if (result) return result;
-  
-  console.log('[YouTubeDownloader] Retrying download without cookies...');
-  return downloadYouTubeVideoInternal(url, options, false);
-}
-
-async function downloadYouTubeVideoInternal(url: string, options: DownloadOptions, useCookies: boolean): Promise<DownloadedVideo | null> {
   return new Promise((resolve) => {
-    console.log(`[YouTubeDownloader] Download attempt (cookies=${useCookies})`);
+    console.log('[YouTubeDownloader] Starting accelerated download for:', url);
     
     // Generate unique filename based on timestamp
     const timestamp = Date.now();
     const outputPath = join(DOWNLOADS_DIR, `video-${timestamp}.mp4`);
     
-    const ytdlpArgs: string[] = [];
-    
-    // Only add cookies if requested
-    if (useCookies) {
-      const authArgs = getYtDlpAuthArgs();
-      ytdlpArgs.push(...authArgs);
-    }
-    
-    // Use simpler format string that works without premium
-    const formatString = useCookies ? getFormatString() : 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';
-    
-    console.log(`[YouTubeDownloader] Format selection: ${formatString}`);
-    
-    ytdlpArgs.push(
+    const baseArgs = getYtdlpBaseArgs();
+    const ytdlp = spawn('yt-dlp', [
+      ...baseArgs,
       '--newline', // Show progress line by line
       '--progress', // Show progress
       '--no-playlist',
@@ -140,15 +105,13 @@ async function downloadYouTubeVideoInternal(url: string, options: DownloadOption
       '--embed-thumbnail', // Embed thumbnail in video
       '--embed-metadata', // Embed metadata
       '--merge-output-format', 'mp4', // Ensure MP4 output
-      '--format', formatString, // Quality selection
+      '--format', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best', // Quality selection
       // SponsorBlock integration - remove sponsor segments during download
       '--sponsorblock-remove', 'sponsor,selfpromo,interaction,intro,outro,preview,filler',
       '--output', outputPath,
       '--exec', 'echo "DOWNLOAD_COMPLETE"', // Execute command when download completes
       url
-    );
-    
-    const ytdlp = spawn('yt-dlp', ytdlpArgs);
+    ]);
 
     let output = '';
     let error = '';
@@ -328,10 +291,9 @@ async function downloadYouTubeVideoInternal(url: string, options: DownloadOption
 
 async function getYouTubeInfo(url: string): Promise<{ title: string; duration: number; thumbnail?: string; uploader?: string; view_count?: number; upload_date?: string; description?: string } | null> {
   return new Promise((resolve) => {
-    const authArgs = getYtDlpAuthArgs();
-    
+    const baseArgs = getYtdlpBaseArgs();
     const ytdlp = spawn('yt-dlp', [
-      ...authArgs,
+      ...baseArgs,
       '--dump-json',
       '--no-playlist',
       '--no-warnings',
@@ -384,310 +346,6 @@ export function formatNumber(num: number): string {
   if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
   if (num >= 1000) return `${(num / 1000).toFixed(0)}K`;
   return num.toString();
-}
-
-// Format filesize for display
-function formatFilesize(bytes?: number): string {
-  if (!bytes) return 'Unknown';
-  if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`;
-  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${bytes} B`;
-}
-
-// List available formats for a YouTube video
-export async function listVideoFormats(url: string): Promise<{ formats: VideoFormat[]; title: string; thumbnail?: string } | null> {
-  // Try WITHOUT cookies first (more reliable for just listing)
-  // Then with cookies if that fails (might unlock premium formats)
-  const result = await listVideoFormatsInternal(url, false);
-  if (result) return result;
-  
-  console.log('[YouTubeDownloader] Retrying format list with cookies...');
-  return listVideoFormatsInternal(url, true);
-}
-
-async function listVideoFormatsInternal(url: string, useCookies: boolean): Promise<{ formats: VideoFormat[]; title: string; thumbnail?: string } | null> {
-  return new Promise((resolve) => {
-    const args: string[] = [];
-    
-    // Only add cookies if requested and available
-    if (useCookies) {
-      const authArgs = getYtDlpAuthArgs();
-      args.push(...authArgs);
-    }
-    
-    args.push(
-      '--dump-json',
-      '--no-playlist',
-      '--no-warnings',
-      '--skip-download', // Don't try to download anything
-      url
-    );
-    
-    const ytdlp = spawn('yt-dlp', args);
-
-    let output = '';
-    let error = '';
-
-    ytdlp.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-
-    ytdlp.stderr.on('data', (data) => {
-      error += data.toString();
-    });
-
-    ytdlp.on('close', (code) => {
-      if (code !== 0 || !output) {
-        console.error(`[YouTubeDownloader] yt-dlp list formats error (cookies=${useCookies}):`, error.substring(0, 200));
-        resolve(null);
-        return;
-      }
-
-      try {
-        const info = JSON.parse(output);
-        const formats: VideoFormat[] = (info.formats || [])
-          .filter((f: any) => f.format_id && (f.vcodec !== 'none' || f.acodec !== 'none'))
-          .map((f: any) => ({
-            format_id: f.format_id,
-            ext: f.ext || 'unknown',
-            resolution: f.resolution || (f.height ? `${f.width || '?'}x${f.height}` : 'audio only'),
-            fps: f.fps,
-            vcodec: f.vcodec !== 'none' ? f.vcodec : undefined,
-            acodec: f.acodec !== 'none' ? f.acodec : undefined,
-            filesize: f.filesize || f.filesize_approx,
-            tbr: f.tbr,
-            vbr: f.vbr,
-            abr: f.abr,
-            format_note: f.format_note,
-            quality: f.quality,
-            has_video: f.vcodec !== 'none',
-            has_audio: f.acodec !== 'none',
-          }))
-          .sort((a: VideoFormat, b: VideoFormat) => {
-            // Sort by: has_video desc, resolution height desc, tbr desc
-            if (a.has_video !== b.has_video) return b.has_video ? 1 : -1;
-            const aHeight = parseInt(a.resolution.split('x')[1]) || 0;
-            const bHeight = parseInt(b.resolution.split('x')[1]) || 0;
-            if (aHeight !== bHeight) return bHeight - aHeight;
-            return (b.tbr || 0) - (a.tbr || 0);
-          });
-
-        resolve({
-          formats,
-          title: info.title || 'Unknown',
-          thumbnail: info.thumbnail,
-        });
-      } catch (e) {
-        console.error('[YouTubeDownloader] Failed to parse formats:', e);
-        resolve(null);
-      }
-    });
-
-    ytdlp.on('error', (err) => {
-      console.error('[YouTubeDownloader] yt-dlp spawn error:', err);
-      resolve(null);
-    });
-  });
-}
-
-// Download with specific format
-export async function downloadWithFormat(url: string, formatId: string, options: DownloadOptions = {}): Promise<DownloadedVideo | null> {
-  return new Promise((resolve) => {
-    console.log(`[YouTubeDownloader] Downloading with format: ${formatId}`);
-    
-    const timestamp = Date.now();
-    const outputPath = join(DOWNLOADS_DIR, `video-${timestamp}.mp4`);
-    
-    const authArgs = getYtDlpAuthArgs();
-    
-    // If format is video-only, also get best audio
-    const formatString = formatId.includes('+') ? formatId : `${formatId}+bestaudio/best`;
-    
-    console.log(`[YouTubeDownloader] Format selection: ${formatString}`);
-    
-    const ytdlpArgs = [
-      ...authArgs,
-      '--newline',
-      '--progress',
-      '--no-playlist',
-      '--no-warnings',
-      '--embed-thumbnail',
-      '--embed-metadata',
-      '--merge-output-format', 'mp4',
-      '--format', formatString,
-      '--sponsorblock-remove', 'sponsor,selfpromo,interaction,intro,outro,preview,filler',
-      '--output', outputPath,
-      '--exec', 'echo "DOWNLOAD_COMPLETE"',
-      url
-    ];
-    
-    const ytdlp = spawn('yt-dlp', ytdlpArgs);
-
-    let output = '';
-    let error = '';
-    let completionTriggered = false;
-    let reached100Percent = false;
-
-    const triggerCompletion = () => {
-      if (!completionTriggered && reached100Percent) {
-        completionTriggered = true;
-        if (options.onComplete) {
-          options.onComplete();
-        }
-      }
-    };
-
-    ytdlp.stdout.on('data', (data) => {
-      const lines = data.toString().split('\n');
-      for (const line of lines) {
-        if (line.includes('%')) {
-          const progressMatch = line.match(/(\d+\.?\d*)%\s+of\s+(\d+\.?\d*\w+)\s+at\s+(\d+\.?\d*\w+\/s)\s+ETA\s+(\d+:\d+)/);
-          if (progressMatch) {
-            const progress: DownloadProgress = {
-              percent: parseFloat(progressMatch[1]),
-              downloaded: `${progressMatch[1]}%`,
-              total: progressMatch[2],
-              speed: progressMatch[3],
-              eta: progressMatch[4]
-            };
-            
-            if (options.onProgress) {
-              options.onProgress(progress);
-            }
-
-            if (progress.percent >= 100.0 && !reached100Percent) {
-              reached100Percent = true;
-              setTimeout(triggerCompletion, 1000);
-            }
-          }
-        } else if (line.includes('DOWNLOAD_COMPLETE')) {
-          triggerCompletion();
-        }
-      }
-      output += data.toString();
-    });
-
-    ytdlp.stderr.on('data', (data) => {
-      error += data.toString();
-      if (options.onError) {
-        options.onError(data.toString().trim());
-      }
-    });
-
-    ytdlp.on('close', async (code) => {
-      if (code !== 0) {
-        console.error('[YouTubeDownloader] yt-dlp failed with code:', code);
-        if (options.onError) {
-          options.onError(`Download failed with code ${code}`);
-        }
-        resolve(null);
-        return;
-      }
-
-      if (!existsSync(outputPath)) {
-        if (options.onError) {
-          options.onError('Downloaded file not found');
-        }
-        resolve(null);
-        return;
-      }
-
-      try {
-        const info = await getYouTubeInfo(url);
-        if (!info) {
-          resolve({ filePath: outputPath, title: 'Unknown', duration: 0 });
-          return;
-        }
-
-        const metadataPath = outputPath.replace('.mp4', '.json');
-        const { fetchSponsorSegments } = await import('./sponsorblock.js');
-        const sponsorResult = await fetchSponsorSegments(url);
-        
-        const metadata: VideoMetadata = {
-          title: info.title,
-          duration: info.duration,
-          thumbnail: info.thumbnail,
-          uploader: info.uploader,
-          viewCount: info.view_count ? formatNumber(info.view_count) : undefined,
-          uploadDate: info.upload_date ? new Date(info.upload_date).toLocaleDateString() : undefined,
-          description: info.description ? (info.description.length > 100 ? info.description.substring(0, 100) + '...' : info.description) : undefined,
-          url: url,
-          downloadedAt: Date.now(),
-          sponsorBlockSkipped: sponsorResult?.totalSkipTime || 0,
-          sponsorBlockSegments: sponsorResult?.segments.length || 0,
-        };
-
-        try {
-          writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
-        } catch (metaError) {
-          console.error('[YouTubeDownloader] Failed to save metadata:', metaError);
-        }
-
-        resolve({
-          filePath: outputPath,
-          title: info.title,
-          duration: info.duration,
-          thumbnail: info.thumbnail,
-          uploader: info.uploader,
-          viewCount: info.view_count ? formatNumber(info.view_count) : undefined,
-          uploadDate: info.upload_date ? new Date(info.upload_date).toLocaleDateString() : undefined,
-          description: info.description ? (info.description.length > 100 ? info.description.substring(0, 100) + '...' : info.description) : undefined,
-        });
-      } catch (e) {
-        resolve({ filePath: outputPath, title: 'Unknown', duration: 0 });
-      }
-    });
-
-    ytdlp.on('error', (err) => {
-      if (options.onError) {
-        options.onError(`Spawn error: ${err.message}`);
-      }
-      resolve(null);
-    });
-  });
-}
-
-// Helper to format a VideoFormat for display
-export function formatFormatDisplay(format: VideoFormat): string {
-  const parts: string[] = [];
-  
-  // Resolution/quality
-  parts.push(format.resolution);
-  
-  // FPS if video
-  if (format.fps && format.has_video) {
-    parts.push(`${format.fps}fps`);
-  }
-  
-  // Codec info
-  if (format.vcodec) {
-    parts.push(format.vcodec.split('.')[0]); // Just the main codec name
-  }
-  if (format.acodec && !format.has_video) {
-    parts.push(format.acodec.split('.')[0]);
-  }
-  
-  // Bitrate
-  if (format.tbr) {
-    parts.push(`${Math.round(format.tbr)}kbps`);
-  } else if (format.vbr) {
-    parts.push(`${Math.round(format.vbr)}kbps`);
-  } else if (format.abr) {
-    parts.push(`${Math.round(format.abr)}kbps`);
-  }
-  
-  // Filesize
-  if (format.filesize) {
-    parts.push(formatFilesize(format.filesize));
-  }
-  
-  // Format note (like "premium" or "4k")
-  if (format.format_note && !parts.some(p => p.toLowerCase().includes(format.format_note!.toLowerCase()))) {
-    parts.push(format.format_note);
-  }
-  
-  return parts.join(' | ');
 }
 
 export { getYouTubeInfo };
