@@ -44,7 +44,20 @@ export interface ExternalStreamItem {
   streamType?: string;
 }
 
-export type MediaItem = PlexMediaItem | YouTubeMediaItem | ExternalStreamItem;
+export interface MusicMediaItem {
+  ratingKey: string;
+  key: string;
+  type: 'music';
+  title: string;
+  artist: string;
+  duration: number;
+  thumb?: string;
+  url: string;
+  audioPath: string;
+  thumbnailPath: string;
+}
+
+export type MediaItem = PlexMediaItem | YouTubeMediaItem | ExternalStreamItem | MusicMediaItem;
 
 export interface PlexSearchResult {
   items: PlexMediaItem[];

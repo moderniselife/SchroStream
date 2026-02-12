@@ -161,6 +161,19 @@ const commands = [
         .setRequired(false)
     ),
   new SlashCommandBuilder()
+    .setName('ytm')
+    .setDescription('Play YouTube audio with a music visualizer (album art + progress)')
+    .addStringOption(option =>
+      option.setName('url')
+        .setDescription('YouTube URL')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName('time')
+        .setDescription('Start time (e.g., "1:30" or "0:45")')
+        .setRequired(false)
+    ),
+  new SlashCommandBuilder()
     .setName('yts')
     .setDescription('Search YouTube')
     .addStringOption(option =>
@@ -525,6 +538,9 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'yt':
       await handleYouTube(interaction);
+      break;
+    case 'ytm':
+      await handleYouTubeMusic(interaction);
       break;
     case 'yts':
       await handleYouTubeSearch(interaction);
@@ -1722,6 +1738,196 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
 
   } catch (error) {
     console.error('[Controller] YouTube error:', error);
+    await interaction.editReply(`❌ Failed to play: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+async function handleYouTubeMusic(interaction: ChatInputCommandInteraction): Promise<void> {
+  const url = interaction.options.getString('url', true);
+  const timeStr = interaction.options.getString('time');
+  await interaction.deferReply();
+
+  // Parse time string
+  let startTimeMs = 0;
+  if (timeStr) {
+    const parsed = parseTimeString(timeStr);
+    if (parsed === null) {
+      await interaction.editReply('❌ Invalid time format. Use MM:SS or HH:MM:SS');
+      return;
+    }
+    startTimeMs = parsed;
+  }
+
+  const guildId = interaction.guildId;
+  if (!guildId) {
+    await interaction.editReply('❌ This command can only be used in a server');
+    return;
+  }
+
+  const guild = selfbotClient.guilds.cache.get(guildId);
+  const member = guild?.members.cache.get(interaction.user.id);
+  const voiceChannel = member?.voice?.channel;
+
+  if (!voiceChannel) {
+    await interaction.editReply('❌ You must be in a voice channel');
+    return;
+  }
+
+  const { downloadYouTubeMusic, findDownloadedMusicByUrl } = await import('../youtube/music-downloader.js');
+  type MusicDownloadProgress = import('../youtube/music-downloader.js').MusicDownloadProgress;
+  type MusicMediaItemType = import('../types/index.js').MusicMediaItem;
+
+  // Check if already downloaded
+  const existingMusic = findDownloadedMusicByUrl(url);
+  if (existingMusic) {
+    console.log(`[Controller] Found existing music download for: ${url}`);
+
+    const videoStreamer = getVideoStreamer();
+
+    const mediaItem: MusicMediaItemType = {
+      ratingKey: `music-${Date.now()}`,
+      key: url,
+      title: existingMusic.title,
+      artist: existingMusic.artist,
+      type: 'music',
+      duration: existingMusic.duration,
+      thumb: existingMusic.thumbnailUrl,
+      url: url,
+      audioPath: existingMusic.audioPath,
+      thumbnailPath: existingMusic.thumbnailPath,
+    };
+
+    const duration = existingMusic.duration ? formatPlexDuration(existingMusic.duration) : 'Unknown';
+
+    const embed = new EmbedBuilder()
+      .setTitle('🎵 Now Playing')
+      .setDescription(`**${existingMusic.title}**`)
+      .addFields(
+        { name: 'Artist', value: existingMusic.artist, inline: true },
+        { name: 'Duration', value: duration, inline: true },
+        { name: 'Source', value: '📥 Cached (instant!)', inline: true }
+      )
+      .setColor(0x1DB954) // Spotify-esque green
+      .setThumbnail(existingMusic.thumbnailUrl || null);
+
+    const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
+    );
+
+    await interaction.editReply({ embeds: [embed], components: [controlRow] });
+
+    await videoStreamer.startMusicStream(
+      guildId,
+      voiceChannel.id,
+      mediaItem,
+      existingMusic.audioPath,
+      existingMusic.thumbnailPath,
+      existingMusic.artist,
+      interaction.user.id,
+      startTimeMs
+    );
+
+    return;
+  }
+
+  // Download audio + thumbnail
+  try {
+    let lastUpdateTime = 0;
+    const UPDATE_COOLDOWN = 2000;
+
+    const downloadedMusic = await downloadYouTubeMusic(url, {
+      onProgress: async (progress: MusicDownloadProgress) => {
+        const now = Date.now();
+        if (now - lastUpdateTime < UPDATE_COOLDOWN) return;
+        lastUpdateTime = now;
+
+        try {
+          const barLength = 20;
+          const filledLength = Math.round((progress.percent / 100) * barLength);
+          const bar = '█'.repeat(filledLength) + '░'.repeat(barLength - filledLength);
+
+          await interaction.editReply(
+            `🎵 **Downloading Audio**\n` +
+            `[${bar}] ${progress.percent.toFixed(1)}%\n` +
+            `📊 ${progress.speed} | ⏱️ ETA: ${progress.eta}\n\n` +
+            `*Will start playing when complete...*`
+          );
+        } catch {
+          // Ignore update errors
+        }
+      },
+      onComplete: async () => {
+        try {
+          await interaction.editReply(
+            `🎵 **Download Complete!**\n` +
+            `✅ Audio ready\n\n` +
+            `🎶 *Starting music visualizer...*`
+          );
+        } catch {
+          // Ignore
+        }
+      },
+      onError: async (error: string) => {
+        await interaction.editReply(`❌ Download failed: ${error}`);
+      }
+    });
+
+    if (!downloadedMusic) {
+      return;
+    }
+
+    const videoStreamer = getVideoStreamer();
+
+    const mediaItem: MusicMediaItemType = {
+      ratingKey: `music-${Date.now()}`,
+      key: url,
+      title: downloadedMusic.title,
+      artist: downloadedMusic.artist,
+      type: 'music',
+      duration: downloadedMusic.duration,
+      thumb: downloadedMusic.thumbnailUrl,
+      url: url,
+      audioPath: downloadedMusic.audioPath,
+      thumbnailPath: downloadedMusic.thumbnailPath,
+    };
+
+    const duration = downloadedMusic.duration ? formatPlexDuration(downloadedMusic.duration) : 'Unknown';
+
+    const embed = new EmbedBuilder()
+      .setTitle('🎵 Now Playing')
+      .setDescription(`**${downloadedMusic.title}**`)
+      .addFields(
+        { name: 'Artist', value: downloadedMusic.artist, inline: true },
+        { name: 'Duration', value: duration, inline: true },
+      )
+      .setColor(0x1DB954)
+      .setThumbnail(downloadedMusic.thumbnailUrl || null);
+
+    const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
+    );
+
+    await interaction.editReply({ embeds: [embed], components: [controlRow] });
+
+    videoStreamer.startMusicStream(
+      guildId,
+      voiceChannel.id,
+      mediaItem,
+      downloadedMusic.audioPath,
+      downloadedMusic.thumbnailPath,
+      downloadedMusic.artist,
+      interaction.user.id,
+      startTimeMs
+    ).catch(err => console.error('[Controller] YouTube Music stream error:', err));
+
+  } catch (error) {
+    console.error('[Controller] YouTube Music error:', error);
     await interaction.editReply(`❌ Failed to play: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }

@@ -93,6 +93,10 @@ export interface VideoStreamSession {
   messageId?: string; // Discord message ID for embed updates
   textChannelId?: string; // Discord text channel ID for embed updates
   mediaUdp?: import('@dank074/discord-video-stream').MediaUdp;
+  isMusic?: boolean; // Flag for music visualizer mode
+  musicAudioPath?: string; // Path to audio file for music mode
+  musicThumbnailPath?: string; // Path to thumbnail image for music mode
+  musicArtist?: string; // Artist name for music overlay
 }
 
 // Store playback positions for resume functionality (ratingKey -> position in ms)
@@ -1579,7 +1583,7 @@ class VideoStreamer {
       return true;
     }
 
-    // For local files, use playLocalFile
+    // For local files (including music), use appropriate player
     if (isLocalFile) {
       console.log(`[VideoStreamer] Seeking local file to ${Math.floor(timeMs / 1000)}s`);
       session.currentTime = timeMs;
@@ -1605,7 +1609,11 @@ class VideoStreamer {
       await new Promise(resolve => setTimeout(resolve, 2000));
       
       // Note: We're already in the voice channel, no need to rejoin
-      await this.playLocalFile(session, timeMs);
+      if (session.isMusic) {
+        await this.playMusicVisualizer(session, timeMs);
+      } else {
+        await this.playLocalFile(session, timeMs);
+      }
       
       // Wait for old demuxer to fully close before clearing isStopping
       // This prevents the old stream's "end of stream" from triggering cleanup
@@ -2116,7 +2124,9 @@ class VideoStreamer {
     startStatusUpdateTimer(session);
 
     // Resume from saved position - pass isResume=true for Plex to reuse existing transcode
-    if (isLocalFile) {
+    if (session.isMusic) {
+      await this.playMusicVisualizer(session, session.currentTime);
+    } else if (isLocalFile) {
       await this.playLocalFile(session, session.currentTime);
     } else if (session.isExternal) {
       await this.playExternalStream(session, session.currentTime);
@@ -2199,7 +2209,9 @@ class VideoStreamer {
       const isLocalFile = session.streamUrl.startsWith('/') || session.streamUrl.startsWith('./') || session.streamUrl.includes('downloads/');
       
       try {
-        if (isLocalFile) {
+        if (session.isMusic) {
+          await this.playMusicVisualizer(session, currentTime);
+        } else if (isLocalFile) {
           await this.playLocalFile(session, currentTime);
         } else if (session.isExternal) {
           await this.playExternalStream(session, currentTime);
@@ -2265,7 +2277,9 @@ class VideoStreamer {
       const isLocalFile = session.streamUrl.startsWith('/') || session.streamUrl.startsWith('./') || session.streamUrl.includes('downloads/');
       
       try {
-        if (isLocalFile) {
+        if (session.isMusic) {
+          await this.playMusicVisualizer(session, currentTime);
+        } else if (isLocalFile) {
           await this.playLocalFile(session, currentTime);
         } else if (session.isExternal) {
           await this.playExternalStream(session, currentTime);
@@ -2300,6 +2314,292 @@ class VideoStreamer {
     if (session) {
       session.messageId = messageId;
       session.textChannelId = channelId;
+    }
+  }
+
+  async startMusicStream(
+    guildId: string,
+    channelId: string,
+    mediaItem: MediaItem,
+    audioPath: string,
+    thumbnailPath: string,
+    artist: string,
+    userId?: string,
+    startTimeMs = 0
+  ): Promise<void> {
+    await this.stopStream(guildId);
+
+    const mediaUdp = await this.streamer.joinVoice(guildId, channelId);
+
+    // Undeafen the bot
+    const guild = this.client.guilds.cache.get(guildId);
+    if (guild) {
+      guild.shard?.send({
+        op: 4,
+        d: {
+          guild_id: guildId,
+          channel_id: channelId,
+          self_mute: false,
+          self_deaf: false,
+        }
+      });
+    }
+
+    // Start voice listener if enabled
+    if (config.voice.enabled) {
+      await startVoiceListener(guildId);
+    }
+
+    const session: VideoStreamSession = {
+      guildId,
+      channelId,
+      mediaItem,
+      streamUrl: audioPath,
+      isPaused: false,
+      isStopping: false,
+      isPlaying: false,
+      startedAt: Date.now(),
+      currentTime: startTimeMs,
+      duration: mediaItem.duration || 0,
+      volume: 100,
+      speed: 1,
+      ffmpegCommand: null,
+      pauseFFmpegCommand: null,
+      userId,
+      isExternal: true,
+      isMusic: true,
+      musicAudioPath: audioPath,
+      musicThumbnailPath: thumbnailPath,
+      musicArtist: artist,
+      mediaUdp,
+    };
+
+    this.sessions.set(guildId, session);
+
+    // Start status update timer
+    startStatusUpdateTimer(session);
+
+    // Start voice receiver if enabled
+    if (config.voice.enabled) {
+      startVoiceReceiver(guildId, channelId);
+    }
+
+    await this.playMusicVisualizer(session, startTimeMs);
+  }
+
+  private async playMusicVisualizer(session: VideoStreamSession, startTimeMs = 0): Promise<void> {
+    const height = config.stream.defaultQuality;
+    const width = Math.round(height * (16 / 9));
+
+    try {
+      const startTimeSec = Math.floor(startTimeMs / 1000);
+      const audioPath = session.musicAudioPath || session.streamUrl;
+      const thumbnailPath = session.musicThumbnailPath || '';
+      const title = session.mediaItem.title || 'Unknown Track';
+      const artist = session.musicArtist || 'Unknown Artist';
+      const totalDurationSec = Math.max(1, Math.floor((session.duration || 1) / 1000));
+
+      console.log(`[VideoStreamer] Starting music visualizer: "${title}" by ${artist}`);
+      if (startTimeSec > 0) {
+        console.log(`[VideoStreamer] Starting music at ${startTimeSec}s`);
+      }
+
+      const volumeMultiplier = (session.volume / 100).toFixed(2);
+
+      // Escape special characters for FFmpeg drawtext
+      const escapeFFmpegText = (text: string): string => {
+        return text
+          .replace(/\\/g, '\\\\\\\\')
+          .replace(/'/g, "'\\\\\\''")
+          .replace(/:/g, '\\:')
+          .replace(/%/g, '%%')
+          .replace(/\[/g, '\\[')
+          .replace(/\]/g, '\\]')
+          .replace(/;/g, '\\;');
+      };
+
+      const escapedTitle = escapeFFmpegText(title);
+      const escapedArtist = escapeFFmpegText(artist);
+
+      // Format total duration as MM:SS or HH:MM:SS
+      const formatDurationStr = (secs: number): string => {
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = secs % 60;
+        if (h > 0) return `${h}\\:${String(m).padStart(2, '0')}\\:${String(s).padStart(2, '0')}`;
+        return `${m}\\:${String(s).padStart(2, '0')}`;
+      };
+      const totalTimeStr = formatDurationStr(totalDurationSec);
+
+      // Use platform-appropriate font path
+      const isLinux = process.platform === 'linux';
+      const fontFile = isLinux
+        ? '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+        : '/System/Library/Fonts/Helvetica.ttc';
+      const fontFileRegular = isLinux
+        ? '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+        : '/System/Library/Fonts/Helvetica.ttc';
+
+      // Check if font files exist, use fontfamily fallback if not
+      const { existsSync: fsExists } = await import('fs');
+      const useFontFile = fsExists(fontFile);
+
+      // Build the font option string
+      const fontBold = useFontFile ? `fontfile=${fontFile}` : 'font=Sans';
+      const fontRegular = useFontFile ? `fontfile=${fontFileRegular}` : 'font=Sans';
+
+      // Art dimensions - centered, slightly above middle
+      const artSize = Math.round(height * 0.35); // 35% of height
+      const artX = Math.round((width - artSize) / 2);
+      const artY = Math.round(height * 0.15);
+
+      // Text positions - below the art
+      const titleY = artY + artSize + Math.round(height * 0.05);
+      const artistY = titleY + Math.round(height * 0.05);
+
+      // Progress bar dimensions
+      const barWidth = Math.round(width * 0.45);
+      const barX = Math.round((width - barWidth) / 2);
+      const barY = artistY + Math.round(height * 0.07);
+      const barHeight = 6;
+
+      // Time text positions
+      const timeY = barY + barHeight + Math.round(height * 0.015);
+
+      // Build complex filter graph for the music visualizer
+      // Input 0: thumbnail image (looped)
+      // Input 1: audio file
+      // Input 2: silent audio for video sync (lavfi)
+      const filterComplex = [
+        // Background: scale thumbnail to fill screen, heavy blur + darken
+        `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=luma_radius=45:luma_power=4,eq=brightness=-0.2:saturation=0.7[bg]`,
+
+        // Album art: scale to centered size
+        `[0:v]scale=${artSize}:${artSize}:force_original_aspect_ratio=decrease,pad=${artSize}:${artSize}:(ow-iw)/2:(oh-ih)/2:color=0x00000000[art]`,
+
+        // Subtle shadow behind album art
+        `color=c=black@0.4:s=${artSize + 16}x${artSize + 16}[shadow]`,
+
+        // Compose: bg + shadow + art
+        `[bg][shadow]overlay=${artX - 8}:${artY - 8}[bgs]`,
+        `[bgs][art]overlay=${artX}:${artY}[v1]`,
+
+        // Song title (bold, white, centered)
+        `[v1]drawtext=${fontBold}:text='${escapedTitle}':fontsize=${Math.round(height * 0.035)}:fontcolor=white:x=(w-text_w)/2:y=${titleY}[v2]`,
+
+        // Artist name (regular, slightly transparent, centered)
+        `[v2]drawtext=${fontRegular}:text='${escapedArtist}':fontsize=${Math.round(height * 0.025)}:fontcolor=white@0.65:x=(w-text_w)/2:y=${artistY}[v3]`,
+
+        // Progress bar background (dim white track)
+        `[v3]drawbox=x=${barX}:y=${barY}:w=${barWidth}:h=${barHeight}:color=white@0.15:t=fill[v4]`,
+
+        // Progress bar fill (bright white, dynamic width based on time)
+        `[v4]drawbox=x=${barX}:y=${barY}:w='min(${barWidth}\\,${barWidth}*t/${totalDurationSec})':h=${barHeight}:color=white@0.85:t=fill[v5]`,
+
+        // Current time (left-aligned under progress bar)
+        `[v5]drawtext=${fontRegular}:text='%{pts\\:hms}':fontsize=${Math.round(height * 0.018)}:fontcolor=white@0.5:x=${barX}:y=${timeY}[v6]`,
+
+        // Total duration (right-aligned under progress bar)
+        `[v6]drawtext=${fontRegular}:text='${totalTimeStr}':fontsize=${Math.round(height * 0.018)}:fontcolor=white@0.5:x=${barX + barWidth}-text_w:y=${timeY}[vout]`,
+      ].join(';');
+
+      // Build FFmpeg args
+      const ffmpegArgs = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-loop', '1',           // Loop the thumbnail image
+        '-i', thumbnailPath,    // Input 0: thumbnail
+      ];
+
+      // Add seek to audio input if needed
+      if (startTimeSec > 0) {
+        ffmpegArgs.push('-ss', startTimeSec.toString());
+      }
+
+      ffmpegArgs.push(
+        '-i', audioPath,        // Input 1: audio
+        '-filter_complex', filterComplex,
+        '-map', '[vout]',       // Use filtered video
+        '-map', '1:a:0',        // Use audio from input 1
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-tune', 'stillimage',  // Optimize for still image content
+        '-profile:v', 'high',
+        '-level', '4.2',
+        '-pix_fmt', 'yuv420p',
+        '-r', String(config.stream.frameRate),
+        '-g', String(config.stream.frameRate * 2),
+        '-b:v', '2000k',       // Lower bitrate - mostly static image
+        '-maxrate', '2500k',
+        '-bufsize', '4000k',
+        '-c:a', 'libopus',
+        '-b:a', '128k',
+        '-ar', '48000',
+        '-ac', '2',
+        '-af', `volume=${volumeMultiplier}`,
+        '-shortest',            // Stop when audio ends
+        '-f', 'matroska',
+        '-'
+      );
+
+      console.log('[VideoStreamer] Starting FFmpeg for music visualizer...');
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+      session.ffmpegCommand = ffmpeg;
+
+      ffmpeg.stderr.on('data', (data) => {
+        const msg = data.toString();
+        if (msg.includes('Error') || msg.includes('error') || msg.includes('Fatal')) {
+          console.error('[FFmpeg Music]', msg);
+        } else if (config.stream.showFFmpegLogs && !msg.includes('size=')) {
+          console.error('[FFmpeg Music]', msg);
+        }
+      });
+
+      ffmpeg.on('error', (err) => {
+        console.error('[VideoStreamer] Music FFmpeg spawn error:', err.message);
+      });
+
+      ffmpeg.on('exit', (code) => {
+        if (session.isStopping) {
+          console.log('[VideoStreamer] Music FFmpeg exited during intentional stop (code:', code, ')');
+          return;
+        }
+
+        if (code === 0) {
+          console.log('[VideoStreamer] Music playback finished');
+          const finishedMediaItem = session.mediaItem;
+          killSessionFFmpeg(session);
+          this.sessions.delete(session.guildId);
+          this.playNextInQueue(session.guildId, session.channelId, session.userId, finishedMediaItem);
+        } else if (code !== null) {
+          console.log('[VideoStreamer] Music FFmpeg exited with code:', code);
+        }
+      });
+
+      console.log('[VideoStreamer] Starting Go Live stream (music visualizer)...');
+
+      session.isPlaying = true;
+      session.startedAt = Date.now();
+
+      if (session.userId) {
+        updateWatchDeck(session.mediaItem, 0, session.userId);
+      }
+
+      // Register stream for web viewing
+      const { registerWebStream } = await import('../web/server.js');
+      registerWebStream(session.guildId, session, audioPath);
+
+      await playStream(ffmpeg.stdout, this.streamer, {
+        type: 'go-live',
+      });
+
+      if (!session.isStopping) {
+        console.log('[VideoStreamer] Music visualizer playback finished (stream ended)');
+      }
+    } catch (error) {
+      if (!session.isStopping && error instanceof Error && !error.message.includes('abort')) {
+        console.error('[VideoStreamer] Music visualizer error:', error);
+      }
     }
   }
 }
