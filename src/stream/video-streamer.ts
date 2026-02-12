@@ -2466,21 +2466,42 @@ class VideoStreamer {
       // Time text positions
       const timeY = barY + barHeight + Math.round(height * 0.015);
 
-      // Build complex filter graph for the music visualizer
-      // Input 0: thumbnail image (looped)
-      // Input 1: audio file
-      // Input 2: silent audio for video sync (lavfi)
-      const filterComplex = [
-        // Background: scale thumbnail to fill screen, heavy blur + darken
-        `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=luma_radius=45:luma_power=4,eq=brightness=-0.2:saturation=0.7[bg]`,
+      // Rainbow orb audio visualizer dimensions
+      const orbSize = Math.round(height * 0.65); // 65% of screen height
+      const orbX = Math.round((width - orbSize) / 2);
+      const orbY = Math.round((height - orbSize) / 2) - Math.round(height * 0.05);
 
-        // Album art: scale to centered size
+      // Build complex filter graph for the music visualizer
+      // Input 0: thumbnail image (looped, for album art)
+      // Input 1: audio file
+      const filterComplex = [
+        // Split audio: one for visualizer, one for output (with volume applied)
+        `[1:a]volume=${volumeMultiplier},asplit=2[a_viz][a_out]`,
+
+        // Audio-reactive rainbow orb using avectorscope (circular Lissajous pattern)
+        `[a_viz]avectorscope=s=${orbSize}x${orbSize}:draw=line:scale=cbrt:rate=${config.stream.frameRate}:rc=2:gc=200:bc=100:rf=1:gf=1:bf=1[scope_raw]`,
+
+        // Cycle hue for rainbow color effect
+        `[scope_raw]hue=H=2*PI*t/8[scope_hue]`,
+
+        // Create glow: duplicate, blur one copy heavily, blend with screen mode
+        `[scope_hue]split[scope_sharp][scope_blur]`,
+        `[scope_blur]boxblur=luma_radius=18:luma_power=3[scope_glow]`,
+        `[scope_sharp][scope_glow]blend=all_mode=screen[orb]`,
+
+        // Dark background
+        `color=c=#0a0a14:s=${width}x${height}:r=${config.stream.frameRate}[bg_dark]`,
+
+        // Overlay orb centered on dark background
+        `[bg_dark][orb]overlay=${orbX}:${orbY}[bg]`,
+
+        // Album art: scale to centered size (from thumbnail input)
         `[0:v]scale=${artSize}:${artSize}:force_original_aspect_ratio=decrease,pad=${artSize}:${artSize}:(ow-iw)/2:(oh-ih)/2:color=0x00000000[art]`,
 
         // Subtle shadow behind album art
         `color=c=black@0.4:s=${artSize + 16}x${artSize + 16}[shadow]`,
 
-        // Compose: bg + shadow + art
+        // Compose: background + shadow + art
         `[bg][shadow]overlay=${artX - 8}:${artY - 8}[bgs]`,
         `[bgs][art]overlay=${artX}:${artY}[v1]`,
 
@@ -2508,7 +2529,7 @@ class VideoStreamer {
         '-hide_banner',
         '-loglevel', 'error',
         '-loop', '1',           // Loop the thumbnail image
-        '-i', thumbnailPath,    // Input 0: thumbnail
+        '-i', thumbnailPath,    // Input 0: thumbnail (for album art)
       ];
 
       // Add seek to audio input if needed
@@ -2519,24 +2540,23 @@ class VideoStreamer {
       ffmpegArgs.push(
         '-i', audioPath,        // Input 1: audio
         '-filter_complex', filterComplex,
-        '-map', '[vout]',       // Use filtered video
-        '-map', '1:a:0',        // Use audio from input 1
+        '-map', '[vout]',       // Use filtered video output
+        '-map', '[a_out]',      // Use audio from filter graph (with volume applied)
         '-c:v', 'libx264',
         '-preset', 'veryfast',
-        '-tune', 'stillimage',  // Optimize for still image content
+        '-tune', 'animation',   // Optimize for animated content (rainbow orb)
         '-profile:v', 'high',
         '-level', '4.2',
         '-pix_fmt', 'yuv420p',
         '-r', String(config.stream.frameRate),
         '-g', String(config.stream.frameRate * 2),
-        '-b:v', '2000k',       // Lower bitrate - mostly static image
-        '-maxrate', '2500k',
-        '-bufsize', '4000k',
+        '-b:v', '4000k',       // Higher bitrate for animated visualizer
+        '-maxrate', '5000k',
+        '-bufsize', '8000k',
         '-c:a', 'libopus',
         '-b:a', '128k',
         '-ar', '48000',
         '-ac', '2',
-        '-af', `volume=${volumeMultiplier}`,
         '-shortest',            // Stop when audio ends
         '-f', 'matroska',
         '-'
