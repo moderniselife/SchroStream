@@ -1,6 +1,6 @@
 import type { Message, VoiceChannel } from 'discord.js-selfbot-v13';
 import { getVideoStreamer } from '../../stream/video-streamer.js';
-import { formatDuration } from '../../plex/library.js';
+import { formatDuration, parseTimeString } from '../../plex/library.js';
 import { downloadYouTubeVideo, findDownloadedVideoByUrl, type DownloadProgress } from '../../youtube/downloader.js';
 
 function createProgressBar(percent: number): string {
@@ -19,10 +19,20 @@ export async function youtubeCommand(message: Message, args: string[]): Promise<
   const url = args[0];
   if (!url) {
     await message.channel.send(
-      '❌ Usage: `!yt <url>`\n' +
+      '❌ Usage: `!yt <url> [time]`\n' +
+      'Example: `!yt https://youtu.be/abc123 6:30`\n' +
       'Supports YouTube, Twitch, Twitter/X, and 1000+ other sites via yt-dlp'
     );
     return;
+  }
+
+  // Parse optional time argument (e.g., "6:30", "1:23:45")
+  let startTimeMs = 0;
+  if (args[1]) {
+    const parsed = parseTimeString(args[1]);
+    if (parsed !== null) {
+      startTimeMs = parsed;
+    }
   }
 
   const member = message.guild.members.cache.get(message.author.id);
@@ -68,7 +78,8 @@ export async function youtubeCommand(message: Message, args: string[]): Promise<
       voiceChannel.id,
       mediaItem,
       existingVideo.filePath,
-      message.author.id
+      message.author.id,
+      startTimeMs
     );
 
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -150,7 +161,8 @@ export async function youtubeCommand(message: Message, args: string[]): Promise<
       voiceChannel.id,
       mediaItem,
       downloadedVideo.filePath,
-      message.author.id
+      message.author.id,
+      startTimeMs
     );
 
     await new Promise((resolve) => setTimeout(resolve, 2000));

@@ -1586,7 +1586,8 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
       voiceChannel.id,
       mediaItem,
       existingVideo.filePath,
-      interaction.user.id
+      interaction.user.id,
+      startTimeMs
     );
     
     return;
