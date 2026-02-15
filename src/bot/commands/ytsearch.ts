@@ -1,6 +1,7 @@
 import type { Message } from 'discord.js-selfbot-v13';
 import { spawn } from 'child_process';
 import { getTrendingResult } from './ytrending.js';
+import { getYtdlpBaseArgs } from '../../youtube/downloader.js';
 
 interface YouTubeSearchResult {
   id: string;
@@ -15,7 +16,9 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 async function searchYouTube(query: string, limit = 10): Promise<YouTubeSearchResult[]> {
   return new Promise((resolve) => {
+    const baseArgs = getYtdlpBaseArgs();
     const ytdlp = spawn('yt-dlp', [
+      ...baseArgs,
       '--dump-json',
       '--flat-playlist',
       '--no-warnings',
