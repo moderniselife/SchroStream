@@ -1,35 +1,7 @@
 import { spawn } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, unlinkSync, statSync } from 'fs';
 import { join } from 'path';
-import { getYouTubeInfo } from './downloader.js';
-
-// Get cookies file path - reuse logic from downloader
-function getCookiesFile(): string | null {
-  const commonPaths = [
-    join(process.cwd(), 'cookies.txt'),
-    join(process.cwd(), 'data', 'cookies.txt'),
-    join(process.cwd(), 'youtube-cookies.txt'),
-    '/app/cookies.txt',
-    '/app/data/cookies.txt',
-  ];
-  
-  for (const path of commonPaths) {
-    if (existsSync(path)) {
-      return path;
-    }
-  }
-  
-  return null;
-}
-
-function getYtdlpBaseArgs(): string[] {
-  const args: string[] = [];
-  const cookiesFile = getCookiesFile();
-  if (cookiesFile) {
-    args.push('--cookies', cookiesFile);
-  }
-  return args;
-}
+import { getYouTubeInfo, getYtdlpBaseArgs } from './downloader.js';
 
 // Music downloads directory
 const MUSIC_DIR = join(process.cwd(), 'downloads', 'music');
