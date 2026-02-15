@@ -8,6 +8,7 @@ import { parseTimeString } from '../plex/library.js';
 import { client as selfbotClient } from '../bot/client.js';
 import config from '../config.js';
 import { spawn } from 'child_process';
+import { getYtdlpBaseArgs } from '../youtube/downloader.js';
 import { initCastReceiver } from '../cast/index.js';
 import { initPlexCastReceiver } from '../plex-cast/index.js';
 
@@ -378,7 +379,8 @@ app.post('/api/control/youtube', async (req: Request, res: Response) => {
     
     // Get video info using yt-dlp (same as controller bot)
     const info = await new Promise<any>((resolve) => {
-      const ytdlp = spawn('yt-dlp', ['--dump-json', '--no-playlist', '--no-warnings', url]);
+      const baseArgs = getYtdlpBaseArgs();
+      const ytdlp = spawn('yt-dlp', [...baseArgs, '--dump-json', '--no-playlist', '--no-warnings', url]);
       let output = '';
       ytdlp.stdout.on('data', (data) => output += data.toString());
       ytdlp.on('close', (code) => {
@@ -400,7 +402,9 @@ app.post('/api/control/youtube', async (req: Request, res: Response) => {
 
     // Get stream URLs using yt-dlp -g flag (same approach as controller bot)
     const urls = await new Promise<{ video: string; audio: string | null } | null>((resolve) => {
+      const baseArgs = getYtdlpBaseArgs();
       const ytdlp = spawn('yt-dlp', [
+        ...baseArgs,
         '-g',
         '-f', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
         '--no-playlist',
@@ -456,7 +460,9 @@ app.post('/api/control/youtube-search', async (req: Request, res: Response) => {
   try {
     const { query } = req.body;
     
+    const baseArgs = getYtdlpBaseArgs();
     const ytdlp = spawn('yt-dlp', [
+      ...baseArgs,
       '--dump-json',
       '--flat-playlist',
       '--no-warnings',

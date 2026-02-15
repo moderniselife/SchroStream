@@ -1,5 +1,6 @@
 import type { Message } from 'discord.js-selfbot-v13';
 import { spawn } from 'child_process';
+import { getYtdlpBaseArgs } from '../../youtube/downloader.js';
 
 interface YouTubeSearchResult {
   id: string;
@@ -76,7 +77,9 @@ async function getTrendingVideos(category = 'default', limit = 10): Promise<YouT
 async function fetchFromUrl(url: string, limit: number): Promise<YouTubeSearchResult[]> {
   // First get video IDs with flat playlist
   const videoIds = await new Promise<string[]>((resolve) => {
+    const baseArgs = getYtdlpBaseArgs();
     const ytdlp = spawn('yt-dlp', [
+      ...baseArgs,
       '--flat-playlist',
       '--no-warnings',
       '-I', `1:${limit}`,
@@ -117,7 +120,9 @@ async function fetchFromUrl(url: string, limit: number): Promise<YouTubeSearchRe
   // Now fetch full metadata for each video in parallel
   const metadataPromises = videoIds.map(id => 
     new Promise<YouTubeSearchResult | null>((resolve) => {
+      const baseArgs = getYtdlpBaseArgs();
       const ytdlp = spawn('yt-dlp', [
+        ...baseArgs,
         '--dump-json',
         '--no-warnings',
         `https://www.youtube.com/watch?v=${id}`

@@ -28,6 +28,7 @@ import type { MediaItem } from '../types/index.js';
 import { client as selfbotClient } from '../bot/client.js';
 import { getQueue, addToQueue, removeFromQueue, clearQueue, popQueue, peekQueue, formatQueueEntry } from '../data/queue.js';
 import { getWatchDeck, formatDeckEntry, markVideoAsFullyWatched, cleanupFullyWatchedVideos } from '../data/watch-deck.js';
+import { getYtdlpBaseArgs } from '../youtube/downloader.js';
 
 // Store search results per user
 const searchSessions = new Map<string, { results: MediaItem[], timestamp: number }>();
@@ -1495,7 +1496,7 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
       const existingVideo = findDownloadedVideoByUrl(url);
       
       // Get YouTube info to create media item
-      const { getYouTubeInfo } = await import('../youtube/downloader.js');
+      const { getYouTubeInfo, getYtdlpBaseArgs } = await import('../youtube/downloader.js');
       const info = await getYouTubeInfo(url);
       
       if (!info) {
@@ -1998,7 +1999,9 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
     try {
       const { spawn } = await import('child_process');
       const extractedUrl = await new Promise<string>((resolve) => {
+        const baseArgs = getYtdlpBaseArgs();
         const ytdlp = spawn('yt-dlp', [
+          ...baseArgs,
           '-g',
           '--no-warnings',
           url
@@ -2075,7 +2078,9 @@ async function handleYouTubeSearch(interaction: ChatInputCommandInteraction): Pr
   const { spawn } = await import('child_process');
   
   const results = await new Promise<YouTubeSearchResult[]>((resolve) => {
+    const baseArgs = getYtdlpBaseArgs();
     const ytdlp = spawn('yt-dlp', [
+      ...baseArgs,
       '--dump-json',
       '--flat-playlist',
       '--no-warnings',
@@ -2185,7 +2190,9 @@ async function handleYouTubeTrending(interaction: ChatInputCommandInteraction): 
   const fetchFromUrl = async (url: string, limit: number): Promise<YouTubeSearchResult[]> => {
     // First get video IDs with flat playlist
     const videoIds = await new Promise<string[]>((resolve) => {
+      const baseArgs = getYtdlpBaseArgs();
       const ytdlp = spawn('yt-dlp', [
+        ...baseArgs,
         '--flat-playlist',
         '--no-warnings',
         '-I', `1:${limit}`,
@@ -2226,7 +2233,9 @@ async function handleYouTubeTrending(interaction: ChatInputCommandInteraction): 
     // Now fetch full metadata for each video in parallel
     const metadataPromises = videoIds.map(id => 
       new Promise<YouTubeSearchResult | null>((resolve) => {
+        const baseArgs = getYtdlpBaseArgs();
         const ytdlp = spawn('yt-dlp', [
+          ...baseArgs,
           '--dump-json',
           '--no-warnings',
           `https://www.youtube.com/watch?v=${id}`
@@ -2479,7 +2488,8 @@ async function handleYouTubePlay(interaction: ChatInputCommandInteraction): Prom
   const { spawn } = await import('child_process');
   
   const info = await new Promise<any>((resolve) => {
-    const ytdlp = spawn('yt-dlp', ['--dump-json', '--no-playlist', '--no-warnings', result.url]);
+    const baseArgs = getYtdlpBaseArgs();
+    const ytdlp = spawn('yt-dlp', [...baseArgs, '--dump-json', '--no-playlist', '--no-warnings', result.url]);
     let output = '';
     ytdlp.stdout.on('data', (data) => output += data.toString());
     ytdlp.on('close', (code) => {
@@ -2495,7 +2505,9 @@ async function handleYouTubePlay(interaction: ChatInputCommandInteraction): Prom
   }
 
   const urls = await new Promise<{ video: string; audio: string | null } | null>((resolve) => {
+    const baseArgs = getYtdlpBaseArgs();
     const ytdlp = spawn('yt-dlp', [
+      ...baseArgs,
       '-g',
       '-f', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
       '--no-playlist',
@@ -2773,7 +2785,8 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
         const { spawn } = await import('child_process');
         
         const info = await new Promise<any>((resolve) => {
-          const ytdlp = spawn('yt-dlp', ['--dump-json', '--no-playlist', '--no-warnings', result.url]);
+          const baseArgs = getYtdlpBaseArgs();
+          const ytdlp = spawn('yt-dlp', [...baseArgs, '--dump-json', '--no-playlist', '--no-warnings', result.url]);
           let output = '';
           ytdlp.stdout.on('data', (data) => output += data.toString());
           ytdlp.on('close', (code) => {
@@ -2789,7 +2802,9 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
         }
 
         const urls = await new Promise<{ video: string; audio: string | null } | null>((resolve) => {
+          const baseArgs = getYtdlpBaseArgs();
           const ytdlp = spawn('yt-dlp', [
+            ...baseArgs,
             '-g',
             '-f', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
             '--no-playlist',
