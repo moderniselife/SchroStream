@@ -5,8 +5,10 @@ import {
   downloadYouTubeMusic,
   findDownloadedMusicByUrl,
   getPlaylistTracks,
+  getMusicRecommendations,
   isPlaylistUrl,
   type MusicDownloadProgress,
+  type MusicTrackInfo,
 } from '../../youtube/music-downloader.js';
 import {
   seedMusicQueue,
@@ -14,8 +16,44 @@ import {
   setAutoplay,
   isAutoplayEnabled,
   getMusicQueueLength,
+  addToMusicQueue,
 } from '../../data/music-queue.js';
 import type { MusicMediaItem } from '../../types/index.js';
+import { getYtdlpBaseArgs } from '../../youtube/downloader.js';
+import { spawn } from 'child_process';
+
+// Pick a seed track for a mix by searching YouTube Music for a popular track
+async function getMixSeedTrack(query = 'trending music'): Promise<MusicTrackInfo | null> {
+  return new Promise((resolve) => {
+    const baseArgs = getYtdlpBaseArgs();
+    const ytdlp = spawn('yt-dlp', [
+      ...baseArgs,
+      '--dump-json',
+      '--flat-playlist',
+      '--no-warnings',
+      '-I', '1:1',
+      `ytsearch1:${query}`,
+    ]);
+
+    let output = '';
+    ytdlp.stdout.on('data', (d) => { output += d.toString(); });
+    ytdlp.on('close', (code) => {
+      if (code !== 0 || !output.trim()) { resolve(null); return; }
+      try {
+        const info = JSON.parse(output.trim().split('\n')[0]);
+        resolve({
+          id: info.id,
+          title: info.title || info.id,
+          artist: info.channel || info.uploader || info.uploader_id || 'Unknown Artist',
+          duration: info.duration || 0,
+          url: info.url || info.webpage_url || `https://www.youtube.com/watch?v=${info.id}`,
+          thumbnailUrl: info.thumbnail || `https://i.ytimg.com/vi/${info.id}/hqdefault.jpg`,
+        });
+      } catch { resolve(null); }
+    });
+    ytdlp.on('error', () => resolve(null));
+  });
+}
 
 function createProgressBar(percent: number): string {
   const barLength = 20;
@@ -130,6 +168,58 @@ export async function ytMusicCommand(message: Message, args: string[]): Promise<
     return;
   }
 
+  // !ytm mix [query] — pick a seed track and play its YouTube auto-mix
+  if (args[0] === 'mix') {
+    const member = message.guild.members.cache.get(message.author.id);
+    const voiceChannel = member?.voice.channel as VoiceChannel | undefined;
+    if (!voiceChannel) {
+      await message.channel.send('❌ You must be in a voice channel to use this command');
+      return;
+    }
+
+    const query = args.slice(1).join(' ') || 'popular music';
+    const statusMsg = await message.channel.send(`🎵 Finding a mix for: **${query}**...`);
+
+    try {
+      const seedTrack = await getMixSeedTrack(query);
+      if (!seedTrack) {
+        await statusMsg.edit('❌ Could not find a seed track. Try a different query.');
+        return;
+      }
+
+      await statusMsg.edit(`🎵 Found seed: **${seedTrack.title}** — fetching mix...`);
+
+      const recommendations = await getMusicRecommendations(seedTrack.id, 10);
+      if (recommendations.length === 0) {
+        await statusMsg.edit('❌ Could not fetch mix recommendations. Try a direct playlist URL instead.');
+        return;
+      }
+
+      clearMusicQueue(guildId);
+      // Queue all but the first recommendation (first will be played immediately)
+      if (recommendations.length > 1) {
+        addToMusicQueue(guildId, recommendations.slice(1));
+      }
+
+      await statusMsg.edit(
+        `🎵 **Mix loaded:** ${recommendations.length} tracks\n` +
+        `▶️ Starting with: **${recommendations[0].title}**\n\n` +
+        `*Downloading first track...*`,
+      );
+
+      await downloadAndPlay(recommendations[0].url, guildId, voiceChannel.id, message.author.id, statusMsg, 0);
+
+      await message.channel.send(
+        `📋 **${recommendations.length - 1} more track${recommendations.length - 1 !== 1 ? 's' : ''}** queued.\n` +
+        `Autoplay is **${isAutoplayEnabled(guildId) ? 'on' : 'off'}** — use \`!ytm autoplay off\` to disable.`,
+      );
+    } catch (error) {
+      console.error('[YTMusic] Mix error:', error);
+      await statusMsg.edit(`❌ Failed to load mix: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+    return;
+  }
+
   if (args[0] === 'stop' || args[0] === 'clear') {
     clearMusicQueue(guildId);
     const videoStreamer = getVideoStreamer();
@@ -153,7 +243,11 @@ export async function ytMusicCommand(message: Message, args: string[]): Promise<
     await message.channel.send(
       '❌ Usage: `!ytm <url> [time]`\n' +
       'Supports: single tracks, playlists (`list=`), albums, and mixes\n' +
-      'Subcommands: `!ytm autoplay [off]` | `!ytm queue` | `!ytm stop`\n' +
+      'Subcommands:\n' +
+      '• `!ytm mix [query]` — play a YouTube auto-mix (no URL needed!)\n' +
+      '• `!ytm autoplay [off]` — toggle autoplay recommendations\n' +
+      '• `!ytm queue` — show queue status\n' +
+      '• `!ytm stop` — stop music and clear queue\n' +
       'Autoplay is **on** by default — recommendations play after the queue empties.',
     );
     return;
