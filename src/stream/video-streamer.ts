@@ -974,7 +974,6 @@ class VideoStreamer {
       // Build subtitle burn-in filter segment if a .srt file is available
       // FFmpeg subtitles filter needs colons and backslashes escaped in the path
       const subtitleFilter = (() => {
-        const { existsSync } = require('fs') as typeof import('fs');
         if (!session.subtitlePath || !existsSync(session.subtitlePath)) return '';
         const escapedPath = session.subtitlePath
           .replace(/\\/g, '/')
@@ -1231,7 +1230,6 @@ class VideoStreamer {
 
       // Build subtitle burn-in filter for external streams
       const subtitleFilter = (() => {
-        const { existsSync } = require('fs') as typeof import('fs');
         if (!session.subtitlePath || !existsSync(session.subtitlePath)) return '';
         const escapedPath = session.subtitlePath
           .replace(/\\/g, '/')
