@@ -58,6 +58,7 @@ export interface DownloadedVideo {
   viewCount?: string;
   uploadDate?: string;
   description?: string;
+  subtitlePath?: string; // Path to downloaded .srt subtitle file (English)
 }
 
 export interface VideoMetadata {
@@ -72,6 +73,7 @@ export interface VideoMetadata {
   downloadedAt: number;
   sponsorBlockSkipped?: number;
   sponsorBlockSegments?: number;
+  subtitlePath?: string; // Path to downloaded .srt subtitle file
 }
 
 export interface DownloadProgress {
@@ -115,6 +117,11 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
       '--format', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best', // Quality selection
       // SponsorBlock integration - remove sponsor segments during download
       '--sponsorblock-remove', 'sponsor,selfpromo,interaction,intro,outro,preview,filler',
+      // Download English subtitles and auto-generated captions; convert to SRT for FFmpeg
+      '--write-subs',
+      '--write-auto-subs',
+      '--sub-langs', 'en.*,-live_chat',
+      '--convert-subs', 'srt',
       '--output', outputPath,
       '--exec', 'echo "DOWNLOAD_COMPLETE"', // Execute command when download completes
       url
@@ -258,6 +265,12 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
           console.error('[YouTubeDownloader] Failed to save metadata:', metaError);
         }
 
+        // Look for a downloaded subtitle file alongside the video
+        const subtitlePath = findSubtitleFile(outputPath);
+        if (subtitlePath) {
+          console.log('[YouTubeDownloader] Subtitles downloaded:', subtitlePath);
+        }
+
         resolve({
           filePath: outputPath,
           title: info.title,
@@ -267,6 +280,7 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
           viewCount: info.view_count ? formatNumber(info.view_count) : undefined,
           uploadDate: info.upload_date ? new Date(info.upload_date).toLocaleDateString() : undefined,
           description: info.description ? (info.description.length > 100 ? info.description.substring(0, 100) + '...' : info.description) : undefined,
+          subtitlePath,
         });
       } catch (e) {
         console.error('[YouTubeDownloader] Error getting video info:', e);
@@ -280,6 +294,7 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
           filePath: outputPath,
           title: 'Unknown',
           duration: 0,
+          subtitlePath: findSubtitleFile(outputPath),
         });
       }
     });
@@ -349,6 +364,62 @@ async function getYouTubeInfo(url: string): Promise<{ title: string; duration: n
   });
 }
 
+// Download English subtitles for a YouTube URL to a temp file, return the .srt path or null
+export async function downloadYouTubeSubtitles(url: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const timestamp = Date.now();
+    const outputBase = join(DOWNLOADS_DIR, `subs-${timestamp}`);
+    const baseArgs = getYtdlpBaseArgs();
+    const ytdlp = spawn('yt-dlp', [
+      ...baseArgs,
+      '--skip-download',
+      '--write-subs',
+      '--write-auto-subs',
+      '--sub-langs', 'en.*,-live_chat',
+      '--convert-subs', 'srt',
+      '--no-warnings',
+      '--output', outputBase,
+      url,
+    ]);
+
+    ytdlp.on('close', (code) => {
+      if (code !== 0) {
+        console.warn('[YouTubeDownloader] Subtitle download failed with code:', code);
+        resolve(null);
+        return;
+      }
+      const found = findSubtitleFile(outputBase);
+      resolve(found ?? null);
+    });
+
+    ytdlp.on('error', (err) => {
+      console.warn('[YouTubeDownloader] Subtitle download spawn error:', err.message);
+      resolve(null);
+    });
+  });
+}
+
+// Find a subtitle file downloaded alongside a video file
+// yt-dlp names subs like: video-1234567890.en.srt or video-1234567890.en-US.srt
+export function findSubtitleFile(videoPath: string): string | undefined {
+  const dir = videoPath.substring(0, videoPath.lastIndexOf('/') + 1) || '.';
+  const base = videoPath.replace(/\.[^.]+$/, ''); // strip extension
+  try {
+    const files = readdirSync(dir);
+    // Prefer manual subs over auto-generated, prefer en over en-US variants
+    const candidates = files
+      .filter(f => f.startsWith(base.substring(base.lastIndexOf('/') + 1)) && f.endsWith('.srt'))
+      .map(f => join(dir, f))
+      .sort((a, b) => {
+        // Prefer shorter names (less language codes = more likely manual subs)
+        return a.length - b.length;
+      });
+    return candidates[0] ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function formatNumber(num: number): string {
   if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
   if (num >= 1000) return `${(num / 1000).toFixed(0)}K`;
@@ -404,6 +475,7 @@ export function findDownloadedVideoByUrl(url: string): DownloadedVideo | null {
           viewCount: metadata.viewCount,
           uploadDate: metadata.uploadDate,
           description: metadata.description,
+          subtitlePath: findSubtitleFile(filePath),
         };
       }
     }
