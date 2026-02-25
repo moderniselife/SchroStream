@@ -216,9 +216,9 @@ export async function downloadYouTubeMusic(url: string, options: MusicDownloadOp
       '--progress',
       '--no-playlist',
       '--no-warnings',
-      '-f', 'bestaudio',
+      '-f', 'bestaudio/best',
       '--extract-audio',
-      '--audio-format', 'opus',
+      '--audio-format', 'best',
       '--embed-metadata',
       '--output', `${audioBase}.%(ext)s`,
       url
