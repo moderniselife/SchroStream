@@ -3,6 +3,134 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, unlink
 import { join } from 'path';
 import { getYouTubeInfo, getYtdlpBaseArgs } from './downloader.js';
 
+export interface MusicTrackInfo {
+  id: string;
+  title: string;
+  artist: string;
+  duration: number; // seconds
+  url: string;
+  thumbnailUrl?: string;
+}
+
+// Fetch all tracks from a YouTube playlist, album, or mix URL
+export async function getPlaylistTracks(url: string): Promise<MusicTrackInfo[]> {
+  return new Promise((resolve) => {
+    const baseArgs = getYtdlpBaseArgs();
+    const ytdlp = spawn('yt-dlp', [
+      ...baseArgs,
+      '--dump-json',
+      '--flat-playlist',
+      '--no-warnings',
+      '-I', '1:50', // cap at 50 tracks
+      url,
+    ]);
+
+    let output = '';
+    let error = '';
+
+    ytdlp.stdout.on('data', (data) => { output += data.toString(); });
+    ytdlp.stderr.on('data', (data) => { error += data.toString(); });
+
+    ytdlp.on('close', (code) => {
+      if (code !== 0 || !output.trim()) {
+        console.error('[MusicDownloader] getPlaylistTracks failed:', error.trim());
+        resolve([]);
+        return;
+      }
+
+      const tracks: MusicTrackInfo[] = [];
+      for (const line of output.trim().split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const info = JSON.parse(line);
+          if (!info.id) continue;
+          tracks.push({
+            id: info.id,
+            title: info.title || info.id,
+            artist: info.channel || info.uploader || info.uploader_id || 'Unknown Artist',
+            duration: info.duration || 0,
+            url: info.url || info.webpage_url || `https://www.youtube.com/watch?v=${info.id}`,
+            thumbnailUrl: info.thumbnail || `https://i.ytimg.com/vi/${info.id}/hqdefault.jpg`,
+          });
+        } catch {
+          // skip malformed lines
+        }
+      }
+
+      console.log(`[MusicDownloader] Found ${tracks.length} tracks in playlist`);
+      resolve(tracks);
+    });
+
+    ytdlp.on('error', (err) => {
+      console.error('[MusicDownloader] getPlaylistTracks spawn error:', err);
+      resolve([]);
+    });
+  });
+}
+
+// Fetch YouTube Mix recommendations based on a video ID (up to `limit` tracks)
+export async function getMusicRecommendations(videoId: string, limit = 5): Promise<MusicTrackInfo[]> {
+  // YouTube auto-generated mixes: RD{videoId}
+  const mixUrl = `https://www.youtube.com/watch?v=${videoId}&list=RD${videoId}`;
+  return new Promise((resolve) => {
+    const baseArgs = getYtdlpBaseArgs();
+    const ytdlp = spawn('yt-dlp', [
+      ...baseArgs,
+      '--dump-json',
+      '--flat-playlist',
+      '--no-warnings',
+      '-I', `2:${limit + 1}`, // skip track 1 (the seed track itself)
+      mixUrl,
+    ]);
+
+    let output = '';
+    let error = '';
+
+    ytdlp.stdout.on('data', (data) => { output += data.toString(); });
+    ytdlp.stderr.on('data', (data) => { error += data.toString(); });
+
+    ytdlp.on('close', (code) => {
+      if (code !== 0 || !output.trim()) {
+        console.error('[MusicDownloader] getMusicRecommendations failed:', error.trim());
+        resolve([]);
+        return;
+      }
+
+      const tracks: MusicTrackInfo[] = [];
+      for (const line of output.trim().split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const info = JSON.parse(line);
+          if (!info.id) continue;
+          tracks.push({
+            id: info.id,
+            title: info.title || info.id,
+            artist: info.channel || info.uploader || info.uploader_id || 'Unknown Artist',
+            duration: info.duration || 0,
+            url: info.url || info.webpage_url || `https://www.youtube.com/watch?v=${info.id}`,
+            thumbnailUrl: info.thumbnail || `https://i.ytimg.com/vi/${info.id}/hqdefault.jpg`,
+          });
+        } catch {
+          // skip malformed lines
+        }
+      }
+
+      console.log(`[MusicDownloader] Got ${tracks.length} recommendations for video ${videoId}`);
+      resolve(tracks);
+    });
+
+    ytdlp.on('error', (err) => {
+      console.error('[MusicDownloader] getMusicRecommendations spawn error:', err);
+      resolve([]);
+    });
+  });
+}
+
+// Detect if a URL is a playlist or album (not a single track)
+export function isPlaylistUrl(url: string): boolean {
+  return url.includes('list=') || url.includes('/playlist') || url.includes('/album');
+}
+
 // Music downloads directory
 const MUSIC_DIR = join(process.cwd(), 'downloads', 'music');
 if (!existsSync(MUSIC_DIR)) {

@@ -9,6 +9,7 @@ import config from '../config.js';
 import plexClient from '../plex/client.js';
 import { updateWatchDeck } from '../data/watch-deck.js';
 import { popQueue, peekQueue } from '../data/queue.js';
+import { popMusicQueue, isAutoplayEnabled, setLastPlayedVideoId, addToMusicQueue } from '../data/music-queue.js';
 import { startVoiceListener, stopVoiceListener } from '../voice/python-listener.js';
 import { startVoiceReceiver, stopVoiceReceiver } from '../voice/receiver.js';
 import { getNextEpisode } from '../plex/library.js';
@@ -449,11 +450,121 @@ class VideoStreamer {
     return this.sessions.has(guildId);
   }
 
+  private extractVideoId(url: string): string | null {
+    const match = url.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([A-Za-z0-9_-]{11})/);
+    return match ? match[1] : null;
+  }
+
   getActiveSessions(): VideoStreamSession[] {
     return Array.from(this.sessions.values());
   }
 
   private async playNextInQueue(guildId: string, channelId: string, userId?: string, lastPlayedItem?: MediaItem): Promise<void> {
+    // Check if the last played item was a music track - use the music queue + autoplay
+    if (lastPlayedItem && lastPlayedItem.type === 'music') {
+      const lastMusicItem = lastPlayedItem as import('../types/index.js').MusicMediaItem;
+
+      // Track the last played video ID for recommendations
+      const lastVideoId = this.extractVideoId(lastMusicItem.url);
+      if (lastVideoId) {
+        setLastPlayedVideoId(guildId, lastVideoId);
+      }
+
+      // Try next track from music queue first
+      const nextTrack = popMusicQueue(guildId);
+      if (nextTrack) {
+        console.log(`[VideoStreamer] Music queue: auto-playing "${nextTrack.title}" by ${nextTrack.artist}`);
+        try {
+          const { downloadYouTubeMusic, findDownloadedMusicByUrl } = await import('../youtube/music-downloader.js');
+
+          // Check cache first
+          let downloaded = findDownloadedMusicByUrl(nextTrack.url);
+          if (!downloaded) {
+            console.log(`[VideoStreamer] Downloading next track: ${nextTrack.title}`);
+            downloaded = await downloadYouTubeMusic(nextTrack.url);
+          }
+
+          if (!downloaded) {
+            console.error(`[VideoStreamer] Failed to download next track: ${nextTrack.title}`);
+            await this.playNextInQueue(guildId, channelId, userId, lastPlayedItem);
+            return;
+          }
+
+          const mediaItem: import('../types/index.js').MusicMediaItem = {
+            ratingKey: `music-${Date.now()}`,
+            key: nextTrack.url,
+            title: downloaded.title,
+            artist: downloaded.artist,
+            type: 'music',
+            duration: downloaded.duration,
+            thumb: downloaded.thumbnailUrl,
+            url: nextTrack.url,
+            audioPath: downloaded.audioPath,
+            thumbnailPath: downloaded.thumbnailPath,
+          };
+
+          await this.startMusicStream(
+            guildId, channelId, mediaItem,
+            downloaded.audioPath, downloaded.thumbnailPath,
+            downloaded.artist, userId, 0
+          );
+          return;
+        } catch (err) {
+          console.error('[VideoStreamer] Error auto-playing next music track:', err);
+          await this.playNextInQueue(guildId, channelId, userId, lastPlayedItem);
+          return;
+        }
+      }
+
+      // Music queue empty - fetch autoplay recommendations if enabled
+      if (lastVideoId && isAutoplayEnabled(guildId)) {
+        console.log(`[VideoStreamer] Music queue empty, fetching recommendations for ${lastVideoId}`);
+        try {
+          const { getMusicRecommendations } = await import('../youtube/music-downloader.js');
+          const recommendations = await getMusicRecommendations(lastVideoId, 5);
+          if (recommendations.length > 0) {
+            // Queue the rest, play the first
+            addToMusicQueue(guildId, recommendations.slice(1));
+            const firstRec = recommendations[0];
+            console.log(`[VideoStreamer] Autoplay: "${firstRec.title}" by ${firstRec.artist}`);
+
+            const { downloadYouTubeMusic, findDownloadedMusicByUrl } = await import('../youtube/music-downloader.js');
+            let downloaded = findDownloadedMusicByUrl(firstRec.url);
+            if (!downloaded) {
+              downloaded = await downloadYouTubeMusic(firstRec.url);
+            }
+
+            if (downloaded) {
+              const mediaItem: import('../types/index.js').MusicMediaItem = {
+                ratingKey: `music-${Date.now()}`,
+                key: firstRec.url,
+                title: downloaded.title,
+                artist: downloaded.artist,
+                type: 'music',
+                duration: downloaded.duration,
+                thumb: downloaded.thumbnailUrl,
+                url: firstRec.url,
+                audioPath: downloaded.audioPath,
+                thumbnailPath: downloaded.thumbnailPath,
+              };
+              await this.startMusicStream(
+                guildId, channelId, mediaItem,
+                downloaded.audioPath, downloaded.thumbnailPath,
+                downloaded.artist, userId, 0
+              );
+              return;
+            }
+          }
+        } catch (err) {
+          console.error('[VideoStreamer] Error fetching autoplay recommendations:', err);
+        }
+      }
+
+      console.log('[VideoStreamer] Music queue exhausted and no recommendations, stopping.');
+      stopStatusUpdateTimer();
+      return;
+    }
+
     // Check if the last played item was a Plex TV episode - auto-play next episode
     if (lastPlayedItem && lastPlayedItem.type === 'episode') {
       console.log('[VideoStreamer] Last played was a Plex episode, checking for next episode...');
