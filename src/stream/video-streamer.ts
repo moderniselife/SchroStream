@@ -98,6 +98,7 @@ export interface VideoStreamSession {
   musicAudioPath?: string; // Path to audio file for music mode
   musicThumbnailPath?: string; // Path to thumbnail image for music mode
   musicArtist?: string; // Artist name for music overlay
+  subtitlePath?: string; // Path to .srt subtitle file to burn in
 }
 
 // Store playback positions for resume functionality (ratingKey -> position in ms)
@@ -769,7 +770,8 @@ class VideoStreamer {
     mediaItem: MediaItem,
     filePath: string,
     userId?: string,
-    startTimeMs = 0
+    startTimeMs = 0,
+    subtitlePath?: string
   ): Promise<void> {
     await this.stopStream(guildId);
 
@@ -813,6 +815,7 @@ class VideoStreamer {
       userId,
       isExternal: true, // Treat local files as external streams
       audioUrl: undefined,
+      subtitlePath,
       mediaUdp,
     };
 
@@ -835,7 +838,8 @@ class VideoStreamer {
     mediaItem: MediaItem,
     streamUrl: string,
     userId?: string,
-    audioUrl?: string | null
+    audioUrl?: string | null,
+    subtitlePath?: string
   ): Promise<void> {
     await this.stopStream(guildId);
 
@@ -863,6 +867,25 @@ class VideoStreamer {
     const sessionId = urlObj.searchParams.get('X-Plex-Session-Identifier') || 
                     urlObj.searchParams.get('session') || undefined;
 
+    // Auto-download subtitles for YouTube URLs if not already provided
+    let resolvedSubtitlePath = subtitlePath;
+    const isYouTubeUrl = streamUrl.includes('youtube.com') || streamUrl.includes('youtu.be') ||
+                         (mediaItem as any).url?.includes('youtube.com') || (mediaItem as any).url?.includes('youtu.be');
+    if (!resolvedSubtitlePath && isYouTubeUrl) {
+      const ytUrl = (mediaItem as any).url || streamUrl;
+      if (ytUrl.includes('youtube.com') || ytUrl.includes('youtu.be')) {
+        try {
+          const { downloadYouTubeSubtitles } = await import('../youtube/downloader.js');
+          resolvedSubtitlePath = await downloadYouTubeSubtitles(ytUrl) ?? undefined;
+          if (resolvedSubtitlePath) {
+            console.log('[VideoStreamer] Auto-downloaded subtitles for YouTube stream:', resolvedSubtitlePath);
+          }
+        } catch (e) {
+          console.warn('[VideoStreamer] Failed to auto-download subtitles:', e);
+        }
+      }
+    }
+
     const session: VideoStreamSession = {
       guildId,
       channelId,
@@ -881,6 +904,7 @@ class VideoStreamer {
       userId,
       isExternal: true,
       audioUrl: audioUrl || undefined,
+      subtitlePath: resolvedSubtitlePath,
       sessionId,
       mediaUdp,
     };
@@ -946,6 +970,18 @@ class VideoStreamer {
                             Math.floor(config.stream.maxBitrate * 0.4);
       
       const useGPU = checkNVENCSupport();
+
+      // Build subtitle burn-in filter segment if a .srt file is available
+      // FFmpeg subtitles filter needs colons and backslashes escaped in the path
+      const subtitleFilter = (() => {
+        const { existsSync } = require('fs') as typeof import('fs');
+        if (!session.subtitlePath || !existsSync(session.subtitlePath)) return '';
+        const escapedPath = session.subtitlePath
+          .replace(/\\/g, '/')
+          .replace(/:/g, '\\:');
+        console.log(`[VideoStreamer] Burning subtitles from: ${session.subtitlePath}`);
+        return `,subtitles='${escapedPath}':force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,Bold=1,Outline=2,Shadow=1,MarginV=20'`;
+      })();
       
       if (useGPU) {
         // NVIDIA NVENC GPU encoding - offloads encoding to GPU, much lower CPU usage
@@ -968,9 +1004,9 @@ class VideoStreamer {
           '-b:v', `${qualityBitrate}k`,
           '-maxrate', `${qualityBitrate}k`,
           '-bufsize', `${qualityBitrate * 2}k`,
-          '-vf', session.speed !== 1 
-            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+          '-vf', session.speed !== 1
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
@@ -1003,9 +1039,9 @@ class VideoStreamer {
           '-b:v', `${qualityBitrate}k`,
           '-maxrate', `${qualityBitrate}k`,
           '-bufsize', `${qualityBitrate * 2}k`,
-          '-vf', session.speed !== 1 
-            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+          '-vf', session.speed !== 1
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
@@ -1192,6 +1228,17 @@ class VideoStreamer {
       // Map video from first input, audio from second (or first if no separate audio)
       const useGPU = checkNVENCSupport();
       const gopSize = config.stream.frameRate * 2; // GOP = 2 seconds
+
+      // Build subtitle burn-in filter for external streams
+      const subtitleFilter = (() => {
+        const { existsSync } = require('fs') as typeof import('fs');
+        if (!session.subtitlePath || !existsSync(session.subtitlePath)) return '';
+        const escapedPath = session.subtitlePath
+          .replace(/\\/g, '/')
+          .replace(/:/g, '\\:');
+        console.log(`[VideoStreamer] Burning subtitles from: ${session.subtitlePath}`);
+        return `,subtitles='${escapedPath}':force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,Bold=1,Outline=2,Shadow=1,MarginV=20'`;
+      })();
       
       if (useGPU) {
         // NVIDIA NVENC GPU encoding for external streams
@@ -1213,8 +1260,8 @@ class VideoStreamer {
           '-maxrate', `${config.stream.maxBitrate}k`,
           '-bufsize', `${config.stream.maxBitrate * 2}k`,
           '-vf', session.speed !== 1
-            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
@@ -1245,8 +1292,8 @@ class VideoStreamer {
           '-maxrate', `${config.stream.maxBitrate}k`,
           '-bufsize', `${config.stream.maxBitrate * 2}k`,
           '-vf', session.speed !== 1
-            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',

@@ -1621,7 +1621,8 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
       mediaItem,
       existingVideo.filePath,
       interaction.user.id,
-      startTimeMs
+      startTimeMs,
+      existingVideo.subtitlePath
     );
     
     return;
@@ -1751,7 +1752,8 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
       mediaItem,
       downloadedVideo.filePath,
       interaction.user.id,
-      startTimeMs
+      startTimeMs,
+      downloadedVideo.subtitlePath
     ).catch(err => console.error('[Controller] YouTube stream error:', err));
 
   } catch (error) {
