@@ -120,7 +120,7 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
       // Download English subtitles and auto-generated captions; convert to SRT for FFmpeg
       '--write-subs',
       '--write-auto-subs',
-      '--sub-langs', 'en.*,-live_chat',
+      '--sub-langs', 'en,en-US,en-GB,en-AU',
       '--convert-subs', 'srt',
       '--output', outputPath,
       '--exec', 'echo "DOWNLOAD_COMPLETE"', // Execute command when download completes
@@ -375,9 +375,8 @@ export async function downloadYouTubeSubtitles(url: string): Promise<string | nu
       '--skip-download',
       '--write-subs',
       '--write-auto-subs',
-      '--sub-langs', 'en.*,-live_chat',
+      '--sub-langs', 'en,en-US,en-GB,en-AU',
       '--convert-subs', 'srt',
-      '--no-warnings',
       '--output', outputBase,
       url,
     ]);
@@ -402,20 +401,26 @@ export async function downloadYouTubeSubtitles(url: string): Promise<string | nu
 // Find a subtitle file downloaded alongside a video file
 // yt-dlp names subs like: video-1234567890.en.srt or video-1234567890.en-US.srt
 export function findSubtitleFile(videoPath: string): string | undefined {
-  const dir = videoPath.substring(0, videoPath.lastIndexOf('/') + 1) || '.';
-  const base = videoPath.replace(/\.[^.]+$/, ''); // strip extension
+  const lastSlash = videoPath.lastIndexOf('/');
+  const dir = lastSlash >= 0 ? videoPath.substring(0, lastSlash + 1) : './';
+  // Strip the final extension (e.g. .mp4) to get the base stem
+  const filename = lastSlash >= 0 ? videoPath.substring(lastSlash + 1) : videoPath;
+  const stem = filename.replace(/\.[^.]+$/, '');
   try {
     const files = readdirSync(dir);
-    // Prefer manual subs over auto-generated, prefer en over en-US variants
+    console.log(`[YouTubeDownloader] findSubtitleFile: dir=${dir} stem=${stem} allFiles=${files.filter(f => f.startsWith(stem)).join(', ') || 'none'}`);
+    // Match any .srt file whose name starts with the stem
     const candidates = files
-      .filter(f => f.startsWith(base.substring(base.lastIndexOf('/') + 1)) && f.endsWith('.srt'))
+      .filter(f => f.startsWith(stem) && f.endsWith('.srt'))
       .map(f => join(dir, f))
       .sort((a, b) => {
-        // Prefer shorter names (less language codes = more likely manual subs)
+        // Prefer shorter names (manual subs over auto-generated)
         return a.length - b.length;
       });
+    console.log(`[YouTubeDownloader] findSubtitleFile: candidates=${candidates.join(', ') || 'none'}`);
     return candidates[0] ?? undefined;
-  } catch {
+  } catch (e) {
+    console.warn('[YouTubeDownloader] findSubtitleFile error:', e);
     return undefined;
   }
 }
