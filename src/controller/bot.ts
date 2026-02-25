@@ -166,12 +166,29 @@ const commands = [
     .setDescription('Play YouTube audio with a music visualizer (album art + progress)')
     .addStringOption(option =>
       option.setName('url')
-        .setDescription('YouTube URL')
-        .setRequired(true)
+        .setDescription('YouTube URL (single track, playlist, album, or mix)')
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName('action')
+        .setDescription('Subcommand: mix | autoplay | autoplay-off | queue | stop')
+        .setRequired(false)
+        .addChoices(
+          { name: 'mix — play auto-mix (no URL needed)', value: 'mix' },
+          { name: 'autoplay on — enable autoplay recommendations', value: 'autoplay' },
+          { name: 'autoplay off — disable autoplay', value: 'autoplay-off' },
+          { name: 'queue — show queue status', value: 'queue' },
+          { name: 'stop — stop music and clear queue', value: 'stop' },
+        )
+    )
+    .addStringOption(option =>
+      option.setName('query')
+        .setDescription('Search query for mix (e.g., "lo-fi hip hop")')
+        .setRequired(false)
     )
     .addStringOption(option =>
       option.setName('time')
-        .setDescription('Start time (e.g., "1:30" or "0:45")')
+        .setDescription('Start time (e.g., "1:30" or "0:45") — single tracks only')
         .setRequired(false)
     ),
   new SlashCommandBuilder()
@@ -1744,11 +1761,330 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
 }
 
 async function handleYouTubeMusic(interaction: ChatInputCommandInteraction): Promise<void> {
-  const url = interaction.options.getString('url', true);
+  const url = interaction.options.getString('url');
+  const action = interaction.options.getString('action');
+  const mixQuery = interaction.options.getString('query') || 'popular music';
   const timeStr = interaction.options.getString('time');
+
   await interaction.deferReply();
 
-  // Parse time string
+  const guildId = interaction.guildId;
+  if (!guildId) {
+    await interaction.editReply('❌ This command can only be used in a server');
+    return;
+  }
+
+  const {
+    downloadYouTubeMusic,
+    findDownloadedMusicByUrl,
+    getPlaylistTracks,
+    getMusicRecommendations,
+    isPlaylistUrl,
+  } = await import('../youtube/music-downloader.js');
+  type MusicDownloadProgress = import('../youtube/music-downloader.js').MusicDownloadProgress;
+  type MusicTrackInfo = import('../youtube/music-downloader.js').MusicTrackInfo;
+  type MusicMediaItemType = import('../types/index.js').MusicMediaItem;
+
+  const {
+    seedMusicQueue,
+    clearMusicQueue,
+    addToMusicQueue,
+    setAutoplay,
+    isAutoplayEnabled,
+    getMusicQueueLength,
+  } = await import('../data/music-queue.js');
+
+  // --- Helper: build a music media item and play it ---
+  async function downloadAndPlayInteraction(trackUrl: string, startTimeMs = 0): Promise<boolean> {
+    const videoStreamer = getVideoStreamer();
+
+    const guild = selfbotClient.guilds.cache.get(guildId!);
+    const member = guild?.members.cache.get(interaction.user.id);
+    const voiceChannel = member?.voice?.channel;
+    if (!voiceChannel) {
+      await interaction.editReply('❌ You must be in a voice channel');
+      return false;
+    }
+
+    const existing = findDownloadedMusicByUrl(trackUrl);
+    if (existing) {
+      const mediaItem: MusicMediaItemType = {
+        ratingKey: `music-${Date.now()}`,
+        key: trackUrl,
+        title: existing.title,
+        artist: existing.artist,
+        type: 'music',
+        duration: existing.duration,
+        thumb: existing.thumbnailUrl,
+        url: trackUrl,
+        audioPath: existing.audioPath,
+        thumbnailPath: existing.thumbnailPath,
+      };
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎵 Now Playing')
+        .setDescription(`**${existing.title}**`)
+        .addFields(
+          { name: 'Artist', value: existing.artist, inline: true },
+          { name: 'Duration', value: existing.duration ? formatPlexDuration(existing.duration) : 'Unknown', inline: true },
+          { name: 'Source', value: '📥 Cached (instant!)', inline: true },
+        )
+        .setColor(0x1DB954)
+        .setThumbnail(existing.thumbnailUrl || null);
+
+      const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
+      );
+
+      await interaction.editReply({ embeds: [embed], components: [controlRow] });
+      videoStreamer.startMusicStream(guildId!, voiceChannel.id, mediaItem, existing.audioPath, existing.thumbnailPath, existing.artist, interaction.user.id, startTimeMs)
+        .catch(err => console.error('[Controller] Music stream error:', err));
+      return true;
+    }
+
+    // Download fresh
+    let lastUpdate = 0;
+    const downloaded = await downloadYouTubeMusic(trackUrl, {
+      onProgress: async (p: MusicDownloadProgress) => {
+        const now = Date.now();
+        if (now - lastUpdate < 2000) return;
+        lastUpdate = now;
+        const bar = '█'.repeat(Math.round(p.percent / 5)) + '░'.repeat(20 - Math.round(p.percent / 5));
+        try {
+          await interaction.editReply(
+            `🎵 **Downloading Audio**\n[${bar}] ${p.percent.toFixed(1)}%\n📊 ${p.speed} | ⏱️ ETA: ${p.eta}\n\n*Will start when complete...*`,
+          );
+        } catch { /* ignore */ }
+      },
+      onComplete: async () => {
+        try { await interaction.editReply(`🎵 **Download Complete!**\n✅ Audio ready\n🎶 *Starting music visualizer...*`); } catch { /* ignore */ }
+      },
+      onError: async (error: string) => {
+        try { await interaction.editReply(`❌ Download failed: ${error}`); } catch { /* ignore */ }
+      },
+    });
+
+    if (!downloaded) return false;
+
+    const mediaItem: MusicMediaItemType = {
+      ratingKey: `music-${Date.now()}`,
+      key: trackUrl,
+      title: downloaded.title,
+      artist: downloaded.artist,
+      type: 'music',
+      duration: downloaded.duration,
+      thumb: downloaded.thumbnailUrl,
+      url: trackUrl,
+      audioPath: downloaded.audioPath,
+      thumbnailPath: downloaded.thumbnailPath,
+    };
+
+    const embed = new EmbedBuilder()
+      .setTitle('🎵 Now Playing')
+      .setDescription(`**${downloaded.title}**`)
+      .addFields(
+        { name: 'Artist', value: downloaded.artist, inline: true },
+        { name: 'Duration', value: downloaded.duration ? formatPlexDuration(downloaded.duration) : 'Unknown', inline: true },
+      )
+      .setColor(0x1DB954)
+      .setThumbnail(downloaded.thumbnailUrl || null);
+
+    const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
+    );
+
+    await interaction.editReply({ embeds: [embed], components: [controlRow] });
+    videoStreamer.startMusicStream(guildId!, voiceChannel.id, mediaItem, downloaded.audioPath, downloaded.thumbnailPath, downloaded.artist, interaction.user.id, startTimeMs)
+      .catch(err => console.error('[Controller] Music stream error:', err));
+    return true;
+  }
+
+  // --- Helper: pick a seed track via yt-dlp search ---
+  async function getMixSeedTrack(query: string): Promise<MusicTrackInfo | null> {
+    const { spawn } = await import('child_process');
+    return new Promise((resolve) => {
+      const baseArgs = getYtdlpBaseArgs();
+      const ytdlp = spawn('yt-dlp', [
+        ...baseArgs,
+        '--dump-json', '--flat-playlist', '--no-warnings',
+        '-I', '1:1',
+        `ytsearch1:${query}`,
+      ]);
+      let output = '';
+      ytdlp.stdout.on('data', (d: Buffer) => { output += d.toString(); });
+      ytdlp.on('close', (code: number | null) => {
+        if (code !== 0 || !output.trim()) { resolve(null); return; }
+        try {
+          const info = JSON.parse(output.trim().split('\n')[0]);
+          resolve({
+            id: info.id,
+            title: info.title || info.id,
+            artist: info.channel || info.uploader || info.uploader_id || 'Unknown Artist',
+            duration: info.duration || 0,
+            url: info.url || info.webpage_url || `https://www.youtube.com/watch?v=${info.id}`,
+            thumbnailUrl: info.thumbnail || `https://i.ytimg.com/vi/${info.id}/hqdefault.jpg`,
+          });
+        } catch { resolve(null); }
+      });
+      ytdlp.on('error', () => resolve(null));
+    });
+  }
+
+  // --- Subcommand: autoplay ---
+  if (action === 'autoplay') {
+    setAutoplay(guildId, true);
+    await interaction.editReply('🔁 Autoplay **enabled**. Recommendations will play when the queue is empty.');
+    return;
+  }
+
+  if (action === 'autoplay-off') {
+    setAutoplay(guildId, false);
+    await interaction.editReply('🔁 Autoplay **disabled**. Music will stop after the queue is empty.');
+    return;
+  }
+
+  // --- Subcommand: queue status ---
+  if (action === 'queue') {
+    const len = getMusicQueueLength(guildId);
+    const autoplay = isAutoplayEnabled(guildId);
+    await interaction.editReply(
+      `🎵 **Music Queue:** ${len} track${len !== 1 ? 's' : ''} queued\n` +
+      `🔁 Autoplay: **${autoplay ? 'on' : 'off'}**`,
+    );
+    return;
+  }
+
+  // --- Subcommand: stop ---
+  if (action === 'stop') {
+    clearMusicQueue(guildId);
+    const videoStreamer = getVideoStreamer();
+    await videoStreamer.stopStream(guildId);
+    await interaction.editReply('⏹️ Music stopped and queue cleared.');
+    return;
+  }
+
+  // --- Subcommand: mix ---
+  if (action === 'mix' || (!url && !action)) {
+    const guild = selfbotClient.guilds.cache.get(guildId);
+    const member = guild?.members.cache.get(interaction.user.id);
+    if (!member?.voice?.channel) {
+      await interaction.editReply('❌ You must be in a voice channel');
+      return;
+    }
+
+    await interaction.editReply(`🎵 Finding a mix for: **${mixQuery}**...`);
+
+    try {
+      const seedTrack = await getMixSeedTrack(mixQuery);
+      if (!seedTrack) {
+        await interaction.editReply('❌ Could not find a seed track. Try a different query.');
+        return;
+      }
+
+      await interaction.editReply(`🎵 Found seed: **${seedTrack.title}** — fetching mix...`);
+
+      const recommendations = await getMusicRecommendations(seedTrack.id, 10);
+      if (recommendations.length === 0) {
+        await interaction.editReply('❌ Could not fetch mix recommendations. Try a direct playlist URL instead.');
+        return;
+      }
+
+      clearMusicQueue(guildId);
+      if (recommendations.length > 1) {
+        addToMusicQueue(guildId, recommendations.slice(1));
+      }
+
+      await interaction.editReply(
+        `🎵 **Mix loaded:** ${recommendations.length} tracks\n` +
+        `▶️ Starting with: **${recommendations[0].title}**\n\n` +
+        `*Downloading first track...*`,
+      );
+
+      await downloadAndPlayInteraction(recommendations[0].url, 0);
+
+      try {
+        await interaction.followUp(
+          `📋 **${recommendations.length - 1} more track${recommendations.length - 1 !== 1 ? 's' : ''}** queued.\n` +
+          `Autoplay is **${isAutoplayEnabled(guildId) ? 'on' : 'off'}** — use \`/ytm action:autoplay-off\` to disable.`,
+        );
+      } catch { /* ignore follow-up errors */ }
+    } catch (error) {
+      console.error('[Controller] Mix error:', error);
+      await interaction.editReply(`❌ Failed to load mix: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+    return;
+  }
+
+  // --- No URL provided and no actionable subcommand ---
+  if (!url) {
+    await interaction.editReply(
+      '❌ Provide a URL or use the `action` option.\n' +
+      '• `/ytm url:<url>` — single track, playlist, or album\n' +
+      '• `/ytm action:mix query:<search>` — play an auto-mix\n' +
+      '• `/ytm action:queue` — show queue status\n' +
+      '• `/ytm action:stop` — stop music',
+    );
+    return;
+  }
+
+  // --- Playlist / Album ---
+  if (isPlaylistUrl(url)) {
+    const guild = selfbotClient.guilds.cache.get(guildId);
+    const member = guild?.members.cache.get(interaction.user.id);
+    if (!member?.voice?.channel) {
+      await interaction.editReply('❌ You must be in a voice channel');
+      return;
+    }
+
+    try {
+      await interaction.editReply('🎵 Fetching playlist tracks...');
+      const tracks = await getPlaylistTracks(url);
+
+      if (tracks.length === 0) {
+        await interaction.editReply('❌ Could not fetch any tracks from that playlist/album. Try a direct video URL instead.');
+        return;
+      }
+
+      clearMusicQueue(guildId);
+      if (tracks.length > 1) {
+        seedMusicQueue(guildId, tracks.slice(1));
+      }
+
+      await interaction.editReply(
+        `🎵 **Playlist loaded:** ${tracks.length} tracks\n` +
+        `▶️ Starting with: **${tracks[0].title}**\n\n` +
+        `*Downloading first track...*`,
+      );
+
+      await downloadAndPlayInteraction(tracks[0].url, 0);
+
+      try {
+        await interaction.followUp(
+          `📋 **${tracks.length - 1} more track${tracks.length - 1 !== 1 ? 's' : ''}** queued after this one.\n` +
+          `Use \`/ytm action:queue\` to check | \`/ytm action:autoplay-off\` to disable autoplay.`,
+        );
+      } catch { /* ignore */ }
+    } catch (error) {
+      console.error('[Controller] Playlist error:', error);
+      await interaction.editReply(`❌ Failed to load playlist: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+    return;
+  }
+
+  // --- Single track ---
+  const guild = selfbotClient.guilds.cache.get(guildId);
+  const member = guild?.members.cache.get(interaction.user.id);
+  if (!member?.voice?.channel) {
+    await interaction.editReply('❌ You must be in a voice channel');
+    return;
+  }
+
   let startTimeMs = 0;
   if (timeStr) {
     const parsed = parseTimeString(timeStr);
@@ -1759,174 +2095,11 @@ async function handleYouTubeMusic(interaction: ChatInputCommandInteraction): Pro
     startTimeMs = parsed;
   }
 
-  const guildId = interaction.guildId;
-  if (!guildId) {
-    await interaction.editReply('❌ This command can only be used in a server');
-    return;
-  }
+  clearMusicQueue(guildId);
 
-  const guild = selfbotClient.guilds.cache.get(guildId);
-  const member = guild?.members.cache.get(interaction.user.id);
-  const voiceChannel = member?.voice?.channel;
-
-  if (!voiceChannel) {
-    await interaction.editReply('❌ You must be in a voice channel');
-    return;
-  }
-
-  const { downloadYouTubeMusic, findDownloadedMusicByUrl } = await import('../youtube/music-downloader.js');
-  type MusicDownloadProgress = import('../youtube/music-downloader.js').MusicDownloadProgress;
-  type MusicMediaItemType = import('../types/index.js').MusicMediaItem;
-
-  // Check if already downloaded
-  const existingMusic = findDownloadedMusicByUrl(url);
-  if (existingMusic) {
-    console.log(`[Controller] Found existing music download for: ${url}`);
-
-    const videoStreamer = getVideoStreamer();
-
-    const mediaItem: MusicMediaItemType = {
-      ratingKey: `music-${Date.now()}`,
-      key: url,
-      title: existingMusic.title,
-      artist: existingMusic.artist,
-      type: 'music',
-      duration: existingMusic.duration,
-      thumb: existingMusic.thumbnailUrl,
-      url: url,
-      audioPath: existingMusic.audioPath,
-      thumbnailPath: existingMusic.thumbnailPath,
-    };
-
-    const duration = existingMusic.duration ? formatPlexDuration(existingMusic.duration) : 'Unknown';
-
-    const embed = new EmbedBuilder()
-      .setTitle('🎵 Now Playing')
-      .setDescription(`**${existingMusic.title}**`)
-      .addFields(
-        { name: 'Artist', value: existingMusic.artist, inline: true },
-        { name: 'Duration', value: duration, inline: true },
-        { name: 'Source', value: '📥 Cached (instant!)', inline: true }
-      )
-      .setColor(0x1DB954) // Spotify-esque green
-      .setThumbnail(existingMusic.thumbnailUrl || null);
-
-    const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
-    );
-
-    await interaction.editReply({ embeds: [embed], components: [controlRow] });
-
-    await videoStreamer.startMusicStream(
-      guildId,
-      voiceChannel.id,
-      mediaItem,
-      existingMusic.audioPath,
-      existingMusic.thumbnailPath,
-      existingMusic.artist,
-      interaction.user.id,
-      startTimeMs
-    );
-
-    return;
-  }
-
-  // Download audio + thumbnail
   try {
-    let lastUpdateTime = 0;
-    const UPDATE_COOLDOWN = 2000;
-
-    const downloadedMusic = await downloadYouTubeMusic(url, {
-      onProgress: async (progress: MusicDownloadProgress) => {
-        const now = Date.now();
-        if (now - lastUpdateTime < UPDATE_COOLDOWN) return;
-        lastUpdateTime = now;
-
-        try {
-          const barLength = 20;
-          const filledLength = Math.round((progress.percent / 100) * barLength);
-          const bar = '█'.repeat(filledLength) + '░'.repeat(barLength - filledLength);
-
-          await interaction.editReply(
-            `🎵 **Downloading Audio**\n` +
-            `[${bar}] ${progress.percent.toFixed(1)}%\n` +
-            `📊 ${progress.speed} | ⏱️ ETA: ${progress.eta}\n\n` +
-            `*Will start playing when complete...*`
-          );
-        } catch {
-          // Ignore update errors
-        }
-      },
-      onComplete: async () => {
-        try {
-          await interaction.editReply(
-            `🎵 **Download Complete!**\n` +
-            `✅ Audio ready\n\n` +
-            `🎶 *Starting music visualizer...*`
-          );
-        } catch {
-          // Ignore
-        }
-      },
-      onError: async (error: string) => {
-        await interaction.editReply(`❌ Download failed: ${error}`);
-      }
-    });
-
-    if (!downloadedMusic) {
-      return;
-    }
-
-    const videoStreamer = getVideoStreamer();
-
-    const mediaItem: MusicMediaItemType = {
-      ratingKey: `music-${Date.now()}`,
-      key: url,
-      title: downloadedMusic.title,
-      artist: downloadedMusic.artist,
-      type: 'music',
-      duration: downloadedMusic.duration,
-      thumb: downloadedMusic.thumbnailUrl,
-      url: url,
-      audioPath: downloadedMusic.audioPath,
-      thumbnailPath: downloadedMusic.thumbnailPath,
-    };
-
-    const duration = downloadedMusic.duration ? formatPlexDuration(downloadedMusic.duration) : 'Unknown';
-
-    const embed = new EmbedBuilder()
-      .setTitle('🎵 Now Playing')
-      .setDescription(`**${downloadedMusic.title}**`)
-      .addFields(
-        { name: 'Artist', value: downloadedMusic.artist, inline: true },
-        { name: 'Duration', value: duration, inline: true },
-      )
-      .setColor(0x1DB954)
-      .setThumbnail(downloadedMusic.thumbnailUrl || null);
-
-    const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId('ctrl_rw').setEmoji('⏪').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('ctrl_ff').setEmoji('⏩').setStyle(ButtonStyle.Secondary),
-    );
-
-    await interaction.editReply({ embeds: [embed], components: [controlRow] });
-
-    videoStreamer.startMusicStream(
-      guildId,
-      voiceChannel.id,
-      mediaItem,
-      downloadedMusic.audioPath,
-      downloadedMusic.thumbnailPath,
-      downloadedMusic.artist,
-      interaction.user.id,
-      startTimeMs
-    ).catch(err => console.error('[Controller] YouTube Music stream error:', err));
-
+    await interaction.editReply('🎵 Fetching music info...');
+    await downloadAndPlayInteraction(url, startTimeMs);
   } catch (error) {
     console.error('[Controller] YouTube Music error:', error);
     await interaction.editReply(`❌ Failed to play: ${error instanceof Error ? error.message : 'Unknown error'}`);
