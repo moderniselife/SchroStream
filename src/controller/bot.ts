@@ -1706,8 +1706,11 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
     const downloadedVideo = await downloadPromise;
     
     if (!downloadedVideo) {
+      console.log('[Controller] Download returned null - error already handled');
       return; // Error already handled by onError callback
     }
+
+    console.log(`[Controller] Download resolved: ${downloadedVideo.filePath} (${downloadedVideo.title})`);
 
     const videoStreamer = getVideoStreamer();
     
@@ -1715,9 +1718,14 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
       ratingKey: `yt-${Date.now()}`,
       key: url,
       title: downloadedVideo.title,
-      type: 'movie' as const,
+      type: 'youtube' as const,
       duration: downloadedVideo.duration,
       thumb: downloadedVideo.thumbnail,
+      uploader: downloadedVideo.uploader,
+      viewCount: downloadedVideo.viewCount,
+      uploadDate: downloadedVideo.uploadDate,
+      url: url,
+      filePath: downloadedVideo.filePath,
     };
 
     const embed = new EmbedBuilder()
@@ -1743,7 +1751,14 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
       new ButtonBuilder().setCustomId('ctrl_speed_up').setLabel('🐇').setStyle(ButtonStyle.Secondary),
     );
 
-    await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
+    try {
+      await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
+    } catch (embedErr) {
+      console.error('[Controller] Failed to update interaction embed (token may have expired):', embedErr);
+      // Continue anyway - the stream should still start even if the embed fails
+    }
+
+    console.log(`[Controller] Starting stream for: ${downloadedVideo.filePath}`);
 
     // Start streaming the downloaded file
     videoStreamer.startLocalFile(
@@ -1758,7 +1773,11 @@ async function handleYouTube(interaction: ChatInputCommandInteraction): Promise<
 
   } catch (error) {
     console.error('[Controller] YouTube error:', error);
-    await interaction.editReply(`❌ Failed to play: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    try {
+      await interaction.editReply(`❌ Failed to play: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } catch {
+      // Interaction token may have expired
+    }
   }
 }
 

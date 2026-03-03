@@ -729,7 +729,15 @@ class VideoStreamer {
     // Brief delay to let Discord register the disconnect
     await new Promise(resolve => setTimeout(resolve, 300));
     
-    await this.streamer.joinVoice(guildId, channelId);
+    console.log('[VideoStreamer] Joining voice channel for stream...');
+    const joinTimeout = 15000; // 15 seconds
+    await Promise.race([
+      this.streamer.joinVoice(guildId, channelId),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`joinVoice timed out after ${joinTimeout / 1000}s`)), joinTimeout)
+      ),
+    ]);
+    console.log('[VideoStreamer] Successfully joined voice channel');
 
     const session: VideoStreamSession = {
       guildId,
@@ -773,9 +781,31 @@ class VideoStreamer {
     startTimeMs = 0,
     subtitlePath?: string
   ): Promise<void> {
+    console.log(`[VideoStreamer] startLocalFile called: guild=${guildId} channel=${channelId} file=${filePath}`);
     await this.stopStream(guildId);
 
-    const mediaUdp = await this.streamer.joinVoice(guildId, channelId);
+    // Always leave and rejoin voice to properly reset Discord Go Live stream
+    // This ensures the Go Live connection is fresh (matches startStream pattern)
+    try {
+      this.streamer.stopStream();
+      this.streamer.leaveVoice();
+    } catch {
+      // Ignore errors - may already be disconnected
+    }
+
+    // Brief delay to let Discord register the disconnect
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    console.log('[VideoStreamer] Joining voice channel for local file...');
+    // Wrap joinVoice in a timeout to prevent hanging indefinitely
+    const joinTimeout = 15000; // 15 seconds
+    const mediaUdp = await Promise.race([
+      this.streamer.joinVoice(guildId, channelId),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`joinVoice timed out after ${joinTimeout / 1000}s`)), joinTimeout)
+      ),
+    ]);
+    console.log('[VideoStreamer] Successfully joined voice channel');
 
     // Undeafen the bot to receive voice commands
     const guild = this.client.guilds.cache.get(guildId);
@@ -841,9 +871,29 @@ class VideoStreamer {
     audioUrl?: string | null,
     subtitlePath?: string
   ): Promise<void> {
+    console.log(`[VideoStreamer] startExternalStream called: guild=${guildId} channel=${channelId}`);
     await this.stopStream(guildId);
 
-    const mediaUdp = await this.streamer.joinVoice(guildId, channelId);
+    // Always leave and rejoin voice to properly reset Discord Go Live stream
+    try {
+      this.streamer.stopStream();
+      this.streamer.leaveVoice();
+    } catch {
+      // Ignore errors - may already be disconnected
+    }
+
+    // Brief delay to let Discord register the disconnect
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    console.log('[VideoStreamer] Joining voice channel for external stream...');
+    const joinTimeout = 15000; // 15 seconds
+    const mediaUdp = await Promise.race([
+      this.streamer.joinVoice(guildId, channelId),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`joinVoice timed out after ${joinTimeout / 1000}s`)), joinTimeout)
+      ),
+    ]);
+    console.log('[VideoStreamer] Successfully joined voice channel');
 
     // Undeafen the bot to receive voice commands
     // Send voice state update through Discord client
@@ -2483,9 +2533,29 @@ class VideoStreamer {
     userId?: string,
     startTimeMs = 0
   ): Promise<void> {
+    console.log(`[VideoStreamer] startMusicStream called: guild=${guildId} channel=${channelId}`);
     await this.stopStream(guildId);
 
-    const mediaUdp = await this.streamer.joinVoice(guildId, channelId);
+    // Always leave and rejoin voice to properly reset Discord Go Live stream
+    try {
+      this.streamer.stopStream();
+      this.streamer.leaveVoice();
+    } catch {
+      // Ignore errors - may already be disconnected
+    }
+
+    // Brief delay to let Discord register the disconnect
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    console.log('[VideoStreamer] Joining voice channel for music stream...');
+    const joinTimeout = 15000; // 15 seconds
+    const mediaUdp = await Promise.race([
+      this.streamer.joinVoice(guildId, channelId),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`joinVoice timed out after ${joinTimeout / 1000}s`)), joinTimeout)
+      ),
+    ]);
+    console.log('[VideoStreamer] Successfully joined voice channel');
 
     // Undeafen the bot
     const guild = this.client.guilds.cache.get(guildId);
