@@ -38,3 +38,12 @@ yarn-error.log*
 tmp/
 temp/
 /data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+selfbot/.venv/
+selfbot/venv/
+.mypy_cache/

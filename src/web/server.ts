@@ -11,6 +11,7 @@ import { spawn } from 'child_process';
 import { getYtdlpBaseArgs } from '../youtube/downloader.js';
 import { initCastReceiver } from '../cast/index.js';
 import { initPlexCastReceiver } from '../plex-cast/index.js';
+import ipcRoutes from './ipc-routes.js';
 
 const app = express();
 const PORT = process.env.WEB_PORT || 3105;
@@ -19,6 +20,9 @@ const PORT = process.env.WEB_PORT || 3105;
 app.use(cors());
 app.use(express.json());
 app.use(express.static(join(process.cwd(), 'public')));
+
+// IPC routes for the Python selfbot
+app.use('/api/ipc', ipcRoutes);
 
 // Store active stream sessions for web viewing
 const webStreamSessions = new Map<string, {

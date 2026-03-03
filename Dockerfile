@@ -47,6 +47,10 @@ COPY package.json package-lock.json* ./
 # Install dependencies with npm
 RUN npm install --production=false
 
+# Copy Python selfbot requirements and install
+COPY selfbot/requirements.txt /app/selfbot/requirements.txt
+RUN pip3 install --no-cache-dir -r /app/selfbot/requirements.txt
+
 # Copy the rest of the files
 COPY . .
 
@@ -65,5 +69,7 @@ ENV NODE_ENV=production
 # Volume for persistent data
 VOLUME ["/app/data"]
 
-# Run the app
-CMD ["npm", "start"]
+# Run both the TS backend and Python selfbot via a supervisor script
+COPY scripts/start.sh /app/scripts/start.sh
+RUN chmod +x /app/scripts/start.sh
+CMD ["/app/scripts/start.sh"]
