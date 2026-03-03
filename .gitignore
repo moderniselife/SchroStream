@@ -39,6 +39,9 @@ tmp/
 temp/
 /data/
 
+# Large binary files
+*.har
+
 # Python
 __pycache__/
 *.py[cod]
