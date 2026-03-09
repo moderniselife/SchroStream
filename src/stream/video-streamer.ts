@@ -93,7 +93,7 @@ export interface VideoStreamSession {
   sessionId?: string; // Plex transcode session ID for reuse
   messageId?: string; // Discord message ID for embed updates
   textChannelId?: string; // Discord text channel ID for embed updates
-  mediaUdp?: import('@dank074/discord-video-stream').MediaUdp;
+  mediaUdp?: Awaited<ReturnType<import('@dank074/discord-video-stream').Streamer['joinVoice']>>;
   isMusic?: boolean; // Flag for music visualizer mode
   musicAudioPath?: string; // Path to audio file for music mode
   musicThumbnailPath?: string; // Path to thumbnail image for music mode
