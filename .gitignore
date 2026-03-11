@@ -38,3 +38,9 @@ yarn-error.log*
 tmp/
 temp/
 /data/
+
+# Research / competitor code
+research-competitor/
+
+# Sensitive captures
+*.har
