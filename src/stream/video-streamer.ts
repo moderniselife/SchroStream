@@ -1083,6 +1083,7 @@ class VideoStreamer {
             ? `volume=${volumeMultiplier},atempo=${session.speed}`
             : `volume=${volumeMultiplier}`,
           '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
+          '-map_metadata', '-1', // Strip metadata to avoid NUT demuxer warnings
           '-f', 'nut',
           '-'
         );
@@ -1119,6 +1120,7 @@ class VideoStreamer {
             ? `volume=${volumeMultiplier},atempo=${session.speed}`
             : `volume=${volumeMultiplier}`,
           '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
+          '-map_metadata', '-1', // Strip metadata to avoid NUT demuxer warnings
           '-f', 'nut',
           '-'
         );
@@ -1340,6 +1342,7 @@ class VideoStreamer {
             ? `volume=${volumeMultiplier},atempo=${session.speed}`
             : `volume=${volumeMultiplier}`,
           '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
+          '-map_metadata', '-1', // Strip metadata to avoid NUT demuxer warnings
           '-f', 'nut',
           '-'
         );
@@ -1373,6 +1376,7 @@ class VideoStreamer {
             ? `volume=${volumeMultiplier},atempo=${session.speed}`
             : `volume=${volumeMultiplier}`,
           '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
+          '-map_metadata', '-1', // Strip metadata to avoid NUT demuxer warnings
           '-f', 'nut',
           '-'
         );
@@ -1636,6 +1640,7 @@ class VideoStreamer {
         '-ar', '48000',
         '-ac', '2',
         // Output format
+        '-map_metadata', '-1', // Strip metadata to avoid NUT demuxer warnings
         '-f', 'nut',
         'pipe:1'
       );
@@ -1931,6 +1936,7 @@ class VideoStreamer {
         '-b:a', '320k',
         '-ar', '48000',
         '-ac', '2',
+        '-map_metadata', '-1', // Strip metadata to avoid NUT demuxer warnings
         '-f', 'nut',
         'pipe:1'
       ];
@@ -2191,6 +2197,7 @@ class VideoStreamer {
       '-b:a', '64k',
       '-ar', '48000',
       '-ac', '2',
+      '-map_metadata', '-1', // Strip metadata to avoid NUT demuxer warnings
       '-f', 'nut',
       '-'
     );
@@ -2290,6 +2297,7 @@ class VideoStreamer {
       '-ar', '48000',
       '-ac', '2',
       '-t', '30', // Max 30 seconds - should be killed sooner by startStream
+      '-map_metadata', '-1', // Strip metadata to avoid NUT demuxer warnings
       '-f', 'nut',
       '-'
     ];
@@ -2823,6 +2831,7 @@ class VideoStreamer {
         '-ar', '48000',
         '-ac', '2',
         '-shortest',            // Stop when audio ends
+        '-map_metadata', '-1', // Strip metadata to avoid NUT demuxer warnings
         '-f', 'nut',
         '-'
       );
