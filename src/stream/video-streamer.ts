@@ -726,8 +726,8 @@ class VideoStreamer {
       // Ignore errors - may already be disconnected
     }
     
-    // Brief delay to let Discord register the disconnect
-    await new Promise(resolve => setTimeout(resolve, 300));
+    // Delay to let Discord register the disconnect before rejoining
+    await new Promise(resolve => setTimeout(resolve, 1000));
     
     console.log('[VideoStreamer] Joining voice channel for stream...');
     const joinTimeout = 15000; // 15 seconds
@@ -737,6 +737,12 @@ class VideoStreamer {
         setTimeout(() => reject(new Error(`joinVoice timed out after ${joinTimeout / 1000}s`)), joinTimeout)
       ),
     ]);
+
+    // Wait for voice connection to be fully ready and verify it
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (!this.streamer.voiceConnection) {
+      throw new Error('Voice connection is not established after joinVoice');
+    }
     console.log('[VideoStreamer] Successfully joined voice channel');
 
     const session: VideoStreamSession = {
@@ -793,8 +799,8 @@ class VideoStreamer {
       // Ignore errors - may already be disconnected
     }
 
-    // Brief delay to let Discord register the disconnect
-    await new Promise(resolve => setTimeout(resolve, 300));
+    // Delay to let Discord register the disconnect before rejoining
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     console.log('[VideoStreamer] Joining voice channel for local file...');
     // Wrap joinVoice in a timeout to prevent hanging indefinitely
@@ -805,6 +811,12 @@ class VideoStreamer {
         setTimeout(() => reject(new Error(`joinVoice timed out after ${joinTimeout / 1000}s`)), joinTimeout)
       ),
     ]);
+
+    // Wait for voice connection to be fully ready and verify it
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (!this.streamer.voiceConnection) {
+      throw new Error('Voice connection is not established after joinVoice');
+    }
     console.log('[VideoStreamer] Successfully joined voice channel');
 
     // Undeafen the bot to receive voice commands
@@ -882,8 +894,8 @@ class VideoStreamer {
       // Ignore errors - may already be disconnected
     }
 
-    // Brief delay to let Discord register the disconnect
-    await new Promise(resolve => setTimeout(resolve, 300));
+    // Delay to let Discord register the disconnect before rejoining
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     console.log('[VideoStreamer] Joining voice channel for external stream...');
     const joinTimeout = 15000; // 15 seconds
@@ -893,6 +905,12 @@ class VideoStreamer {
         setTimeout(() => reject(new Error(`joinVoice timed out after ${joinTimeout / 1000}s`)), joinTimeout)
       ),
     ]);
+
+    // Wait for voice connection to be fully ready and verify it
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (!this.streamer.voiceConnection) {
+      throw new Error('Voice connection is not established after joinVoice');
+    }
     console.log('[VideoStreamer] Successfully joined voice channel');
 
     // Undeafen the bot to receive voice commands
@@ -1181,6 +1199,7 @@ class VideoStreamer {
 
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
+        format: 'matroska',
       });
 
       // Only handle completion if not intentionally stopping (seek/pause/stop)
@@ -1435,6 +1454,7 @@ class VideoStreamer {
 
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
+        format: 'matroska',
       });
 
       // Clean up streamlink process if it exists
@@ -1655,6 +1675,7 @@ class VideoStreamer {
       // Pass the FFmpeg stdout stream to playStream
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
+        format: 'matroska',
       });
 
       console.log('[VideoStreamer] Playback finished');
@@ -1938,6 +1959,7 @@ class VideoStreamer {
       // Start streaming
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
+        format: 'matroska',
       });
       
       return true;
@@ -2192,6 +2214,7 @@ class VideoStreamer {
     try {
       await playStream(pauseFFmpeg.stdout, this.streamer, {
         type: 'go-live',
+        format: 'matroska',
       });
     } catch (error) {
       // Expected when we kill it on resume
@@ -2279,6 +2302,7 @@ class VideoStreamer {
     // Stream the loading screen to Discord (non-blocking - will be killed by startStream)
     playStream(loadingFFmpeg.stdout, this.streamer, {
       type: 'go-live',
+      format: 'matroska',
     }).catch(() => {
       // Expected when killed by startStream
     });
@@ -2544,8 +2568,8 @@ class VideoStreamer {
       // Ignore errors - may already be disconnected
     }
 
-    // Brief delay to let Discord register the disconnect
-    await new Promise(resolve => setTimeout(resolve, 300));
+    // Delay to let Discord register the disconnect before rejoining
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     console.log('[VideoStreamer] Joining voice channel for music stream...');
     const joinTimeout = 15000; // 15 seconds
@@ -2555,6 +2579,12 @@ class VideoStreamer {
         setTimeout(() => reject(new Error(`joinVoice timed out after ${joinTimeout / 1000}s`)), joinTimeout)
       ),
     ]);
+
+    // Wait for voice connection to be fully ready and verify it
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (!this.streamer.voiceConnection) {
+      throw new Error('Voice connection is not established after joinVoice');
+    }
     console.log('[VideoStreamer] Successfully joined voice channel');
 
     // Undeafen the bot
@@ -2837,6 +2867,7 @@ class VideoStreamer {
 
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
+        format: 'matroska',
       });
 
       if (!session.isStopping) {
