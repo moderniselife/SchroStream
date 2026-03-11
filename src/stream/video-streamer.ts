@@ -1064,6 +1064,7 @@ class VideoStreamer {
           '-level', '4.2', // Level 4.2 for better compatibility
           '-tune', 'll', // Low latency for streaming
           '-rc', 'cbr', // Constant bitrate for stable streaming
+          '-bf', '0', // No B-frames - required for RTP/Discord streaming
           '-pix_fmt', 'yuv420p',
           '-r', String(config.stream.frameRate),
           '-g', String(gopSize),
@@ -1082,7 +1083,7 @@ class VideoStreamer {
             ? `volume=${volumeMultiplier},atempo=${session.speed}`
             : `volume=${volumeMultiplier}`,
           '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
-          '-f', 'matroska',
+          '-f', 'nut',
           '-'
         );
       } else {
@@ -1099,6 +1100,7 @@ class VideoStreamer {
           '-profile:v', 'high',
           '-level', '4.2',
           '-tune', 'zerolatency',
+          '-bf', '0', // No B-frames - required for RTP/Discord streaming
           '-pix_fmt', 'yuv420p',
           '-r', String(config.stream.frameRate),
           '-g', String(gopSize),
@@ -1117,7 +1119,7 @@ class VideoStreamer {
             ? `volume=${volumeMultiplier},atempo=${session.speed}`
             : `volume=${volumeMultiplier}`,
           '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
-          '-f', 'matroska',
+          '-f', 'nut',
           '-'
         );
       }
@@ -1199,7 +1201,7 @@ class VideoStreamer {
 
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
-        format: 'matroska',
+        format: 'nut',
       });
 
       // Only handle completion if not intentionally stopping (seek/pause/stop)
@@ -1319,6 +1321,7 @@ class VideoStreamer {
           '-level', '4.2',
           '-tune', 'll', // Low latency
           '-rc', 'cbr',
+          '-bf', '0', // No B-frames - required for RTP/Discord streaming
           '-pix_fmt', 'yuv420p',
           '-r', String(config.stream.frameRate),
           '-g', String(gopSize),
@@ -1337,7 +1340,7 @@ class VideoStreamer {
             ? `volume=${volumeMultiplier},atempo=${session.speed}`
             : `volume=${volumeMultiplier}`,
           '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
-          '-f', 'matroska',
+          '-f', 'nut',
           '-'
         );
       } else {
@@ -1351,6 +1354,7 @@ class VideoStreamer {
           '-profile:v', 'high',
           '-level', '4.2',
           '-tune', 'zerolatency',
+          '-bf', '0', // No B-frames - required for RTP/Discord streaming
           '-pix_fmt', 'yuv420p',
           '-r', String(config.stream.frameRate),
           '-g', String(gopSize),
@@ -1369,7 +1373,7 @@ class VideoStreamer {
             ? `volume=${volumeMultiplier},atempo=${session.speed}`
             : `volume=${volumeMultiplier}`,
           '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
-          '-f', 'matroska',
+          '-f', 'nut',
           '-'
         );
       }
@@ -1454,7 +1458,7 @@ class VideoStreamer {
 
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
-        format: 'matroska',
+        format: 'nut',
       });
 
       // Clean up streamlink process if it exists
@@ -1615,6 +1619,7 @@ class VideoStreamer {
         '-tune', 'zerolatency', // Low latency for streaming
         '-profile:v', 'baseline', // Most compatible profile
         '-level', '4.0',
+        '-bf', '0', // No B-frames - required for RTP/Discord streaming
         '-b:v', `${config.stream.maxBitrate}k`,
         '-maxrate', `${config.stream.maxBitrate}k`,
         '-bufsize', `${config.stream.maxBitrate * 2}k`,
@@ -1631,7 +1636,7 @@ class VideoStreamer {
         '-ar', '48000',
         '-ac', '2',
         // Output format
-        '-f', 'matroska',
+        '-f', 'nut',
         'pipe:1'
       );
 
@@ -1675,7 +1680,7 @@ class VideoStreamer {
       // Pass the FFmpeg stdout stream to playStream
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
-        format: 'matroska',
+        format: 'nut',
       });
 
       console.log('[VideoStreamer] Playback finished');
@@ -1913,6 +1918,7 @@ class VideoStreamer {
         '-c:v', 'libx264',
         '-preset', 'veryfast',
         '-tune', 'zerolatency',
+        '-bf', '0', // No B-frames - required for RTP/Discord streaming
         '-b:v', `${config.stream.maxBitrate}k`,
         '-maxrate', `${Math.round(config.stream.maxBitrate * 1.5)}k`,
         '-bufsize', `${config.stream.maxBitrate * 2}k`,
@@ -1925,7 +1931,7 @@ class VideoStreamer {
         '-b:a', '320k',
         '-ar', '48000',
         '-ac', '2',
-        '-f', 'matroska',
+        '-f', 'nut',
         'pipe:1'
       ];
       
@@ -1959,7 +1965,7 @@ class VideoStreamer {
       // Start streaming
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
-        format: 'matroska',
+        format: 'nut',
       });
       
       return true;
@@ -2176,6 +2182,7 @@ class VideoStreamer {
       '-c:v', 'libx264',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
+      '-bf', '0', // No B-frames - required for RTP/Discord streaming
       '-pix_fmt', 'yuv420p',
       '-r', String(config.stream.frameRate),
       '-g', '50',
@@ -2184,7 +2191,7 @@ class VideoStreamer {
       '-b:a', '64k',
       '-ar', '48000',
       '-ac', '2',
-      '-f', 'matroska',
+      '-f', 'nut',
       '-'
     );
 
@@ -2214,7 +2221,7 @@ class VideoStreamer {
     try {
       await playStream(pauseFFmpeg.stdout, this.streamer, {
         type: 'go-live',
-        format: 'matroska',
+        format: 'nut',
       });
     } catch (error) {
       // Expected when we kill it on resume
@@ -2273,6 +2280,7 @@ class VideoStreamer {
       '-c:v', 'libx264',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
+      '-bf', '0', // No B-frames - required for RTP/Discord streaming
       '-pix_fmt', 'yuv420p',
       '-r', String(config.stream.frameRate),
       '-g', '50',
@@ -2282,7 +2290,7 @@ class VideoStreamer {
       '-ar', '48000',
       '-ac', '2',
       '-t', '30', // Max 30 seconds - should be killed sooner by startStream
-      '-f', 'matroska',
+      '-f', 'nut',
       '-'
     ];
 
@@ -2302,7 +2310,7 @@ class VideoStreamer {
     // Stream the loading screen to Discord (non-blocking - will be killed by startStream)
     playStream(loadingFFmpeg.stdout, this.streamer, {
       type: 'go-live',
-      format: 'matroska',
+      format: 'nut',
     }).catch(() => {
       // Expected when killed by startStream
     });
@@ -2803,6 +2811,7 @@ class VideoStreamer {
         '-tune', 'animation',   // Optimize for animated content (rainbow orb)
         '-profile:v', 'high',
         '-level', '4.2',
+        '-bf', '0', // No B-frames - required for RTP/Discord streaming
         '-pix_fmt', 'yuv420p',
         '-r', String(config.stream.frameRate),
         '-g', String(config.stream.frameRate * 2),
@@ -2814,7 +2823,7 @@ class VideoStreamer {
         '-ar', '48000',
         '-ac', '2',
         '-shortest',            // Stop when audio ends
-        '-f', 'matroska',
+        '-f', 'nut',
         '-'
       );
 
@@ -2867,7 +2876,7 @@ class VideoStreamer {
 
       await playStream(ffmpeg.stdout, this.streamer, {
         type: 'go-live',
-        format: 'matroska',
+        format: 'nut',
       });
 
       if (!session.isStopping) {
