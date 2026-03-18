@@ -108,6 +108,32 @@ interface PlaybackHistoryEntry {
   title?: string;
 }
 
+// Shared helper functions
+function formatTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+function createProgressBarFilter(width: number, height: number, duration: number): string {
+  const barHeight = 6; // Thin bar like YouTube
+  const barColor = 'red@0.85'; // Red progress with transparency
+  const bgColor = 'gray@0.3'; // Dark gray background
+  const textColor = 'white'; // White text
+  const fontSize = 14;
+  
+  // Progress bar at bottom with 20px margin from edges
+  const barY = height - barHeight - 10;
+  const barX = 20;
+  const barWidth = width - 40;
+  
+  // Time display position (below the bar)
+  const timeY = barY - fontSize - 5;
+  
+  return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=${bgColor}:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=${barColor}:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=${textColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
+}
+
 let playbackHistory: Map<string, PlaybackHistoryEntry> = new Map();
 
 // Status update timer
@@ -1051,34 +1077,9 @@ class VideoStreamer {
       })();
 
       // Build progress bar overlay filter (YouTube-style)
-      const progressBarFilter = (() => {
-        if (!session.mediaItem.duration) return '';
-        
-        const duration = session.mediaItem.duration; // in seconds
-        const barHeight = 6; // Thin bar like YouTube
-        const barColor = 'red@0.85'; // Red progress with transparency
-        const bgColor = 'gray@0.3'; // Dark gray background
-        const textColor = 'white'; // White text
-        const fontSize = 14;
-        
-        // Progress bar at bottom with 20px margin from edges
-        const barY = height - barHeight - 10;
-        const barX = 20;
-        const barWidth = width - 40;
-        
-        // Time display position (below the bar)
-        const timeY = barY - fontSize - 5;
-        
-        return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=gray@0.3:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=red@0.85:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=white:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
-      })();
-      
-      // Helper to format time in HH:MM:SS
-      function formatTime(seconds: number): string {
-        const h = Math.floor(seconds / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        const s = Math.floor(seconds % 60);
-        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-      }
+      const progressBarFilter = session.mediaItem.duration 
+        ? createProgressBarFilter(width, height, session.mediaItem.duration)
+        : '';
       
       if (useGPU) {
         // NVIDIA NVENC GPU encoding - offloads encoding to GPU, much lower CPU usage
@@ -1342,34 +1343,9 @@ class VideoStreamer {
       })();
 
       // Build progress bar overlay filter (YouTube-style)
-      const progressBarFilter = (() => {
-        if (!session.mediaItem.duration) return '';
-        
-        const duration = session.mediaItem.duration; // in seconds
-        const barHeight = 6; // Thin bar like YouTube
-        const barColor = 'red@0.85'; // Red progress with transparency
-        const bgColor = 'gray@0.3'; // Dark gray background
-        const textColor = 'white'; // White text
-        const fontSize = 14;
-        
-        // Progress bar at bottom with 20px margin from edges
-        const barY = height - barHeight - 10;
-        const barX = 20;
-        const barWidth = width - 40;
-        
-        // Time display position (below the bar)
-        const timeY = barY - fontSize - 5;
-        
-        return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=gray@0.3:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=red@0.85:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=white:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
-      })();
-      
-      // Helper to format time in HH:MM:SS
-      function formatTime(seconds: number): string {
-        const h = Math.floor(seconds / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        const s = Math.floor(seconds % 60);
-        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-      }
+      const progressBarFilter = session.mediaItem.duration 
+        ? createProgressBarFilter(width, height, session.mediaItem.duration)
+        : '';
       
       if (useGPU) {
         // NVIDIA NVENC GPU encoding for external streams
@@ -1675,34 +1651,9 @@ class VideoStreamer {
       const gopSize = frameRate * 2; // 2 seconds of keyframes
       
       // Build progress bar overlay filter (YouTube-style)
-      const progressBarFilter = (() => {
-        if (!session.mediaItem.duration) return '';
-        
-        const duration = session.mediaItem.duration; // in seconds
-        const barHeight = 6; // Thin bar like YouTube
-        const barColor = 'red@0.85'; // Red progress with transparency
-        const bgColor = 'gray@0.3'; // Dark gray background
-        const textColor = 'white'; // White text
-        const fontSize = 14;
-        
-        // Progress bar at bottom with 20px margin from edges
-        const barY = height - barHeight - 10;
-        const barX = 20;
-        const barWidth = width - 40;
-        
-        // Time display position (below the bar)
-        const timeY = barY - fontSize - 5;
-        
-        return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=gray@0.3:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=red@0.85:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=white:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
-      })();
-      
-      // Helper to format time in HH:MM:SS
-      function formatTime(seconds: number): string {
-        const h = Math.floor(seconds / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        const s = Math.floor(seconds % 60);
-        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-      }
+      const progressBarFilter = session.mediaItem.duration 
+        ? createProgressBarFilter(width, height, session.mediaItem.duration)
+        : '';
       
       ffmpegArgs.push(
         '-i', actualStreamUrl,
@@ -1992,34 +1943,9 @@ class VideoStreamer {
       const gopSize = frameRate * 2;
       
       // Build progress bar overlay filter (YouTube-style)
-      const progressBarFilter = (() => {
-        if (!session.mediaItem.duration) return '';
-        
-        const duration = session.mediaItem.duration; // in seconds
-        const barHeight = 6; // Thin bar like YouTube
-        const barColor = 'red@0.85'; // Red progress with transparency
-        const bgColor = 'gray@0.3'; // Dark gray background
-        const textColor = 'white'; // White text
-        const fontSize = 14;
-        
-        // Progress bar at bottom with 20px margin from edges
-        const barY = height - barHeight - 10;
-        const barX = 20;
-        const barWidth = width - 40;
-        
-        // Time display position (below the bar)
-        const timeY = barY - fontSize - 5;
-        
-        return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=gray@0.3:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=red@0.85:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=white:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
-      })();
-      
-      // Helper to format time in HH:MM:SS
-      function formatTime(seconds: number): string {
-        const h = Math.floor(seconds / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        const s = Math.floor(seconds % 60);
-        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-      }
+      const progressBarFilter = session.mediaItem.duration 
+        ? createProgressBarFilter(width, height, session.mediaItem.duration)
+        : '';
       
       const headers = [
         'Accept: */*',
