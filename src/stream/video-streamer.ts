@@ -132,7 +132,7 @@ function createProgressBarFilter(width: number, height: number, duration: number
   const timeY = barY - fontSize - 5;
   
   const formattedDuration = formatTime(duration).replace(/:/g, '\\:');
-  return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=${bgColor}:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=${barColor}:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\\\\\:hms} / ${formattedDuration}':fontcolor=${textColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
+  return `,drawbox=x=${barX}:y=${barY}:w=${barWidth}:h=${barHeight}:color=${bgColor}:thickness=fill,drawbox=x=${barX}:y=${barY}:w=min(${barWidth}\\,floor(iw*(${barWidth}/${duration})/t)):h=${barHeight}:color=${barColor}:thickness=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\\\\\:hms} / ${formattedDuration}':fontcolor=${textColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
 }
 
 let playbackHistory: Map<string, PlaybackHistoryEntry> = new Map();
