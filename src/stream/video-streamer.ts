@@ -118,8 +118,8 @@ function formatTime(seconds: number): string {
 
 function createProgressBarFilter(width: number, height: number, duration: number): string {
   const barHeight = 6; // Thin bar like YouTube
-  const barColor = 'red@0.85'; // Red progress with transparency
-  const bgColor = 'gray@0.3'; // Dark gray background
+  const barColor = 'red'; // Red progress
+  const bgColor = 'gray'; // Dark gray background
   const textColor = 'white'; // White text
   const fontSize = 14;
   
