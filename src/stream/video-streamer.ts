@@ -1056,9 +1056,9 @@ class VideoStreamer {
         
         const duration = session.mediaItem.duration; // in seconds
         const barHeight = 6; // Thin bar like YouTube
-        const barColor = '&H00ff0000'; // Red progress
-        const bgColor = '&H00404040'; // Dark gray background
-        const textColor = '&H00ffffff'; // White text
+        const barColor = 'red@0.85'; // Red progress with transparency
+        const bgColor = 'gray@0.3'; // Dark gray background
+        const textColor = 'white'; // White text
         const fontSize = 14;
         
         // Progress bar at bottom with 20px margin from edges
@@ -1069,7 +1069,7 @@ class VideoStreamer {
         // Time display position (below the bar)
         const timeY = barY - fontSize - 5;
         
-        return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=${bgColor}:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=${barColor}:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=${textColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
+        return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=gray@0.3:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=red@0.85:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=white:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
       })();
       
       // Helper to format time in HH:MM:SS
@@ -1347,9 +1347,9 @@ class VideoStreamer {
         
         const duration = session.mediaItem.duration; // in seconds
         const barHeight = 6; // Thin bar like YouTube
-        const barColor = '&H00ff0000'; // Red progress
-        const bgColor = '&H00404040'; // Dark gray background
-        const textColor = '&H00ffffff'; // White text
+        const barColor = 'red@0.85'; // Red progress with transparency
+        const bgColor = 'gray@0.3'; // Dark gray background
+        const textColor = 'white'; // White text
         const fontSize = 14;
         
         // Progress bar at bottom with 20px margin from edges
@@ -1360,7 +1360,7 @@ class VideoStreamer {
         // Time display position (below the bar)
         const timeY = barY - fontSize - 5;
         
-        return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=${bgColor}:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=${barColor}:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=${textColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
+        return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=gray@0.3:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=red@0.85:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=white:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
       })();
       
       // Helper to format time in HH:MM:SS
@@ -1680,9 +1680,9 @@ class VideoStreamer {
         
         const duration = session.mediaItem.duration; // in seconds
         const barHeight = 6; // Thin bar like YouTube
-        const barColor = '&H00ff0000'; // Red progress
-        const bgColor = '&H00404040'; // Dark gray background
-        const textColor = '&H00ffffff'; // White text
+        const barColor = 'red@0.85'; // Red progress with transparency
+        const bgColor = 'gray@0.3'; // Dark gray background
+        const textColor = 'white'; // White text
         const fontSize = 14;
         
         // Progress bar at bottom with 20px margin from edges
@@ -1693,7 +1693,7 @@ class VideoStreamer {
         // Time display position (below the bar)
         const timeY = barY - fontSize - 5;
         
-        return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=${bgColor}:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=${barColor}:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=${textColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
+        return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=gray@0.3:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=red@0.85:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=white:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
       })();
       
       // Helper to format time in HH:MM:SS
@@ -1997,9 +1997,9 @@ class VideoStreamer {
         
         const duration = session.mediaItem.duration; // in seconds
         const barHeight = 6; // Thin bar like YouTube
-        const barColor = '&H00ff0000'; // Red progress
-        const bgColor = '&H00404040'; // Dark gray background
-        const textColor = '&H00ffffff'; // White text
+        const barColor = 'red@0.85'; // Red progress with transparency
+        const bgColor = 'gray@0.3'; // Dark gray background
+        const textColor = 'white'; // White text
         const fontSize = 14;
         
         // Progress bar at bottom with 20px margin from edges
@@ -2010,7 +2010,7 @@ class VideoStreamer {
         // Time display position (below the bar)
         const timeY = barY - fontSize - 5;
         
-        return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=${bgColor}:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=${barColor}:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=${textColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
+        return `,drawbox=${barX}:${barY}:${barWidth}:${barHeight}:color=gray@0.3:t=fill,drawbox=${barX}:${barY}:min(${barWidth},floor(iw*(${barWidth}/${duration})/t)):${barHeight}:color=red@0.85:t=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\:hms} / ${formatTime(duration)}':fontcolor=white:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
       })();
       
       // Helper to format time in HH:MM:SS
