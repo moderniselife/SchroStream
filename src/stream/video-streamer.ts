@@ -108,33 +108,6 @@ interface PlaybackHistoryEntry {
   title?: string;
 }
 
-// Shared helper functions
-function formatTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-}
-
-function createProgressBarFilter(width: number, height: number, duration: number): string {
-  const barHeight = 6; // Thin bar like YouTube
-  const barColor = 'red'; // Red progress
-  const bgColor = 'gray'; // Dark gray background
-  const textColor = 'white'; // White text
-  const fontSize = 14;
-  
-  // Progress bar at bottom with 20px margin from edges
-  const barY = height - barHeight - 10;
-  const barX = 20;
-  const barWidth = width - 40;
-  
-  // Time display position (below the bar)
-  const timeY = barY - fontSize - 5;
-  
-  const formattedDuration = formatTime(duration).replace(/:/g, '\\:');
-  return `,drawbox=x=${barX}:y=${barY}:w=${barWidth}:h=${barHeight}:color=${bgColor}:thickness=fill,drawbox=x=${barX}:y=${barY}:w=min(${barWidth}\\,floor(iw*(${barWidth}/${duration})/t)):h=${barHeight}:color=${barColor}:thickness=fill,drawtext=fontfile=/System/Library/Fonts/Arial.ttf:text='%{pts\\\\\\:hms} / ${formattedDuration}':fontcolor=${textColor}:fontsize=${fontSize}:x=(w-text_w)/2:y=${timeY}:boxcolor=black@0.5:box=1`;
-}
-
 let playbackHistory: Map<string, PlaybackHistoryEntry> = new Map();
 
 // Status update timer
@@ -1076,11 +1049,6 @@ class VideoStreamer {
         console.log(`[VideoStreamer] Burning subtitles from: ${session.subtitlePath}`);
         return `,subtitles='${escapedPath}':force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,Bold=1,Outline=2,Shadow=1,MarginV=20'`;
       })();
-
-      // Build progress bar overlay filter (YouTube-style)
-      const progressBarFilter = session.mediaItem.duration 
-        ? createProgressBarFilter(width, height, session.mediaItem.duration)
-        : '';
       
       if (useGPU) {
         // NVIDIA NVENC GPU encoding - offloads encoding to GPU, much lower CPU usage
@@ -1105,8 +1073,8 @@ class VideoStreamer {
           '-maxrate', `${qualityBitrate}k`,
           '-bufsize', `${qualityBitrate * 2}k`,
           '-vf', session.speed !== 1
-            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}${progressBarFilter}`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}${progressBarFilter}`,
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
@@ -1142,8 +1110,8 @@ class VideoStreamer {
           '-maxrate', `${qualityBitrate}k`,
           '-bufsize', `${qualityBitrate * 2}k`,
           '-vf', session.speed !== 1
-            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}${progressBarFilter}`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}${progressBarFilter}`,
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
@@ -1342,11 +1310,6 @@ class VideoStreamer {
         console.log(`[VideoStreamer] Burning subtitles from: ${session.subtitlePath}`);
         return `,subtitles='${escapedPath}':force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,Bold=1,Outline=2,Shadow=1,MarginV=20'`;
       })();
-
-      // Build progress bar overlay filter (YouTube-style)
-      const progressBarFilter = session.mediaItem.duration 
-        ? createProgressBarFilter(width, height, session.mediaItem.duration)
-        : '';
       
       if (useGPU) {
         // NVIDIA NVENC GPU encoding for external streams
@@ -1369,8 +1332,8 @@ class VideoStreamer {
           '-maxrate', `${config.stream.maxBitrate}k`,
           '-bufsize', `${config.stream.maxBitrate * 2}k`,
           '-vf', session.speed !== 1
-            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}${progressBarFilter}`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}${progressBarFilter}`,
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
@@ -1403,8 +1366,8 @@ class VideoStreamer {
           '-maxrate', `${config.stream.maxBitrate}k`,
           '-bufsize', `${config.stream.maxBitrate * 2}k`,
           '-vf', session.speed !== 1
-            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}${progressBarFilter}`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}${progressBarFilter}`,
+            ? `setpts=PTS/${session.speed},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`
+            : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${subtitleFilter}`,
           '-c:a', 'libopus',
           '-b:a', '128k',
           '-ar', '48000',
@@ -1651,11 +1614,6 @@ class VideoStreamer {
       const frameRate = config.stream.frameRate;
       const gopSize = frameRate * 2; // 2 seconds of keyframes
       
-      // Build progress bar overlay filter (YouTube-style)
-      const progressBarFilter = session.mediaItem.duration 
-        ? createProgressBarFilter(width, height, session.mediaItem.duration)
-        : '';
-      
       ffmpegArgs.push(
         '-i', actualStreamUrl,
         // Video output - optimized for Discord streaming
@@ -1669,7 +1627,7 @@ class VideoStreamer {
         '-b:v', `${config.stream.maxBitrate}k`,
         '-maxrate', `${config.stream.maxBitrate}k`,
         '-bufsize', `${config.stream.maxBitrate * 2}k`,
-        '-vf', `scale=${width}:${height}${progressBarFilter}`,
+        '-vf', `scale=${width}:${height}`,
         '-r', frameRate.toString(),
         '-g', '50', // GOP size
         '-keyint_min', '25',
@@ -1943,11 +1901,6 @@ class VideoStreamer {
       const frameRate = config.stream.frameRate;
       const gopSize = frameRate * 2;
       
-      // Build progress bar overlay filter (YouTube-style)
-      const progressBarFilter = session.mediaItem.duration 
-        ? createProgressBarFilter(width, height, session.mediaItem.duration)
-        : '';
-      
       const headers = [
         'Accept: */*',
         'X-Plex-Client-Identifier: ' + config.plex.clientIdentifier,
@@ -1974,7 +1927,7 @@ class VideoStreamer {
         '-b:v', `${config.stream.maxBitrate}k`,
         '-maxrate', `${Math.round(config.stream.maxBitrate * 1.5)}k`,
         '-bufsize', `${config.stream.maxBitrate * 2}k`,
-        '-vf', `scale=${width}:${height}${progressBarFilter}`,
+        '-vf', `scale=${width}:${height}`,
         '-r', frameRate.toString(),
         '-g', gopSize.toString(),
         '-pix_fmt', 'yuv420p',
