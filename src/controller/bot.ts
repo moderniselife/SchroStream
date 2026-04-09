@@ -1107,9 +1107,9 @@ async function startPlayback(
   );
 
   const embed = new EmbedBuilder()
-    .setTitle('📺 Now Playing')
-    .setDescription(`**${title}**`)
-    .setColor(0x00ff00);
+    .setTitle('⏳ Loading...')
+    .setDescription(`**${title}**\n\n*Connecting to voice channel...*`)
+    .setColor(0xffaa00);
 
   if (itemToPlay.type === 'movie' || itemToPlay.type === 'show' || itemToPlay.type === 'episode' || itemToPlay.type === 'channel') {
     // Plex media item
@@ -1173,6 +1173,12 @@ async function startPlayback(
         interaction.user.id
       );
     }
+    
+    // Stream started successfully - update embed to "Now Playing"
+    embed.setTitle('📺 Now Playing');
+    embed.setDescription(`**${title}**`);
+    embed.setColor(0x00ff00);
+    await interaction.editReply({ embeds: [embed], components: [controlRow, speedRow] });
   } catch (err: any) {
     console.error('[Controller] Stream error:', err);
     

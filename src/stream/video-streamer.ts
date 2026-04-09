@@ -1723,9 +1723,14 @@ class VideoStreamer {
       // This eliminates the CPU-intensive double-encode that causes frame drops.
       const volumeMultiplier = (session.volume / 100).toFixed(2);
 
+      const frameRate = config.stream.frameRate;
+      const gopSize = frameRate * 2;
+
       const ffmpegArgs = [
         '-hide_banner',
         '-loglevel', 'error',
+        // Regenerate timestamps to avoid duplicates at HLS segment boundaries
+        '-fflags', '+genpts+discardcorrupt',
         // HTTP headers for Plex
         '-headers', headers,
         // HLS input options
@@ -1746,6 +1751,8 @@ class VideoStreamer {
         '-map', '0:a:0',
         // Video: copy directly from Plex (already H264 at target resolution)
         '-c:v', 'copy',
+        // Strip duplicate NAL units from HLS segment joins
+        '-bsf:v', 'dump_extra',
         // Audio: re-encode to Opus for Discord
         '-af', `volume=${volumeMultiplier}`,
         '-c:a', 'libopus',

@@ -203,9 +203,28 @@ async function startVideoStream(
     console.error('[Play] Stream error:', err);
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 2000));
+  // Wait for the stream to actually start playing (poll session.isPlaying)
+  const maxWaitMs = 30000; // 30 second timeout
+  const pollIntervalMs = 500;
+  const startWait = Date.now();
+  let started = false;
   
-  await statusMsg.edit(`📺 **Now Streaming (Go Live):** ${title}\n⏱️ Duration: ${duration}`);
+  while (Date.now() - startWait < maxWaitMs) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    const session = videoStreamer.getSession(guildId);
+    if (session?.isPlaying) {
+      started = true;
+      break;
+    }
+    // If session disappeared, the stream failed
+    if (!session) break;
+  }
+  
+  if (started) {
+    await statusMsg.edit(`📺 **Now Streaming (Go Live):** ${title}\n⏱️ Duration: ${duration}`);
+  } else {
+    await statusMsg.edit(`⚠️ **Stream may have failed to start:** ${title}\n*Check logs for details*`);
+  }
 }
 
 export { startVideoStream };
