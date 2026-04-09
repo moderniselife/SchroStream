@@ -14,6 +14,64 @@ import { startVoiceListener, stopVoiceListener } from '../voice/python-listener.
 import { startVoiceReceiver, stopVoiceReceiver } from '../voice/receiver.js';
 import { getNextEpisode } from '../plex/library.js';
 
+/**
+ * Workaround for @snazzah/davey panic at encryptor.rs:193:
+ * The Rust encryptor crashes on certain frame sizes/alignments.
+ *
+ * Fix: override `daveReady` to always return false on both connections.
+ * WebRtcWrapper checks `daveReady` before calling encryptOpus/encrypt,
+ * so returning false prevents any frames from reaching the Rust code.
+ *
+ * We deliberately leave the DAVE session and initDave intact so the
+ * protocol handshake (processProposals, processCommit, etc.) still works —
+ * Discord expects these responses even when we're not actually encrypting.
+ *
+ * There are TWO BaseMediaConnection instances:
+ *   - voiceConnection (voice channel)
+ *   - voiceConnection.streamConnection (Go Live — this is the one that crashes)
+ */
+function disableDaveOnConnection(conn: any, label: string): void {
+  if (!conn) return;
+
+  // Override daveReady to ALWAYS return false — this is the only gate
+  // that WebRtcWrapper checks before calling into the Rust encryptor
+  Object.defineProperty(conn, 'daveReady', {
+    get: () => false,
+    configurable: true,
+  });
+
+  console.log(`[VideoStreamer] DAVE encryption disabled on ${label}`);
+}
+
+function forceDavePassthrough(streamer: Streamer): void {
+  const voiceConn = (streamer as any).voiceConnection;
+  if (!voiceConn) return;
+
+  // Disable on the voice connection
+  disableDaveOnConnection(voiceConn, 'VoiceConnection');
+
+  // Disable on the stream connection (Go Live) if it exists already
+  if (voiceConn.streamConnection) {
+    disableDaveOnConnection(voiceConn.streamConnection, 'StreamConnection');
+  }
+
+  // The streamConnection is created asynchronously (after Go Live negotiation).
+  // Intercept the setter so we catch it the moment it's assigned.
+  let _streamConn = voiceConn.streamConnection || null;
+
+  Object.defineProperty(voiceConn, 'streamConnection', {
+    get: () => _streamConn,
+    set: (newConn: any) => {
+      _streamConn = newConn;
+      if (newConn) {
+        disableDaveOnConnection(newConn, 'StreamConnection (late)');
+      }
+    },
+    configurable: true,
+    enumerable: true,
+  });
+}
+
 // NVENC GPU transcoding support - cached at startup
 let nvencSupported: boolean | null = null;
 
@@ -745,6 +803,9 @@ class VideoStreamer {
     }
     console.log('[VideoStreamer] Successfully joined voice channel');
 
+    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
+    forceDavePassthrough(this.streamer);
+
     const session: VideoStreamSession = {
       guildId,
       channelId,
@@ -818,6 +879,9 @@ class VideoStreamer {
       throw new Error('Voice connection is not established after joinVoice');
     }
     console.log('[VideoStreamer] Successfully joined voice channel');
+
+    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
+    forceDavePassthrough(this.streamer);
 
     // Undeafen the bot to receive voice commands
     const guild = this.client.guilds.cache.get(guildId);
@@ -912,6 +976,9 @@ class VideoStreamer {
       throw new Error('Voice connection is not established after joinVoice');
     }
     console.log('[VideoStreamer] Successfully joined voice channel');
+
+    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
+    forceDavePassthrough(this.streamer);
 
     // Undeafen the bot to receive voice commands
     // Send voice state update through Discord client
@@ -2155,6 +2222,9 @@ class VideoStreamer {
     
     await this.streamer.joinVoice(session.guildId, session.channelId);
 
+    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
+    forceDavePassthrough(this.streamer);
+
     // Build FFmpeg args - use captured frame if available, otherwise solid color
     let ffmpegArgs: string[];
     if (hasFrame) {
@@ -2269,6 +2339,9 @@ class VideoStreamer {
     // Rejoin voice channel with fresh connection
     await this.streamer.joinVoice(guildId, channelId);
 
+    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
+    forceDavePassthrough(this.streamer);
+
     // Use platform-appropriate font path
     const isLinux = process.platform === 'linux';
     const fontPath = isLinux 
@@ -2358,6 +2431,9 @@ class VideoStreamer {
     await new Promise(resolve => setTimeout(resolve, 300));
     
     await this.streamer.joinVoice(session.guildId, session.channelId);
+
+    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
+    forceDavePassthrough(this.streamer);
 
     session.isPaused = false;
     session.isStopping = false;
@@ -2602,6 +2678,9 @@ class VideoStreamer {
       throw new Error('Voice connection is not established after joinVoice');
     }
     console.log('[VideoStreamer] Successfully joined voice channel');
+
+    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
+    forceDavePassthrough(this.streamer);
 
     // Undeafen the bot
     const guild = this.client.guilds.cache.get(guildId);
