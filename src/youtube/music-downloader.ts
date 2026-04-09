@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, unlinkSync, statSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync } from 'fs';
 import { join } from 'path';
 import { getYouTubeInfo, getYtdlpBaseArgs } from './downloader.js';
 
@@ -385,8 +385,8 @@ export function cleanupOldMusic(): void {
       const stats = statSync(filePath);
 
       if (now - stats.mtime.getTime() > maxAge) {
-        unlinkSync(filePath);
-        console.log(`[MusicDownloader] Cleaned up old file: ${file}`);
+        rmSync(filePath, { recursive: true, force: true });
+        console.log(`[MusicDownloader] Cleaned up old item: ${file}`);
       }
     }
   } catch (error) {

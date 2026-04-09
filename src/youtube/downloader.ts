@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import config from '../config.js';
 
@@ -117,11 +117,13 @@ export async function downloadYouTubeVideo(url: string, options: DownloadOptions
       '--format', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best', // Quality selection
       // SponsorBlock integration - remove sponsor segments during download
       '--sponsorblock-remove', 'sponsor,selfpromo,interaction,intro,outro,preview,filler',
-      // Download English subtitles and auto-generated captions; convert to SRT for FFmpeg
+      // Download English subtitles and auto-generated captions.
+      // NOTE: Do NOT use --convert-subs srt here — it causes ffmpeg to crash with
+      // "Numerical result out of range" when concatenating many sub-segments from SponsorBlock.
+      // We accept the native .vtt format instead (browser-native, fully supported).
       '--write-subs',
       '--write-auto-subs',
       '--sub-langs', 'en,en-US,en-GB,en-AU',
-      '--convert-subs', 'srt',
       '--output', outputPath,
       '--exec', 'echo "DOWNLOAD_COMPLETE"', // Execute command when download completes
       url
@@ -376,7 +378,6 @@ export async function downloadYouTubeSubtitles(url: string): Promise<string | nu
       '--write-subs',
       '--write-auto-subs',
       '--sub-langs', 'en,en-US,en-GB,en-AU',
-      '--convert-subs', 'srt',
       '--output', outputBase,
       url,
     ]);
@@ -409,14 +410,17 @@ export function findSubtitleFile(videoPath: string): string | undefined {
   try {
     const files = readdirSync(dir);
     console.log(`[YouTubeDownloader] findSubtitleFile: dir=${dir} stem=${stem} allFiles=${files.filter(f => f.startsWith(stem)).join(', ') || 'none'}`);
-    // Match any .srt file whose name starts with the stem
-    const candidates = files
+    // Match .srt or .vtt files whose name starts with the stem.
+    // Prefer .srt > .vtt (shorter name = manual subs over auto-generated).
+    const srtCandidates = files
       .filter(f => f.startsWith(stem) && f.endsWith('.srt'))
       .map(f => join(dir, f))
-      .sort((a, b) => {
-        // Prefer shorter names (manual subs over auto-generated)
-        return a.length - b.length;
-      });
+      .sort((a, b) => a.length - b.length);
+    const vttCandidates = files
+      .filter(f => f.startsWith(stem) && f.endsWith('.vtt'))
+      .map(f => join(dir, f))
+      .sort((a, b) => a.length - b.length);
+    const candidates = [...srtCandidates, ...vttCandidates];
     console.log(`[YouTubeDownloader] findSubtitleFile: candidates=${candidates.join(', ') || 'none'}`);
     return candidates[0] ?? undefined;
   } catch (e) {
@@ -445,8 +449,8 @@ export function cleanupOldDownloads(): void {
       const stats = statSync(filePath);
       
       if (now - stats.mtime.getTime() > maxAge) {
-        unlinkSync(filePath);
-        console.log(`[YouTubeDownloader] Cleaned up old file: ${file}`);
+        rmSync(filePath, { recursive: true, force: true });
+        console.log(`[YouTubeDownloader] Cleaned up old item: ${file}`);
       }
     }
   } catch (error) {
