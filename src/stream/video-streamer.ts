@@ -14,7 +14,7 @@ import { startVoiceListener, stopVoiceListener } from '../voice/python-listener.
 import { startVoiceReceiver, stopVoiceReceiver } from '../voice/receiver.js';
 import { getNextEpisode } from '../plex/library.js';
 import { DAVESession } from '@snazzah/davey';
-import { createHLSFetcherProcess } from './hls-fetcher.js';
+
 
 /**
  * Normalize H264 3-byte NALU start codes (00 00 01) to 4-byte (00 00 00 01).
@@ -553,17 +553,7 @@ function killSessionFFmpeg(session: VideoStreamSession): void {
     session.pauseFFmpegCommand = null;
   }
 
-  // Kill HLS fetcher process if running (used for Plex streams)
-  const hlsFetcher = (session as any).hlsFetcherProcess as ChildProcess | undefined;
-  if (hlsFetcher && !hlsFetcher.killed) {
-    try {
-      hlsFetcher.kill('SIGKILL');
-      console.log('[VideoStreamer] Killed HLS fetcher process');
-    } catch {
-      // Ignore kill errors
-    }
-    (session as any).hlsFetcherProcess = null;
-  }
+
 }
 
 class VideoStreamer {
@@ -1718,69 +1708,62 @@ class VideoStreamer {
         console.log('[VideoStreamer] Using stream URL:', actualStreamUrl.substring(0, 100) + '...');
       }
 
-      // Use our HLS fetcher to download segments and pipe MPEG-TS to FFmpeg stdin
-      // This avoids FFmpeg's built-in HLS reader which produces frames that crash
-      // the DAVE Rust encryptor. By piping raw MPEG-TS, FFmpeg decodes it like a
-      // local file — producing the same clean frames that work with YouTube.
-      const plexHeaders: Record<string, string> = {
-        'Accept': '*/*',
-        'X-Plex-Client-Identifier': config.plex.clientIdentifier,
-        'X-Plex-Product': 'Plex Web',
-        'X-Plex-Version': '4.0',
-        'X-Plex-Platform': 'Chrome',
-        'X-Plex-Device': 'Linux',
-        'X-Plex-Token': config.plex.token,
-      };
+      // Build headers string for FFmpeg
+      const headers = [
+        'Accept: */*',
+        'X-Plex-Client-Identifier: ' + config.plex.clientIdentifier,
+        'X-Plex-Product: Plex Web',
+        'X-Plex-Version: 4.0',
+        'X-Plex-Platform: Chrome',
+        'X-Plex-Device: Linux',
+        'X-Plex-Token: ' + config.plex.token,
+      ].join('\r\n') + '\r\n';
 
-      console.log('[VideoStreamer] Starting HLS fetcher for Plex stream...');
-      const hlsFetcher = createHLSFetcherProcess(actualStreamUrl, plexHeaders);
-
-      // Log HLS fetcher stderr (progress/errors)
-      hlsFetcher.stderr?.on('data', (data: Buffer) => {
-        const msg = data.toString().trim();
-        if (msg) console.log(msg); // HLSFetcher logs go to stderr
-      });
-
-      hlsFetcher.on('error', (err) => {
-        console.error('[VideoStreamer] HLS fetcher error:', err.message);
-      });
-
-      // Calculate volume filter (100% = 1.0, 50% = 0.5, 200% = 2.0)
-      const volumeMultiplier = (session.volume / 100).toFixed(2);
-
-      const frameRate = config.stream.frameRate;
-      const gopSize = frameRate * 2; // 2 seconds of keyframes
-
-      // FFmpeg reads MPEG-TS from stdin (piped from HLS fetcher)
       const ffmpegArgs = [
         '-hide_banner',
         '-loglevel', 'error',
-        '-fflags', '+genpts+discardcorrupt', // Generate timestamps, discard corrupt frames
-        '-err_detect', 'ignore_err', // Be lenient with input errors
+        '-threads', '0', // Multi-threaded decoding
+        '-filter_threads', '0', // Multi-threaded filtering
+        // HTTP headers for Plex
+        '-headers', headers,
+        // HLS input options
+        '-reconnect', '1',
+        '-reconnect_streamed', '1', 
+        '-reconnect_delay_max', '5',
+        '-protocol_whitelist', 'file,http,https,tcp,tls,crypto,hls',
       ];
 
       if (startTimeSec > 0) {
         ffmpegArgs.push('-ss', startTimeSec.toString());
       }
 
+      // Calculate volume filter (100% = 1.0, 50% = 0.5, 200% = 2.0)
+      const volumeMultiplier = (session.volume / 100).toFixed(2);
+
+      const frameRate = config.stream.frameRate;
+      const gopSize = frameRate * 2; // 2 seconds of keyframes
+      
       ffmpegArgs.push(
-        '-i', 'pipe:0', // Read from stdin (HLS fetcher output)
-        // Video output - optimized for Discord streaming
+        '-i', actualStreamUrl,
+        // Explicit stream selection
+        '-map', '0:v:0',
+        '-map', '0:a:0',
+        // Video output - matched to YouTube/external stream settings
         '-c:v', 'libx264',
         '-preset', 'superfast',
+        '-profile:v', 'high',
+        '-level', '4.2',
         '-tune', 'zerolatency',
-        '-profile:v', 'baseline',
-        '-level', '4.0',
         '-bf', '0', // No B-frames - required for RTP/Discord streaming
         '-b:v', `${config.stream.maxBitrate}k`,
         '-maxrate', `${config.stream.maxBitrate}k`,
         '-bufsize', `${config.stream.maxBitrate * 2}k`,
-        '-vf', `scale=${width}:${height}`,
+        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
         '-r', frameRate.toString(),
-        '-g', String(gopSize),
-        '-keyint_min', '25',
-        '-sc_threshold', '0',
         '-pix_fmt', 'yuv420p',
+        '-g', String(gopSize),
+        '-keyint_min', String(gopSize),
+        '-sc_threshold', '0',
         // Audio output
         '-af', `volume=${volumeMultiplier}`,
         '-c:a', 'libopus',
@@ -1788,29 +1771,16 @@ class VideoStreamer {
         '-ar', '48000',
         '-ac', '2',
         // Output format
+        '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
         '-map_metadata', '-1',
         '-f', 'nut',
         'pipe:1'
       );
 
-      console.log('[VideoStreamer] Starting FFmpeg with piped MPEG-TS input...');
+      console.log('[VideoStreamer] Starting FFmpeg with HLS input...');
       
-      const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
-        stdio: ['pipe', 'pipe', 'pipe'] // stdin from HLS fetcher, stdout to playStream
-      });
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
       session.ffmpegCommand = ffmpeg;
-
-      // Pipe HLS fetcher stdout → FFmpeg stdin
-      hlsFetcher.stdout?.pipe(ffmpeg.stdin!);
-
-      // When HLS fetcher exits, close FFmpeg stdin to signal end of input
-      hlsFetcher.on('exit', (code) => {
-        console.log(`[VideoStreamer] HLS fetcher exited with code: ${code}`);
-        ffmpeg.stdin?.end();
-      });
-
-      // Store the fetcher so we can kill it on stop
-      (session as any).hlsFetcherProcess = hlsFetcher;
 
       ffmpeg.stderr.on('data', (data: Buffer) => {
         const msg = data.toString().trim();

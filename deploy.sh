@@ -26,7 +26,7 @@ SSH_PORT=22
 MAIN_REPO_DIR="/Users/josephshenton/SchroStream"
 
 # Files to copy to the server
-FILES=("docker-compose.yml" "Dockerfile" "src/" "web/" "docs/" "vite.config.ts" "package.json" "tsconfig.json" "tailwind.config.js" "postcss.config.js" "cookies.txt")
+FILES=("docker-compose.yml" "Dockerfile" ".dockerignore" "src/" "web/" "docs/" "davey/" "vite.config.ts" "package.json" "tsconfig.json" "tailwind.config.js" "postcss.config.js" "cookies.txt")
 
 # Function to print section headers
 section() {
@@ -91,7 +91,7 @@ for file in "${FILES[@]}"; do
             info "Syncing directory: $file"
             # Remove trailing slash to preserve directory structure
             source_dir="${file%/}"
-            rsync -avz --progress --exclude='.env' --exclude='.env.*' -e "ssh -p $SSH_PORT" "$source_dir" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR/" &&
+            rsync -avz --progress --exclude='.env' --exclude='.env.*' --exclude='target/' --exclude='node_modules/' --exclude='.git/' -e "ssh -p $SSH_PORT" "$source_dir" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR/" &&
                 success "  └─ Successfully synced $file" ||
                 { error "  └─ Failed to sync $file"; exit 1; }
         fi

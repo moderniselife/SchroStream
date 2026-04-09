@@ -36,6 +36,10 @@ RUN apt-get update && \
     chmod a+rx /usr/local/bin/yt-dlp && \
     rm -rf /var/lib/apt/lists/*
 
+# Install Rust toolchain for building davey from source
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+
 # Install tsx globally for running TypeScript
 RUN npm install -g tsx
 
@@ -46,6 +50,16 @@ COPY package.json package-lock.json* ./
 
 # Install dependencies with npm
 RUN npm install --production=false
+
+# Build patched davey from source (fixes DAVE encryptor buffer overflow panic)
+# This replaces the prebuilt npm binary with our patched version
+COPY davey/ /tmp/davey-build/
+WORKDIR /tmp/davey-build/davey-node
+RUN npm install @napi-rs/cli && \
+    npx napi build --platform --release && \
+    cp davey.linux-x64-gnu.node /app/node_modules/@snazzah/davey-linux-x64-gnu/davey.linux-x64-gnu.node && \
+    echo "✅ Patched davey binary installed"
+WORKDIR /app
 
 # Copy the rest of the files
 COPY . .
@@ -58,6 +72,10 @@ RUN npm run build
 
 # Build web frontend (outputs to /app/public)
 RUN npm run build:web
+
+# Clean up Rust toolchain to reduce image size
+RUN rustup self uninstall -y 2>/dev/null || true && \
+    rm -rf /tmp/davey-build /root/.cargo /root/.rustup
 
 # Set environment
 ENV NODE_ENV=production
