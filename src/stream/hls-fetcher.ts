@@ -6,7 +6,7 @@ interface HLSSegment {
   duration: number;
 }
 
-const BROWSER_HEADERS = {
+const BROWSER_HEADERS: Record<string, string> = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   'Referer': 'https://www.google.com/',
   'Origin': 'https://www.google.com',
@@ -150,20 +150,25 @@ export class HLSFetcher {
 }
 
 /**
- * Create a child process that fetches HLS and outputs to stdout
- * This spawns a separate process to handle the HLS fetching
+ * Create a child process that fetches HLS and outputs raw MPEG-TS to stdout.
+ * Supports custom headers for authenticated sources like Plex.
+ * 
+ * @param playlistUrl - The HLS m3u8 URL to fetch
+ * @param customHeaders - Optional custom headers (e.g. Plex auth headers)
  */
-export function createHLSFetcherProcess(playlistUrl: string): ChildProcess {
+export function createHLSFetcherProcess(
+  playlistUrl: string, 
+  customHeaders?: Record<string, string>
+): ChildProcess {
+  // Merge custom headers with defaults (custom takes priority)
+  const headers = { ...BROWSER_HEADERS, ...(customHeaders || {}) };
+  const headersJson = JSON.stringify(headers);
+  
   // Use a simple node script to fetch and output segments
   const script = `
-    const HEADERS = {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Referer': 'https://www.google.com/',
-      'Origin': 'https://www.google.com',
-      'Accept': '*/*',
-    };
+    const HEADERS = ${headersJson};
     
-    console.error('[HLSFetcher] Starting with URL:', '${playlistUrl}');
+    console.error('[HLSFetcher] Starting with URL:', '${playlistUrl.substring(0, 80)}...');
     
     // Handle EPIPE errors gracefully (when FFmpeg closes)
     process.stdout.on('error', (err) => {
@@ -185,7 +190,7 @@ export function createHLSFetcherProcess(playlistUrl: string): ChildProcess {
     });
     
     process.on('unhandledRejection', (reason, promise) => {
-      console.error('[HLSFetcher] Unhandled rejection at:', promise, 'reason:', reason);
+      console.error('[HLSFetcher] Unhandled rejection:', reason);
       process.exit(1);
     });
     
@@ -204,14 +209,16 @@ export function createHLSFetcherProcess(playlistUrl: string): ChildProcess {
     function parsePlaylist(text, baseUrl) {
       const segments = [];
       const lines = text.split('\\n');
+      let hasEndList = false;
       for (const line of lines) {
         const l = line.trim();
+        if (l === '#EXT-X-ENDLIST') hasEndList = true;
         if (l && !l.startsWith('#')) {
           let url = l.startsWith('http') ? l : baseUrl + l;
           segments.push(url);
         }
       }
-      return segments;
+      return { segments, hasEndList };
     }
     
     function getBaseUrl(url) {
@@ -219,10 +226,10 @@ export function createHLSFetcherProcess(playlistUrl: string): ChildProcess {
     }
     
     async function findActualSegments(playlistUrl) {
-      console.error('[HLSFetcher] Fetching playlist:', playlistUrl);
+      console.error('[HLSFetcher] Fetching playlist:', playlistUrl.substring(0, 80) + '...');
       const text = await fetchText(playlistUrl);
       const baseUrl = getBaseUrl(playlistUrl);
-      const entries = parsePlaylist(text, baseUrl);
+      const { segments: entries } = parsePlaylist(text, baseUrl);
       
       console.error('[HLSFetcher] Found', entries.length, 'entries');
       
@@ -235,7 +242,7 @@ export function createHLSFetcherProcess(playlistUrl: string): ChildProcess {
         if (sample.trim().startsWith('#EXTM3U') || sample.trim().startsWith('#EXT')) {
           console.error('[HLSFetcher] Entry is a nested playlist, parsing...');
           const nestedBaseUrl = getBaseUrl(firstEntry);
-          const actualSegments = parsePlaylist(sample, nestedBaseUrl);
+          const { segments: actualSegments } = parsePlaylist(sample, nestedBaseUrl);
           console.error('[HLSFetcher] Found', actualSegments.length, 'actual segments');
           return { playlistUrl: firstEntry, segments: actualSegments };
         }
@@ -247,6 +254,8 @@ export function createHLSFetcherProcess(playlistUrl: string): ChildProcess {
     async function main() {
       let lastSeg = '';
       let variantPlaylistUrl = null;
+      let totalBytes = 0;
+      let segCount = 0;
       
       // First, find the actual segments playlist
       const initial = await findActualSegments('${playlistUrl}');
@@ -254,19 +263,15 @@ export function createHLSFetcherProcess(playlistUrl: string): ChildProcess {
       
       while (true) {
         try {
-          // Fetch the variant playlist directly
-          console.error('[HLSFetcher] Fetching variant playlist:', variantPlaylistUrl.substring(0, 60) + '...');
           const text = await fetchText(variantPlaylistUrl);
           const baseUrl = getBaseUrl(variantPlaylistUrl);
-          const segments = parsePlaylist(text, baseUrl);
+          const { segments, hasEndList } = parsePlaylist(text, baseUrl);
           
           if (segments.length === 0) {
             console.error('[HLSFetcher] No segments found, retrying...');
             await new Promise(r => setTimeout(r, 2000));
             continue;
           }
-          
-          console.error('[HLSFetcher] Found', segments.length, 'segments');
           
           // Find new segments
           let start = 0;
@@ -276,30 +281,40 @@ export function createHLSFetcherProcess(playlistUrl: string): ChildProcess {
           }
           
           if (start >= segments.length) {
-            // No new segments, wait
+            if (hasEndList) {
+              console.error('[HLSFetcher] End of stream (ENDLIST), total:', totalBytes, 'bytes,', segCount, 'segments');
+              process.exit(0);
+            }
+            // No new segments, wait for more
             await new Promise(r => setTimeout(r, 1000));
             continue;
           }
           
-          console.error('[HLSFetcher] Fetching segments from', start, 'to', segments.length);
-          
           for (let i = start; i < segments.length; i++) {
             const segUrl = segments[i];
-            console.error('[HLSFetcher] Fetching:', segUrl.substring(segUrl.lastIndexOf('/') + 1));
             
             try {
               const buf = await fetchBinary(segUrl);
-              console.error('[HLSFetcher] Got segment, size:', buf.byteLength);
               
-              if (buf.byteLength > 1000) { // Only write if it's actual video data
+              if (buf.byteLength > 100) {
                 process.stdout.write(Buffer.from(buf));
                 lastSeg = segUrl;
-              } else {
-                console.error('[HLSFetcher] Segment too small, skipping');
+                totalBytes += buf.byteLength;
+                segCount++;
+                
+                if (segCount % 10 === 0) {
+                  console.error('[HLSFetcher] Progress:', segCount, 'segments,', (totalBytes / 1024 / 1024).toFixed(1), 'MB');
+                }
               }
             } catch (e) {
               console.error('[HLSFetcher] Segment fetch error:', e.message);
             }
+          }
+          
+          // Check if we've consumed all segments in a VOD
+          if (hasEndList && lastSeg === segments[segments.length - 1]) {
+            console.error('[HLSFetcher] All segments consumed, total:', totalBytes, 'bytes,', segCount, 'segments');
+            process.exit(0);
           }
           
           await new Promise(r => setTimeout(r, 1000));

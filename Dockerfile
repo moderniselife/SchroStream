@@ -61,6 +61,7 @@ RUN npm run build:web
 
 # Set environment
 ENV NODE_ENV=production
+ENV RUST_BACKTRACE=full
 
 # Volume for persistent data
 VOLUME ["/app/data"]

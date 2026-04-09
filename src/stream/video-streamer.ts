@@ -1,7 +1,7 @@
 import { Streamer, prepareStream, playStream, Utils } from '@dank074/discord-video-stream';
 import { Client } from 'discord.js-selfbot-v13';
 import { EmbedBuilder } from 'discord.js';
-import { spawn, execSync } from 'child_process';
+import { spawn, execSync, ChildProcess } from 'child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { MediaItem } from '../types/index.js';
@@ -13,64 +13,129 @@ import { popMusicQueue, isAutoplayEnabled, setLastPlayedVideoId, addToMusicQueue
 import { startVoiceListener, stopVoiceListener } from '../voice/python-listener.js';
 import { startVoiceReceiver, stopVoiceReceiver } from '../voice/receiver.js';
 import { getNextEpisode } from '../plex/library.js';
+import { DAVESession } from '@snazzah/davey';
+import { createHLSFetcherProcess } from './hls-fetcher.js';
 
 /**
- * Workaround for @snazzah/davey panic at encryptor.rs:193:
- * The Rust encryptor crashes on certain frame sizes/alignments.
- *
- * Fix: override `daveReady` to always return false on both connections.
- * WebRtcWrapper checks `daveReady` before calling encryptOpus/encrypt,
- * so returning false prevents any frames from reaching the Rust code.
- *
- * We deliberately leave the DAVE session and initDave intact so the
- * protocol handshake (processProposals, processCommit, etc.) still works —
- * Discord expects these responses even when we're not actually encrypting.
- *
- * There are TWO BaseMediaConnection instances:
- *   - voiceConnection (voice channel)
- *   - voiceConnection.streamConnection (Go Live — this is the one that crashes)
+ * Normalize H264 3-byte NALU start codes (00 00 01) to 4-byte (00 00 00 01).
+ * 
+ * davey's process_frame_h264() converts all start codes to 4-byte internally,
+ * but its output buffer is sized based on the INPUT frame length. If the input
+ * has 3-byte start codes, the expansion causes a buffer overflow panic at
+ * encryptor.rs:193. By normalizing BEFORE encryption, no expansion occurs.
  */
-function disableDaveOnConnection(conn: any, label: string): void {
-  if (!conn) return;
-
-  // Override daveReady to ALWAYS return false — this is the only gate
-  // that WebRtcWrapper checks before calling into the Rust encryptor
-  Object.defineProperty(conn, 'daveReady', {
-    get: () => false,
-    configurable: true,
-  });
-
-  console.log(`[VideoStreamer] DAVE encryption disabled on ${label}`);
-}
-
-function forceDavePassthrough(streamer: Streamer): void {
-  const voiceConn = (streamer as any).voiceConnection;
-  if (!voiceConn) return;
-
-  // Disable on the voice connection
-  disableDaveOnConnection(voiceConn, 'VoiceConnection');
-
-  // Disable on the stream connection (Go Live) if it exists already
-  if (voiceConn.streamConnection) {
-    disableDaveOnConnection(voiceConn.streamConnection, 'StreamConnection');
+function normalizeH264StartCodes(frame: Buffer): Buffer {
+  // Find all NALU boundaries - look for 00 00 01 sequences
+  // that aren't already preceded by 00 (making them 00 00 00 01)
+  const positions: number[] = [];
+  for (let i = 0; i < frame.length - 2; i++) {
+    if (frame[i] === 0 && frame[i + 1] === 0 && frame[i + 2] === 1) {
+      // Check if this is already a 4-byte code (preceded by 00)
+      if (i > 0 && frame[i - 1] === 0) {
+        // Already 4-byte (00 00 00 01), skip
+        continue;
+      }
+      positions.push(i);
+    }
   }
 
-  // The streamConnection is created asynchronously (after Go Live negotiation).
-  // Intercept the setter so we catch it the moment it's assigned.
-  let _streamConn = voiceConn.streamConnection || null;
+  // If no 3-byte start codes found, return original frame
+  if (positions.length === 0) {
+    return frame;
+  }
 
-  Object.defineProperty(voiceConn, 'streamConnection', {
-    get: () => _streamConn,
-    set: (newConn: any) => {
-      _streamConn = newConn;
-      if (newConn) {
-        disableDaveOnConnection(newConn, 'StreamConnection (late)');
-      }
-    },
-    configurable: true,
-    enumerable: true,
-  });
+  // Build a new buffer with 4-byte start codes
+  const newSize = frame.length + positions.length; // each conversion adds 1 byte
+  const result = Buffer.allocUnsafe(newSize);
+  let srcPos = 0;
+  let dstPos = 0;
+
+  for (const pos of positions) {
+    // Copy bytes before this start code
+    if (pos > srcPos) {
+      frame.copy(result, dstPos, srcPos, pos);
+      dstPos += pos - srcPos;
+    }
+    // Write 4-byte start code
+    result[dstPos] = 0;
+    result[dstPos + 1] = 0;
+    result[dstPos + 2] = 0;
+    result[dstPos + 3] = 1;
+    dstPos += 4;
+    srcPos = pos + 3; // skip original 3-byte start code
+  }
+
+  // Copy remaining bytes after last start code
+  if (srcPos < frame.length) {
+    frame.copy(result, dstPos, srcPos);
+  }
+
+  return result;
 }
+
+/**
+ * DAVE Encryptor Frame Guard
+ * 
+ * The Rust encryptor in @snazzah/davey panics at encryptor.rs:193 with an
+ * index-out-of-bounds when it receives frames that trigger bad memory access.
+ * This happens with Plex HLS streams.
+ *
+ * Since Rust panics cannot be caught by JS try/catch, we monkey-patch the
+ * DAVESession prototype to validate frame sizes BEFORE calling into Rust.
+ *
+ * CRITICAL: We must use ESM `import` (not createRequire) to get the SAME
+ * module instance as discord-video-stream. Node.js ESM and CJS caches are
+ * separate — createRequire would patch a different copy of DAVESession.
+ */
+(function installDaveFrameGuard() {
+  try {
+    const proto = DAVESession.prototype as any;
+
+    // Guard encryptOpus (audio)
+    const originalEncryptOpus = proto.encryptOpus;
+    if (originalEncryptOpus && !proto._guardedEncryptOpus) {
+      proto._guardedEncryptOpus = true;
+      proto.encryptOpus = function(packet: Buffer): Buffer {
+        if (!packet || !Buffer.isBuffer(packet) || packet.length === 0) {
+          return packet || Buffer.alloc(0);
+        }
+        return originalEncryptOpus.call(this, packet);
+      };
+    }
+
+    // Guard encrypt (video) — also normalizes H264 start codes
+    const originalEncrypt = proto.encrypt;
+    if (originalEncrypt && !proto._guardedEncrypt) {
+      proto._guardedEncrypt = true;
+      proto.encrypt = function(mediaType: number, codec: number, packet: Buffer): Buffer {
+        if (!packet || !Buffer.isBuffer(packet) || packet.length === 0) {
+          return packet || Buffer.alloc(0);
+        }
+
+        // BUG FIX: davey/encryptor.rs allocates the output buffer based on
+        // the INPUT frame size (packet.len()), but process_frame_h264 converts
+        // 3-byte NALU start codes (00 00 01) to 4-byte (00 00 00 01), expanding
+        // the reconstructed frame. If the frame has many NALUs, the expansion
+        // causes the supplemental data to overflow the buffer, panicking at
+        // encryptor.rs:193 (split_at_mut on a too-small slice).
+        //
+        // Fix: normalize all 3-byte start codes to 4-byte BEFORE calling encrypt.
+        // This way, process_frame_h264 sees all 4-byte start codes and doesn't
+        // expand anything, so reconstructed_frame_size == frame_size.
+        const H264_CODEC = 4;
+        if (codec === H264_CODEC && packet.length > 4) {
+          packet = normalizeH264StartCodes(packet);
+        }
+
+        return originalEncrypt.call(this, mediaType, codec, packet);
+      };
+    }
+
+    console.log('[DAVE] Frame guard installed on DAVESession prototype (ESM)');
+  } catch (err) {
+    console.error('[DAVE] Failed to install frame guard:', err);
+  }
+})();
 
 // NVENC GPU transcoding support - cached at startup
 let nvencSupported: boolean | null = null;
@@ -487,6 +552,18 @@ function killSessionFFmpeg(session: VideoStreamSession): void {
     }
     session.pauseFFmpegCommand = null;
   }
+
+  // Kill HLS fetcher process if running (used for Plex streams)
+  const hlsFetcher = (session as any).hlsFetcherProcess as ChildProcess | undefined;
+  if (hlsFetcher && !hlsFetcher.killed) {
+    try {
+      hlsFetcher.kill('SIGKILL');
+      console.log('[VideoStreamer] Killed HLS fetcher process');
+    } catch {
+      // Ignore kill errors
+    }
+    (session as any).hlsFetcherProcess = null;
+  }
 }
 
 class VideoStreamer {
@@ -803,8 +880,6 @@ class VideoStreamer {
     }
     console.log('[VideoStreamer] Successfully joined voice channel');
 
-    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
-    forceDavePassthrough(this.streamer);
 
     const session: VideoStreamSession = {
       guildId,
@@ -879,9 +954,6 @@ class VideoStreamer {
       throw new Error('Voice connection is not established after joinVoice');
     }
     console.log('[VideoStreamer] Successfully joined voice channel');
-
-    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
-    forceDavePassthrough(this.streamer);
 
     // Undeafen the bot to receive voice commands
     const guild = this.client.guilds.cache.get(guildId);
@@ -977,8 +1049,6 @@ class VideoStreamer {
     }
     console.log('[VideoStreamer] Successfully joined voice channel');
 
-    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
-    forceDavePassthrough(this.streamer);
 
     // Undeafen the bot to receive voice commands
     // Send voice state update through Discord client
@@ -1648,47 +1718,58 @@ class VideoStreamer {
         console.log('[VideoStreamer] Using stream URL:', actualStreamUrl.substring(0, 100) + '...');
       }
 
-      // Build headers string for FFmpeg
-      const headers = [
-        'Accept: */*',
-        'X-Plex-Client-Identifier: ' + config.plex.clientIdentifier,
-        'X-Plex-Product: Plex Web',
-        'X-Plex-Version: 4.0',
-        'X-Plex-Platform: Chrome',
-        'X-Plex-Device: Linux',
-        'X-Plex-Token: ' + config.plex.token,
-      ].join('\r\n') + '\r\n';
+      // Use our HLS fetcher to download segments and pipe MPEG-TS to FFmpeg stdin
+      // This avoids FFmpeg's built-in HLS reader which produces frames that crash
+      // the DAVE Rust encryptor. By piping raw MPEG-TS, FFmpeg decodes it like a
+      // local file — producing the same clean frames that work with YouTube.
+      const plexHeaders: Record<string, string> = {
+        'Accept': '*/*',
+        'X-Plex-Client-Identifier': config.plex.clientIdentifier,
+        'X-Plex-Product': 'Plex Web',
+        'X-Plex-Version': '4.0',
+        'X-Plex-Platform': 'Chrome',
+        'X-Plex-Device': 'Linux',
+        'X-Plex-Token': config.plex.token,
+      };
 
-      const ffmpegArgs = [
-        '-hide_banner',
-        '-loglevel', 'error',
-        // HTTP headers for Plex
-        '-headers', headers,
-        // HLS input options
-        '-reconnect', '1',
-        '-reconnect_streamed', '1', 
-        '-reconnect_delay_max', '5',
-        '-protocol_whitelist', 'file,http,https,tcp,tls,crypto,hls',
-      ];
+      console.log('[VideoStreamer] Starting HLS fetcher for Plex stream...');
+      const hlsFetcher = createHLSFetcherProcess(actualStreamUrl, plexHeaders);
 
-      if (startTimeSec > 0) {
-        ffmpegArgs.push('-ss', startTimeSec.toString());
-      }
+      // Log HLS fetcher stderr (progress/errors)
+      hlsFetcher.stderr?.on('data', (data: Buffer) => {
+        const msg = data.toString().trim();
+        if (msg) console.log(msg); // HLSFetcher logs go to stderr
+      });
+
+      hlsFetcher.on('error', (err) => {
+        console.error('[VideoStreamer] HLS fetcher error:', err.message);
+      });
 
       // Calculate volume filter (100% = 1.0, 50% = 0.5, 200% = 2.0)
       const volumeMultiplier = (session.volume / 100).toFixed(2);
 
       const frameRate = config.stream.frameRate;
       const gopSize = frameRate * 2; // 2 seconds of keyframes
-      
+
+      // FFmpeg reads MPEG-TS from stdin (piped from HLS fetcher)
+      const ffmpegArgs = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-fflags', '+genpts+discardcorrupt', // Generate timestamps, discard corrupt frames
+        '-err_detect', 'ignore_err', // Be lenient with input errors
+      ];
+
+      if (startTimeSec > 0) {
+        ffmpegArgs.push('-ss', startTimeSec.toString());
+      }
+
       ffmpegArgs.push(
-        '-i', actualStreamUrl,
+        '-i', 'pipe:0', // Read from stdin (HLS fetcher output)
         // Video output - optimized for Discord streaming
-        // NOTE: Do NOT use ultrafast - it causes bitrate spikes and stuttering!
         '-c:v', 'libx264',
-        '-preset', 'superfast', // superfast prevents bitrate spikes (ultrafast causes stutter!)
-        '-tune', 'zerolatency', // Low latency for streaming
-        '-profile:v', 'baseline', // Most compatible profile
+        '-preset', 'superfast',
+        '-tune', 'zerolatency',
+        '-profile:v', 'baseline',
         '-level', '4.0',
         '-bf', '0', // No B-frames - required for RTP/Discord streaming
         '-b:v', `${config.stream.maxBitrate}k`,
@@ -1696,9 +1777,9 @@ class VideoStreamer {
         '-bufsize', `${config.stream.maxBitrate * 2}k`,
         '-vf', `scale=${width}:${height}`,
         '-r', frameRate.toString(),
-        '-g', '50', // GOP size
+        '-g', String(gopSize),
         '-keyint_min', '25',
-        '-sc_threshold', '0', // Disable scene change detection
+        '-sc_threshold', '0',
         '-pix_fmt', 'yuv420p',
         // Audio output
         '-af', `volume=${volumeMultiplier}`,
@@ -1707,15 +1788,29 @@ class VideoStreamer {
         '-ar', '48000',
         '-ac', '2',
         // Output format
-        '-map_metadata', '-1', // Strip metadata to avoid NUT demuxer warnings
+        '-map_metadata', '-1',
         '-f', 'nut',
         'pipe:1'
       );
 
-      console.log('[VideoStreamer] Starting FFmpeg with HLS input...');
+      console.log('[VideoStreamer] Starting FFmpeg with piped MPEG-TS input...');
       
-      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
+        stdio: ['pipe', 'pipe', 'pipe'] // stdin from HLS fetcher, stdout to playStream
+      });
       session.ffmpegCommand = ffmpeg;
+
+      // Pipe HLS fetcher stdout → FFmpeg stdin
+      hlsFetcher.stdout?.pipe(ffmpeg.stdin!);
+
+      // When HLS fetcher exits, close FFmpeg stdin to signal end of input
+      hlsFetcher.on('exit', (code) => {
+        console.log(`[VideoStreamer] HLS fetcher exited with code: ${code}`);
+        ffmpeg.stdin?.end();
+      });
+
+      // Store the fetcher so we can kill it on stop
+      (session as any).hlsFetcherProcess = hlsFetcher;
 
       ffmpeg.stderr.on('data', (data: Buffer) => {
         const msg = data.toString().trim();
@@ -2222,8 +2317,6 @@ class VideoStreamer {
     
     await this.streamer.joinVoice(session.guildId, session.channelId);
 
-    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
-    forceDavePassthrough(this.streamer);
 
     // Build FFmpeg args - use captured frame if available, otherwise solid color
     let ffmpegArgs: string[];
@@ -2339,8 +2432,6 @@ class VideoStreamer {
     // Rejoin voice channel with fresh connection
     await this.streamer.joinVoice(guildId, channelId);
 
-    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
-    forceDavePassthrough(this.streamer);
 
     // Use platform-appropriate font path
     const isLinux = process.platform === 'linux';
@@ -2432,8 +2523,6 @@ class VideoStreamer {
     
     await this.streamer.joinVoice(session.guildId, session.channelId);
 
-    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
-    forceDavePassthrough(this.streamer);
 
     session.isPaused = false;
     session.isStopping = false;
@@ -2679,8 +2768,6 @@ class VideoStreamer {
     }
     console.log('[VideoStreamer] Successfully joined voice channel');
 
-    // Workaround: force DAVE E2EE passthrough to prevent Rust encryptor panic
-    forceDavePassthrough(this.streamer);
 
     // Undeafen the bot
     const guild = this.client.guilds.cache.get(guildId);
