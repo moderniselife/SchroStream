@@ -892,8 +892,7 @@ class VideoStreamer {
 
     this.sessions.set(guildId, session);
     
-    // Start status update timer
-    startStatusUpdateTimer(session);
+    // Note: status update timer is started later, once the stream actually begins playing
 
     // Play Live TV channels as external streams to skip Plex transcoding
     if (mediaItem.type === 'channel') {
@@ -1719,11 +1718,14 @@ class VideoStreamer {
         'X-Plex-Token: ' + config.plex.token,
       ].join('\r\n') + '\r\n';
 
+      // Plex already transcodes to H264 at our target resolution/bitrate,
+      // so we just copy the video stream and only re-encode audio to Opus.
+      // This eliminates the CPU-intensive double-encode that causes frame drops.
+      const volumeMultiplier = (session.volume / 100).toFixed(2);
+
       const ffmpegArgs = [
         '-hide_banner',
         '-loglevel', 'error',
-        '-threads', '0', // Multi-threaded decoding
-        '-filter_threads', '0', // Multi-threaded filtering
         // HTTP headers for Plex
         '-headers', headers,
         // HLS input options
@@ -1737,41 +1739,20 @@ class VideoStreamer {
         ffmpegArgs.push('-ss', startTimeSec.toString());
       }
 
-      // Calculate volume filter (100% = 1.0, 50% = 0.5, 200% = 2.0)
-      const volumeMultiplier = (session.volume / 100).toFixed(2);
-
-      const frameRate = config.stream.frameRate;
-      const gopSize = frameRate * 2; // 2 seconds of keyframes
-      
       ffmpegArgs.push(
         '-i', actualStreamUrl,
         // Explicit stream selection
         '-map', '0:v:0',
         '-map', '0:a:0',
-        // Video output - matched to YouTube/external stream settings
-        '-c:v', 'libx264',
-        '-preset', 'superfast',
-        '-profile:v', 'high',
-        '-level', '4.2',
-        '-tune', 'zerolatency',
-        '-bf', '0', // No B-frames - required for RTP/Discord streaming
-        '-b:v', `${config.stream.maxBitrate}k`,
-        '-maxrate', `${config.stream.maxBitrate}k`,
-        '-bufsize', `${config.stream.maxBitrate * 2}k`,
-        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
-        '-r', frameRate.toString(),
-        '-pix_fmt', 'yuv420p',
-        '-g', String(gopSize),
-        '-keyint_min', String(gopSize),
-        '-sc_threshold', '0',
-        // Audio output
+        // Video: copy directly from Plex (already H264 at target resolution)
+        '-c:v', 'copy',
+        // Audio: re-encode to Opus for Discord
         '-af', `volume=${volumeMultiplier}`,
         '-c:a', 'libopus',
         '-b:a', '128k',
         '-ar', '48000',
         '-ac', '2',
         // Output format
-        '-vsync', 'cfr', // Force constant frame rate - Discord drops frames with VFR
         '-map_metadata', '-1',
         '-f', 'nut',
         'pipe:1'
@@ -1801,8 +1782,9 @@ class VideoStreamer {
 
       console.log('[VideoStreamer] Starting Go Live stream...');
       
-      // Mark as actually playing now
+      // Mark as actually playing now and start status updates
       session.isPlaying = true;
+      startStatusUpdateTimer(session);
       session.startedAt = Date.now(); // Reset start time to when stream actually begins
       
       // Update watch deck
