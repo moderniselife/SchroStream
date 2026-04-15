@@ -63,58 +63,120 @@ export function getNekoConfig(): NekoConfig {
 // ---------------------------------------------------------------------------
 
 /**
- * Authenticate with the Neko instance.
+ * Neko v2/v3 compatibility: Try multiple login payload formats.
  *
- * Tries admin first, falls back to user.
- * Returns the session token extracted from the `Set-Cookie` header.
+ * Neko v2 expects  : POST /api/login  { "secret": "<password>" }
+ * Neko v3 expects  : POST /api/login  { "username": "<any>", "password": "<password>" }
+ *
+ * Tries admin first, then user.  On each attempt it probes both payload
+ * shapes so this works regardless of Neko version.
  */
 export async function nekoLogin(cfg: NekoConfig): Promise<NekoLoginResult> {
-  const tryLogin = async (password: string, role: 'admin' | 'user'): Promise<string | null> => {
+  console.log(`[Neko] Attempting login at ${cfg.url}/api/login`);
+
+  /**
+   * Fire a single POST /api/login with the given body.
+   * Returns the session token string on success, null otherwise.
+   */
+  const attempt = async (
+    payload: Record<string, string>,
+    label: string,
+  ): Promise<string | null> => {
+    const bodyStr = JSON.stringify(payload);
+    console.log(`[Neko] Trying ${label} → POST /api/login  body=${bodyStr}`);
+
+    let res: Response;
     try {
-      const res = await fetch(`${cfg.url}/api/login`, {
+      res = await fetch(`${cfg.url}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secret: password }),
+        body: bodyStr,
+        signal: AbortSignal.timeout(8000),
       });
-
-      if (!res.ok) {
-        console.warn(`[Neko] Login as ${role} failed — HTTP ${res.status}`);
-        return null;
-      }
-
-      // Neko sets a session cookie named `NEKO_SESSION`
-      const setCookie = res.headers.get('set-cookie') ?? '';
-      const match = setCookie.match(/NEKO_SESSION=([^;]+)/);
-      if (!match) {
-        // Neko v2 returns the token in the JSON body
-        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-        const token = (body as any)?.token as string | undefined;
-        if (token) return token;
-        console.warn(`[Neko] Login as ${role} succeeded but no session token found`);
-        return null;
-      }
-
-      return match[1];
-    } catch (err) {
-      console.warn(`[Neko] Login as ${role} error:`, err);
+    } catch (err: any) {
+      console.warn(`[Neko] Network error on ${label}:`, err?.message ?? err);
       return null;
     }
+
+    // Log full response details for debugging
+    const status = res.status;
+    const setCookieHeader = res.headers.get('set-cookie') ?? '';
+    const contentType = res.headers.get('content-type') ?? '';
+    console.log(`[Neko] ${label} → HTTP ${status}  content-type=${contentType}  set-cookie=${setCookieHeader.substring(0, 80)}`);
+
+    // Clone so we can read both text (for logging) and parse JSON
+    const rawBody = await res.text();
+    console.log(`[Neko] ${label} → body=${rawBody.substring(0, 300)}`);
+
+    if (!res.ok) {
+      console.warn(`[Neko] ${label} failed — HTTP ${status}`);
+      return null;
+    }
+
+    // ----------------------------------------------------------------
+    // Token extraction — try all known locations:
+    //   1. Set-Cookie: NEKO_SESSION=<token>
+    //   2. JSON body: { "token": "..." }
+    //   3. JSON body: { "id": "..." } (some Neko v3 builds)
+    // ----------------------------------------------------------------
+    const setCookie = res.headers.get('set-cookie') ?? '';
+    const cookieMatch = setCookie.match(/NEKO_SESSION=([^;]+)/);
+    if (cookieMatch) {
+      console.log(`[Neko] ${label} — token found in Set-Cookie cookie`);
+      return cookieMatch[1];
+    }
+
+    // Fall back to JSON body
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(rawBody);
+    } catch {
+      // rawBody was not JSON — not a fatal error
+    }
+
+    const token = parsed?.token ?? parsed?.id ?? parsed?.session ?? null;
+    if (token) {
+      console.log(`[Neko] ${label} — token found in JSON body (key=${Object.keys(parsed).find(k => parsed[k] === token)})`);
+      return String(token);
+    }
+
+    console.warn(`[Neko] ${label} — login succeeded (HTTP ${status}) but no session token found in response`);
+    console.warn(`[Neko] Full response body: ${rawBody}`);
+    return null;
   };
 
-  // Prefer admin — gets higher-privilege session
-  const adminToken = await tryLogin(cfg.adminPassword, 'admin');
-  if (adminToken) {
-    console.log('[Neko] Logged in as admin ✅');
-    return { token: adminToken, role: 'admin' };
+  // ----------------------------------------------------------------
+  // Strategy: try every (role × payload_format) combination in order
+  // ----------------------------------------------------------------
+  const strategies: Array<{ payload: Record<string, string>; label: string }> = [
+    // Neko v3 multiuser — admin
+    { payload: { username: 'admin', password: cfg.adminPassword }, label: 'v3 admin (username+password)' },
+    // Neko v2 — admin
+    { payload: { secret: cfg.adminPassword }, label: 'v2 admin (secret)' },
+    // Neko v3 multiuser — user (empty username is fine)
+    { payload: { username: 'user', password: cfg.userPassword }, label: 'v3 user (username+password)' },
+    // Neko v3 multiuser — user with empty username
+    { payload: { username: '', password: cfg.userPassword }, label: 'v3 user (empty username)' },
+    // Neko v2 — user
+    { payload: { secret: cfg.userPassword }, label: 'v2 user (secret)' },
+  ];
+
+  for (const { payload, label } of strategies) {
+    const token = await attempt(payload, label);
+    if (token) {
+      const role = label.includes('admin') ? 'admin' : 'user';
+      console.log(`[Neko] ✅ Authenticated as ${role} via strategy: ${label}`);
+      return { token, role };
+    }
   }
 
-  const userToken = await tryLogin(cfg.userPassword, 'user');
-  if (userToken) {
-    console.log('[Neko] Logged in as user ✅');
-    return { token: userToken, role: 'user' };
-  }
-
-  throw new Error('[Neko] Failed to authenticate with either admin or user credentials');
+  throw new Error(
+    `[Neko] All login strategies exhausted — could not authenticate.\n` +
+    `  URL: ${cfg.url}\n` +
+    `  NEKO_ADMIN_PASSWORD length: ${cfg.adminPassword.length}\n` +
+    `  NEKO_USER_PASSWORD  length: ${cfg.userPassword.length}\n` +
+    `  Hint: check docker logs for the Neko container to confirm it's healthy.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
