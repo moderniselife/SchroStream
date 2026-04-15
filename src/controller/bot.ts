@@ -1071,47 +1071,51 @@ async function handleNekoStart(interaction: ChatInputCommandInteraction): Promis
   await interaction.editReply({ embeds: [embed] });
 
   const videoStreamer = getVideoStreamer();
-  videoStreamer.setEmbedMessage(guildId, (await interaction.fetchReply()).id, interaction.channelId);
 
-  try {
-    await videoStreamer.startNekoStream(guildId, voiceChannel.id, interaction.user.id);
+  const liveEmbed = new EmbedBuilder()
+    .setTitle('🦊 Neko — Live!')
+    .setDescription(
+      `Streaming Neko browser from \`${nekoUrl}\`\n\n` +
+      `**Voice channel:** <#${voiceChannel.id}>\n\n` +
+      `Use \`/neko panel\` to open the interactive control pad.\n` +
+      `Use \`/neko type\`, \`/neko click\`, \`/neko url\` for quick commands.`,
+    )
+    .setColor(0x00e676)
+    .setFooter({ text: 'Use /stop to end the Neko stream' })
+    .setTimestamp();
 
-    const liveEmbed = new EmbedBuilder()
-      .setTitle('🦊 Neko — Live!')
-      .setDescription(
-        `Streaming Neko browser from \`${nekoUrl}\`\n\n` +
-        `**Voice channel:** <#${voiceChannel.id}>\n\n` +
-        `Use \`/neko panel\` to open the interactive control pad.\n` +
-        `Use \`/neko type\`, \`/neko click\`, \`/neko url\` for quick commands.`,
-      )
-      .setColor(0x00e676)
-      .setFooter({ text: 'Use /stop to end the Neko stream' })
-      .setTimestamp();
+  const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('neko-ctrl-panel').setLabel('🎮 Controls').setStyle(ButtonStyle.Primary),
+  );
 
-    const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId('neko-ctrl-panel').setLabel('🎮 Controls').setStyle(ButtonStyle.Primary),
-    );
-
+  // onReady fires the moment the stream is truly live (just before playStream starts).
+  // We update the embed here so users see 'Live!' during the stream, not after it ends.
+  const onReady = async () => {
+    videoStreamer.setEmbedMessage(guildId, (await interaction.fetchReply()).id, interaction.channelId);
     await interaction.editReply({ embeds: [liveEmbed], components: [controlRow] });
-  } catch (err: any) {
-    console.error('[Controller/Neko] Stream error:', err);
+  };
 
-    const errEmbed = new EmbedBuilder()
-      .setTitle('❌ Neko Stream Failed')
-      .setDescription(
-        `Could not start the Neko stream.\n\n` +
-        `**Error:** ${err?.message ?? String(err)}\n\n` +
-        `**Tips:**\n` +
-        `• Ensure Neko is running at \`${nekoUrl}\`\n` +
-        `• Check \`NEKO_USER_PASSWORD\` / \`NEKO_ADMIN_PASSWORD\` env vars\n` +
-        `• Verify the Neko container is healthy with \`docker ps\``,
-      )
-      .setColor(0xff0000);
-
-    await interaction.editReply({ embeds: [errEmbed], components: [] });
-  }
+  // Fire-and-forget — startNekoStream blocks for the entire duration of the stream.
+  // Errors are caught below and shown via editReply.
+  videoStreamer
+    .startNekoStream(guildId, voiceChannel.id, interaction.user.id, onReady)
+    .catch(async (err: any) => {
+      console.error('[Controller/Neko] Stream error:', err);
+      const errEmbed = new EmbedBuilder()
+        .setTitle('❌ Neko Stream Failed')
+        .setDescription(
+          `Could not start the Neko stream.\n\n` +
+          `**Error:** ${err?.message ?? String(err)}\n\n` +
+          `**Tips:**\n` +
+          `• Ensure Neko is running at \`${nekoUrl}\`\n` +
+          `• Check \`NEKO_USER_PASSWORD\` / \`NEKO_ADMIN_PASSWORD\` env vars\n` +
+          `• Verify the Neko container is healthy with \`docker ps\``,
+        )
+        .setColor(0xff0000);
+      await interaction.editReply({ embeds: [errEmbed], components: [] }).catch(() => {});
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1252,8 +1256,10 @@ async function handleNekoPanel(interaction: ChatInputCommandInteraction): Promis
     return;
   }
 
+  // Only check that a Neko stream session exists — nekoControl may still be
+  // connecting (it's async). The button handlers show their own 'not connected' error.
   const session = getVideoStreamer().getSession(guildId);
-  if (!session?.nekoControl) {
+  if (!session || !session.mediaItem.title.includes('Neko')) {
     await interaction.reply({
       content: '❌ No active Neko stream. Start one with `/neko start` first.',
       ephemeral: true,

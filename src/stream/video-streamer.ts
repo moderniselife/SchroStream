@@ -2704,6 +2704,7 @@ class VideoStreamer {
     guildId: string,
     channelId: string,
     userId?: string,
+    onReady?: () => void | Promise<void>,
   ): Promise<void> {
     console.log('[Neko] Starting Neko stream (RTMP broadcast mode)...');
 
@@ -2822,6 +2823,12 @@ class VideoStreamer {
     console.log('[Neko] Starting Go Live stream for Neko (RTMP → NUT → Discord)...');
     if (!ffmpeg.stdout) {
       throw new Error('[Neko] FFmpeg stdout is null — cannot stream to Discord');
+    }
+
+    // Fire the onReady callback NOW — this is the moment the stream is live.
+    // The caller can update their Discord embed here while we block on playStream.
+    if (onReady) {
+      try { await onReady(); } catch { /* non-fatal */ }
     }
     try {
       await playStream(ffmpeg.stdout, this.streamer, {
