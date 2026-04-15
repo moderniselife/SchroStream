@@ -353,11 +353,7 @@ export async function startNekoBroadcastSession(
     '-loglevel', 'warning',
 
     // ── Reduce RTMP input latency ───────────────────────────────────────
-    // NOTE: -avioflags direct BREAKS RTMP (needs avio buffer for handshake)
-    // NOTE: -flags low_delay is a codec flag, wrong scope here
-    '-fflags', 'nobuffer',       // Safe: don't queue demuxed packets
-    '-probesize', '32',          // Minimal probe (RTMP format is known)
-    '-analyzeduration', '0',     // Don't spend time analysing — start fast
+    '-fflags', 'nobuffer',       // Don't queue demuxed packets — safe for RTMP
 
     // ── RTMP listener ──────────────────────────────────────────────────
     '-listen', '1',
