@@ -376,7 +376,78 @@ const commands = [
     ),
   new SlashCommandBuilder()
     .setName('neko')
-    .setDescription('Stream the Neko virtual browser to the voice channel (auto-logins)'),
+    .setDescription('Neko virtual browser — stream and control from Discord')
+    .addSubcommand(sub => sub
+      .setName('start')
+      .setDescription('Start streaming the Neko browser into your voice channel'),
+    )
+    .addSubcommand(sub => sub
+      .setName('type')
+      .setDescription('Type / paste text into Neko')
+      .addStringOption(opt => opt
+        .setName('text')
+        .setDescription('Text to type (uses clipboard paste)')
+        .setRequired(true),
+      ),
+    )
+    .addSubcommand(sub => sub
+      .setName('click')
+      .setDescription('Click at screen coordinates')
+      .addIntegerOption(opt => opt.setName('x').setDescription('X coordinate').setRequired(true))
+      .addIntegerOption(opt => opt.setName('y').setDescription('Y coordinate').setRequired(true))
+      .addStringOption(opt => opt
+        .setName('button')
+        .setDescription('Mouse button (default: left)')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Left', value: 'left' },
+          { name: 'Right', value: 'right' },
+          { name: 'Middle', value: 'middle' },
+        ),
+      ),
+    )
+    .addSubcommand(sub => sub
+      .setName('key')
+      .setDescription('Press a keyboard key')
+      .addStringOption(opt => opt
+        .setName('key')
+        .setDescription('Key name: enter, esc, f5, backspace, tab, up, down, left, right, etc.')
+        .setRequired(true),
+      ),
+    )
+    .addSubcommand(sub => sub
+      .setName('url')
+      .setDescription('Navigate the Neko browser to a URL')
+      .addStringOption(opt => opt
+        .setName('address')
+        .setDescription('Full URL to navigate to (e.g. https://google.com)')
+        .setRequired(true),
+      ),
+    )
+    .addSubcommand(sub => sub
+      .setName('scroll')
+      .setDescription('Scroll the page')
+      .addStringOption(opt => opt
+        .setName('direction')
+        .setDescription('Scroll direction')
+        .setRequired(true)
+        .addChoices(
+          { name: '⬆️ Up', value: 'up' },
+          { name: '⬇️ Down', value: 'down' },
+          { name: '⬅️ Left', value: 'left' },
+          { name: '➡️ Right', value: 'right' },
+        ),
+      )
+      .addIntegerOption(opt => opt
+        .setName('amount')
+        .setDescription('Scroll amount (default: 3)')
+        .setRequired(false),
+      ),
+    )
+    .addSubcommand(sub => sub
+      .setName('panel')
+      .setDescription('Show the Neko interactive control panel with buttons'),
+    ),
 ].map(cmd => cmd.toJSON());
 
 export async function initControllerBot(): Promise<Client | null> {
@@ -919,25 +990,62 @@ async function handlePlayEnhanced(interaction: ChatInputCommandInteraction): Pro
 }
 
 // ---------------------------------------------------------------------------
-// Neko command
+// Neko command  (subcommand dispatcher)
 // ---------------------------------------------------------------------------
 
 /**
- * /neko — streams the Neko browser instance into the caller's voice channel.
- *
- * 1. Resolves the user's current voice channel via the selfbot client.
- * 2. Calls `startNekoStream()` which auto-logins to Neko, sets up the MJPEG
- *    screenshot polling pipeline, and starts the Discord Go Live stream.
+ * /neko — streams and controls the Neko virtual browser from Discord.
+ * Dispatches to the appropriate subcommand handler.
  */
 async function handleNeko(interaction: ChatInputCommandInteraction): Promise<void> {
-  const guildId = interaction.guildId;
+  const sub = interaction.options.getSubcommand(true);
+  switch (sub) {
+    case 'start':   return handleNekoStart(interaction);
+    case 'type':    return handleNekoType(interaction);
+    case 'click':   return handleNekoClick(interaction);
+    case 'key':     return handleNekoKey(interaction);
+    case 'url':     return handleNekoUrl(interaction);
+    case 'scroll':  return handleNekoScroll(interaction);
+    case 'panel':   return handleNekoPanel(interaction);
+    default:
+      await interaction.reply({ content: '❌ Unknown subcommand.', ephemeral: true });
+  }
+}
 
+// ---------------------------------------------------------------------------
+// Helper: get the active Neko control session for the calling guild
+// ---------------------------------------------------------------------------
+
+async function getNekoControl(interaction: ChatInputCommandInteraction) {
+  const guildId = interaction.guildId;
+  if (!guildId) return null;
+  const session = getVideoStreamer().getSession(guildId);
+  return session?.nekoControl ?? null;
+}
+
+async function requireNekoControl(interaction: ChatInputCommandInteraction) {
+  const ctrl = await getNekoControl(interaction);
+  if (!ctrl || !ctrl.isConnected()) {
+    await interaction.reply({
+      content: '❌ No active Neko control session. Start one first with `/neko start`.',
+      ephemeral: true,
+    });
+    return null;
+  }
+  return ctrl;
+}
+
+// ---------------------------------------------------------------------------
+// /neko start
+// ---------------------------------------------------------------------------
+
+async function handleNekoStart(interaction: ChatInputCommandInteraction): Promise<void> {
+  const guildId = interaction.guildId;
   if (!guildId) {
     await interaction.reply({ content: '❌ This command can only be used in a server.', ephemeral: true });
     return;
   }
 
-  // Resolve voice channel via selfbot (has full guild member cache)
   const guild = selfbotClient.guilds.cache.get(guildId);
   const member = guild?.members.cache.get(interaction.user.id);
   const voiceChannel = member?.voice?.channel;
@@ -958,7 +1066,7 @@ async function handleNeko(interaction: ChatInputCommandInteraction): Promise<voi
       `*Starting screen capture stream into <#${voiceChannel.id}>*`,
     )
     .setColor(0xff6b35)
-    .setFooter({ text: 'Use /stop to end the Neko stream' });
+    .setFooter({ text: 'Use /neko panel for controls • /stop to end' });
 
   await interaction.editReply({ embeds: [embed] });
 
@@ -968,12 +1076,13 @@ async function handleNeko(interaction: ChatInputCommandInteraction): Promise<voi
   try {
     await videoStreamer.startNekoStream(guildId, voiceChannel.id, interaction.user.id);
 
-    // Stream started — update embed
     const liveEmbed = new EmbedBuilder()
       .setTitle('🦊 Neko — Live!')
       .setDescription(
         `Streaming Neko browser from \`${nekoUrl}\`\n\n` +
-        `**Voice channel:** <#${voiceChannel.id}>`,
+        `**Voice channel:** <#${voiceChannel.id}>\n\n` +
+        `Use \`/neko panel\` to open the interactive control pad.\n` +
+        `Use \`/neko type\`, \`/neko click\`, \`/neko url\` for quick commands.`,
       )
       .setColor(0x00e676)
       .setFooter({ text: 'Use /stop to end the Neko stream' })
@@ -982,6 +1091,7 @@ async function handleNeko(interaction: ChatInputCommandInteraction): Promise<voi
     const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('neko-ctrl-panel').setLabel('🎮 Controls').setStyle(ButtonStyle.Primary),
     );
 
     await interaction.editReply({ embeds: [liveEmbed], components: [controlRow] });
@@ -1002,6 +1112,350 @@ async function handleNeko(interaction: ChatInputCommandInteraction): Promise<voi
 
     await interaction.editReply({ embeds: [errEmbed], components: [] });
   }
+}
+
+// ---------------------------------------------------------------------------
+// /neko type <text>
+// ---------------------------------------------------------------------------
+
+async function handleNekoType(interaction: ChatInputCommandInteraction): Promise<void> {
+  const ctrl = await requireNekoControl(interaction);
+  if (!ctrl) return;
+
+  const text = interaction.options.getString('text', true);
+  ctrl.pasteText(text);
+
+  await interaction.reply({ content: `⌨️ Typed: \`${text.substring(0, 80)}${text.length > 80 ? '…' : ''}\``, ephemeral: true });
+}
+
+// ---------------------------------------------------------------------------
+// /neko click <x> <y> [button]
+// ---------------------------------------------------------------------------
+
+async function handleNekoClick(interaction: ChatInputCommandInteraction): Promise<void> {
+  const ctrl = await requireNekoControl(interaction);
+  if (!ctrl) return;
+
+  const x = interaction.options.getInteger('x', true);
+  const y = interaction.options.getInteger('y', true);
+  const btnStr = interaction.options.getString('button') ?? 'left';
+  const buttonCode = btnStr === 'right' ? 3 : btnStr === 'middle' ? 2 : 1;
+
+  await ctrl.click(x, y, buttonCode as 1 | 2 | 3);
+
+  await interaction.reply({ content: `🖱️ Clicked (${x}, ${y}) — ${btnStr} button`, ephemeral: true });
+}
+
+// ---------------------------------------------------------------------------
+// /neko key <key>
+// ---------------------------------------------------------------------------
+
+async function handleNekoKey(interaction: ChatInputCommandInteraction): Promise<void> {
+  const ctrl = await requireNekoControl(interaction);
+  if (!ctrl) return;
+
+  const { NAMED_KEYS } = await import('../neko/control.js');
+  const keyName = interaction.options.getString('key', true).toLowerCase().replace(/[\s_-]/g, '');
+  const keysym = NAMED_KEYS[keyName];
+
+  if (!keysym) {
+    await interaction.reply({
+      content: `❌ Unknown key \`${keyName}\`. Try: enter, esc, f5, backspace, tab, up, down, left, right, delete, home, end, pageup, pagedown, f1-f12`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  ctrl.keyPress(keysym);
+  await interaction.reply({ content: `⌨️ Pressed: \`${keyName}\``, ephemeral: true });
+}
+
+// ---------------------------------------------------------------------------
+// /neko url <address>
+// ---------------------------------------------------------------------------
+
+async function handleNekoUrl(interaction: ChatInputCommandInteraction): Promise<void> {
+  const ctrl = await requireNekoControl(interaction);
+  if (!ctrl) return;
+
+  let url = interaction.options.getString('address', true).trim();
+  if (!url.startsWith('http://') && !url.startsWith('https://')) url = `https://${url}`;
+
+  await ctrl.navigateToUrl(url);
+  await interaction.reply({ content: `🌐 Navigating to: ${url}`, ephemeral: true });
+}
+
+// ---------------------------------------------------------------------------
+// /neko scroll <direction> [amount]
+// ---------------------------------------------------------------------------
+
+async function handleNekoScroll(interaction: ChatInputCommandInteraction): Promise<void> {
+  const ctrl = await requireNekoControl(interaction);
+  if (!ctrl) return;
+
+  const direction = interaction.options.getString('direction', true);
+  const amount = interaction.options.getInteger('amount') ?? 3;
+
+  const scrollMap: Record<string, [number, number]> = {
+    up:    [0, -amount],
+    down:  [0,  amount],
+    left:  [-amount, 0],
+    right: [ amount, 0],
+  };
+  const [dx, dy] = scrollMap[direction] ?? [0, 0];
+  ctrl.scroll(dx, dy);
+
+  const emoji = { up: '⬆️', down: '⬇️', left: '⬅️', right: '➡️' }[direction] ?? '↕️';
+  await interaction.reply({ content: `${emoji} Scrolled ${direction} (${amount})`, ephemeral: true });
+}
+
+// ---------------------------------------------------------------------------
+// /neko panel — interactive button control panel
+// ---------------------------------------------------------------------------
+
+function buildNekoControlPanel() {
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('neko-ctrl-back').setLabel('◀ Back').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('neko-ctrl-up').setLabel('⬆').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('neko-ctrl-forward').setLabel('Forward ▶').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('neko-ctrl-refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('neko-ctrl-newtab').setLabel('📑 New Tab').setStyle(ButtonStyle.Secondary),
+  );
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('neko-ctrl-left').setLabel('⬅').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('neko-ctrl-down').setLabel('⬇').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('neko-ctrl-right').setLabel('➡').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('neko-ctrl-closetab').setLabel('✖ Close Tab').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('neko-ctrl-reopentab').setLabel('↩ Reopen Tab').setStyle(ButtonStyle.Secondary),
+  );
+  const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('neko-ctrl-enter').setLabel('↵ Enter').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('neko-ctrl-esc').setLabel('⎋ Esc').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('neko-ctrl-backspace').setLabel('⌫ Backspace').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('neko-ctrl-scrollup').setLabel('⬆️ Scroll Up').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('neko-ctrl-scrolldown').setLabel('⬇️ Scroll Down').setStyle(ButtonStyle.Secondary),
+  );
+  const row4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('neko-ctrl-type').setLabel('✏️ Type Text…').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('neko-ctrl-goto').setLabel('🌐 Go to URL…').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('neko-ctrl-leftclick').setLabel('🖱 Left Click').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('neko-ctrl-rightclick').setLabel('🖱 Right Click').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('neko-ctrl-undo').setLabel('↩ Undo').setStyle(ButtonStyle.Secondary),
+  );
+  return [row1, row2, row3, row4];
+}
+
+async function handleNekoPanel(interaction: ChatInputCommandInteraction): Promise<void> {
+  const guildId = interaction.guildId;
+  if (!guildId) {
+    await interaction.reply({ content: '❌ Server only.', ephemeral: true });
+    return;
+  }
+
+  const session = getVideoStreamer().getSession(guildId);
+  if (!session?.nekoControl) {
+    await interaction.reply({
+      content: '❌ No active Neko stream. Start one with `/neko start` first.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('🎮 Neko Control Panel')
+    .setDescription(
+      'Use the buttons below to control the Neko browser.\n\n' +
+      '**Row 1:** Navigation / New Tab\n' +
+      '**Row 2:** Arrow keys / Close Tab\n' +
+      '**Row 3:** Enter · Esc · Backspace · Scroll\n' +
+      '**Row 4:** Type text · Go to URL · Click · Undo\n\n' +
+      '💡 For precise control use `/neko click <x> <y>`',
+    )
+    .setColor(0xff6b35)
+    .setFooter({ text: 'Buttons stay active until the Neko stream ends' });
+
+  await interaction.reply({
+    embeds: [embed],
+    components: buildNekoControlPanel(),
+    ephemeral: true,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Neko control panel button handler
+// Called from the main button interaction router
+// ---------------------------------------------------------------------------
+
+export async function handleNekoControlButton(interaction: ButtonInteraction): Promise<boolean> {
+  const id = interaction.customId;
+  if (!id.startsWith('neko-ctrl-')) return false;
+
+  const guildId = interaction.guildId;
+  if (!guildId) { await interaction.reply({ content: '❌ Server only.', ephemeral: true }); return true; }
+
+  const { NAMED_KEYS } = await import('../neko/control.js');
+  const session = getVideoStreamer().getSession(guildId);
+  const ctrl = session?.nekoControl;
+
+  // Show the panel (no ctrl needed)
+  if (id === 'neko-ctrl-panel') {
+    if (!ctrl) {
+      await interaction.reply({ content: '❌ No active Neko control session.', ephemeral: true });
+      return true;
+    }
+    const embed = new EmbedBuilder()
+      .setTitle('🎮 Neko Control Panel')
+      .setDescription(
+        'Use the buttons below to control the Neko browser.\n\n' +
+        '**Row 1:** Navigation / New Tab\n**Row 2:** Arrow keys / Close Tab\n' +
+        '**Row 3:** Enter · Esc · Backspace · Scroll\n**Row 4:** Type · URL · Click · Undo',
+      )
+      .setColor(0xff6b35);
+    await interaction.reply({ embeds: [embed], components: buildNekoControlPanel(), ephemeral: true });
+    return true;
+  }
+
+  // Type modal
+  if (id === 'neko-ctrl-type') {
+    const modal = new ModalBuilder()
+      .setCustomId('neko-modal-type')
+      .setTitle('Type Text into Neko')
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId('neko-type-input')
+            .setLabel('Text to type')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('Enter text to paste into the browser…')
+            .setRequired(true),
+        ),
+      );
+    await interaction.showModal(modal);
+    return true;
+  }
+
+  // Go to URL modal
+  if (id === 'neko-ctrl-goto') {
+    const modal = new ModalBuilder()
+      .setCustomId('neko-modal-goto')
+      .setTitle('Navigate to URL')
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId('neko-goto-input')
+            .setLabel('URL')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('https://example.com')
+            .setRequired(true),
+        ),
+      );
+    await interaction.showModal(modal);
+    return true;
+  }
+
+  // Left click modal (ask for coordinates)
+  if (id === 'neko-ctrl-leftclick' || id === 'neko-ctrl-rightclick') {
+    const isRight = id === 'neko-ctrl-rightclick';
+    const modal = new ModalBuilder()
+      .setCustomId(isRight ? 'neko-modal-rightclick' : 'neko-modal-leftclick')
+      .setTitle(`${isRight ? 'Right' : 'Left'} Click at Coordinates`)
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId('neko-click-coords')
+            .setLabel('X, Y coordinates')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g. 960, 540')
+            .setRequired(true),
+        ),
+      );
+    await interaction.showModal(modal);
+    return true;
+  }
+
+  // All other buttons require an active control session
+  if (!ctrl || !ctrl.isConnected()) {
+    await interaction.reply({ content: '❌ Neko control session not connected. Try `/neko start`.', ephemeral: true });
+    return true;
+  }
+
+  let replyText = '✅ Done';
+
+  switch (id) {
+    case 'neko-ctrl-up':         ctrl.keyPress(NAMED_KEYS['up']!); replyText = '⬆️ Up'; break;
+    case 'neko-ctrl-down':       ctrl.keyPress(NAMED_KEYS['down']!); replyText = '⬇️ Down'; break;
+    case 'neko-ctrl-left':       ctrl.keyPress(NAMED_KEYS['left']!); replyText = '⬅️ Left'; break;
+    case 'neko-ctrl-right':      ctrl.keyPress(NAMED_KEYS['right']!); replyText = '➡️ Right'; break;
+    case 'neko-ctrl-enter':      ctrl.pressEnter(); replyText = '↵ Enter'; break;
+    case 'neko-ctrl-esc':        ctrl.pressEscape(); replyText = '⎋ Escape'; break;
+    case 'neko-ctrl-backspace':  ctrl.keyPress(NAMED_KEYS['backspace']!); replyText = '⌫ Backspace'; break;
+    case 'neko-ctrl-refresh':    ctrl.refresh(); replyText = '🔄 Refreshed (F5)'; break;
+    case 'neko-ctrl-newtab':     await ctrl.newTab(); replyText = '📑 New Tab (Ctrl+T)'; break;
+    case 'neko-ctrl-closetab':   await ctrl.closeTab(); replyText = '✖ Closed Tab (Ctrl+W)'; break;
+    case 'neko-ctrl-reopentab':  await ctrl.reopenTab(); replyText = '↩ Reopened Tab (Ctrl+Shift+T)'; break;
+    case 'neko-ctrl-back':       await ctrl.goBack(); replyText = '◀ Back (Alt+←)'; break;
+    case 'neko-ctrl-forward':    await ctrl.goForward(); replyText = '▶ Forward (Alt+→)'; break;
+    case 'neko-ctrl-scrollup':   ctrl.scroll(0, -3); replyText = '⬆️ Scrolled Up'; break;
+    case 'neko-ctrl-scrolldown': ctrl.scroll(0, 3); replyText = '⬇️ Scrolled Down'; break;
+    case 'neko-ctrl-undo':       await ctrl.undo(); replyText = '↩ Undo (Ctrl+Z)'; break;
+    default:
+      replyText = '❓ Unknown button';
+  }
+
+  await interaction.reply({ content: replyText, ephemeral: true });
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Neko modal submit handler  (type text, go to URL, click coords)
+// Called from the main modal submit router
+// ---------------------------------------------------------------------------
+
+export async function handleNekoModalSubmit(interaction: ModalSubmitInteraction): Promise<boolean> {
+  const id = interaction.customId;
+  if (!id.startsWith('neko-modal-')) return false;
+
+  const guildId = interaction.guildId;
+  if (!guildId) { await interaction.reply({ content: '❌ Server only.', ephemeral: true }); return true; }
+
+  const session = getVideoStreamer().getSession(guildId);
+  const ctrl = session?.nekoControl;
+
+  if (!ctrl || !ctrl.isConnected()) {
+    await interaction.reply({ content: '❌ No active Neko control session.', ephemeral: true });
+    return true;
+  }
+
+  if (id === 'neko-modal-type') {
+    const text = interaction.fields.getTextInputValue('neko-type-input');
+    ctrl.pasteText(text);
+    await interaction.reply({ content: `⌨️ Typed: \`${text.substring(0, 80)}${text.length > 80 ? '…' : ''}\``, ephemeral: true });
+    return true;
+  }
+
+  if (id === 'neko-modal-goto') {
+    let url = interaction.fields.getTextInputValue('neko-goto-input').trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) url = `https://${url}`;
+    await ctrl.navigateToUrl(url);
+    await interaction.reply({ content: `🌐 Navigating to: ${url}`, ephemeral: true });
+    return true;
+  }
+
+  if (id === 'neko-modal-leftclick' || id === 'neko-modal-rightclick') {
+    const isRight = id === 'neko-modal-rightclick';
+    const raw = interaction.fields.getTextInputValue('neko-click-coords');
+    const parts = raw.split(/[\s,]+/).map(Number);
+    if (parts.length < 2 || parts.some(isNaN)) {
+      await interaction.reply({ content: '❌ Invalid coordinates. Use format: `960, 540`', ephemeral: true });
+      return true;
+    }
+    const [x, y] = parts;
+    await ctrl.click(x, y, isRight ? 3 : 1);
+    await interaction.reply({ content: `🖱️ ${isRight ? 'Right' : 'Left'} clicked at (${x}, ${y})`, ephemeral: true });
+    return true;
+  }
+
+  return false;
 }
 
 async function handleSearch(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -2900,6 +3354,9 @@ function formatDate(dateStr: string): string {
 }
 
 async function handleButton(interaction: ButtonInteraction): Promise<void> {
+  // Neko control panel buttons — handled first (no guild session required)
+  if (await handleNekoControlButton(interaction)) return;
+
   const videoStreamer = getVideoStreamer();
   const guildId = interaction.guildId || (interaction as any).message?.guildId;
   
@@ -3444,6 +3901,9 @@ async function handleChannels(interaction: ChatInputCommandInteraction): Promise
 }
 
 async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
+  // Neko control modals — handled first (type text, go URL, click coords)
+  if (await handleNekoModalSubmit(interaction)) return;
+
   const videoStreamer = getVideoStreamer();
   const guildId = interaction.guildId;
   
