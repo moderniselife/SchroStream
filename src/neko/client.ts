@@ -195,7 +195,7 @@ async function probeBroadcastPath(cfg: NekoConfig, token: string): Promise<strin
   return `${cfg.url}/api/room/broadcast/start`;
 }
 
-/** POST to Neko's broadcast/start endpoint. Handles 422 (already broadcasting) by stopping first. */
+/** POST to Neko's broadcast/start endpoint. */
 async function startNekoBroadcast(
   cfg: NekoConfig,
   token: string,
@@ -204,35 +204,18 @@ async function startNekoBroadcast(
   const path = await probeBroadcastPath(cfg, token);
   console.log(`[Neko] Starting broadcast → ${path}  rtmp=${rtmpUrl}`);
 
-  const doStart = async (): Promise<Response> =>
-    fetch(path, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ url: rtmpUrl }),
-      signal: AbortSignal.timeout(8000),
-    });
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ url: rtmpUrl }),
+    signal: AbortSignal.timeout(8000),
+  });
 
-  let res = await doStart();
   const body = await res.text();
   console.log(`[Neko] Broadcast start → HTTP ${res.status}  body=${body.substring(0, 200)}`);
-
-  // 422 = Neko is already broadcasting (e.g. leftover from a previous call).
-  // Stop it and immediately start a fresh one pointing to our new RTMP listener.
-  if (res.status === 422) {
-    console.log('[Neko] Already broadcasting — stopping existing broadcast and retrying...');
-    await stopNekoBroadcast(cfg, token);
-    await new Promise(resolve => setTimeout(resolve, 500));
-    res = await doStart();
-    const retryBody = await res.text();
-    console.log(`[Neko] Broadcast start (retry) → HTTP ${res.status}  body=${retryBody.substring(0, 200)}`);
-    if (!res.ok) {
-      throw new Error(`[Neko] Failed to start broadcast after stop+retry (HTTP ${res.status}): ${retryBody}`);
-    }
-    return;
-  }
 
   if (!res.ok) {
     throw new Error(`[Neko] Failed to start broadcast (HTTP ${res.status}): ${body}`);
@@ -271,10 +254,17 @@ async function stopNekoBroadcast(cfg: NekoConfig, token: string): Promise<void> 
  * Starts a Neko RTMP broadcast session and returns the FFmpeg child process
  * whose stdout carries NUT-formatted video+audio for Discord.
  *
- * Steps:
- *   1. Spawn FFmpeg in `-listen 1` RTMP mode (waits for Neko to connect).
- *   2. Call Neko's broadcast/start API so it pushes WebRTC → RTMP → our FFmpeg.
- *   3. Return the FFmpeg process + a stop() function for cleanup.
+ * Order of operations (order matters — do NOT rearrange):
+ *   1. Stop any existing Neko broadcast (prevents 422 race condition).
+ *   2. Spawn FFmpeg in -listen 1 RTMP mode.
+ *   3. Wait for FFmpeg to bind the RTMP port.
+ *   4. Start the Neko broadcast → Neko connects to our FFmpeg listener.
+ *
+ * Why stop-first?
+ *   FFmpeg's -listen 1 exits as soon as its single client disconnects.
+ *   If we handled 422 by stopping AFTER spawning FFmpeg, Neko would
+ *   reconnect and our FFmpeg would already be dead (exited on the old
+ *   client disconnect). Stop first → guaranteed live FFmpeg on connect.
  *
  * @param cfg   Neko config (URL, passwords, RTMP port/host).
  * @param token Session token from nekoLogin().
@@ -378,6 +368,18 @@ export async function startNekoBroadcastSession(
     '-',
   ];
 
+  // ── Step 1: Stop any existing Neko broadcast BEFORE spawning FFmpeg ──
+  // This prevents the race condition where:
+  //   a) Neko is still broadcasting to the old RTMP address
+  //   b) We spawn FFmpeg and get 422 → kill old broadcast → FFmpeg exits
+  //   c) Neko retries → port 1935 now closed → GStreamer pipeline fails
+  // By stopping first, FFmpeg is guaranteed to be alive when Neko connects.
+  console.log('[Neko] Clearing any existing Neko broadcast...');
+  await stopNekoBroadcast(cfg, token);
+  // Give Neko's GStreamer pipeline a moment to fully tear down
+  await new Promise(resolve => setTimeout(resolve, 600));
+
+  // ── Step 2: Spawn FFmpeg RTMP listener ────────────────────────────────
   console.log('[Neko] Spawning FFmpeg RTMP listener (low-latency mode)...');
   const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
@@ -395,13 +397,16 @@ export async function startNekoBroadcastSession(
     console.error('[Neko] FFmpeg spawn error:', err.message);
   });
 
-  // Give FFmpeg ~800ms to bind the RTMP port before Neko tries to connect
+  // ── Step 3: Wait for FFmpeg to bind port ─────────────────────────────
+  // FFmpeg needs a moment to create the RTMP server socket before Neko
+  // tries to connect. 800ms is conservative but reliable.
   await new Promise(resolve => setTimeout(resolve, 800));
 
-  // Tell Neko to push its WebRTC stream to our FFmpeg listener
+  // ── Step 4: Tell Neko to push to our listener ─────────────────────────
+  // At this point: existing broadcast is stopped, FFmpeg is listening.
+  // 422 should not occur. If it does, it's a genuine error.
   await startNekoBroadcast(cfg, token, rtmpUrl);
-
-  console.log('[Neko] Waiting for Neko to connect to RTMP listener...');
+  console.log('[Neko] ✅ Neko broadcast started — waiting for GStreamer to connect...');
 
   const stop = async (): Promise<void> => {
     console.log('[Neko] Stopping broadcast session...');
