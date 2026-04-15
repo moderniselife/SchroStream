@@ -1,18 +1,27 @@
 /**
  * @file src/neko/client.ts
- * @description Neko instance client — handles auto-login via the Neko REST API
- * and provides a screen-capture stream for Discord via FFmpeg MJPEG polling.
+ * @description Neko instance client — auto-login + RTMP broadcast capture.
  *
- * Strategy:
- *   1. Authenticate with POST /api/login (user or admin credentials).
- *   2. Continuously fetch GET /api/screenshot (returns a JPEG frame).
- *   3. Write frames as an MJPEG stream to a pipe that FFmpeg reads.
+ * Strategy (v3 WebRTC → RTMP → Discord):
+ *   1. Authenticate via POST /api/login (probes v3 and v2 payload formats).
+ *   2. Spawn FFmpeg in RTMP listener mode on a local port.
+ *   3. Call Neko's broadcast API (POST /api/room/broadcast/start) so Neko
+ *      pushes its internal WebRTC stream (video + audio) to our FFmpeg listener.
+ *   4. Re-encode the incoming FLV/RTMP stream → H.264/Opus NUT for Discord.
  *
- * The resulting FFmpeg stdin stream is compatible with `startExternalStream`
- * via the existing `playExternalStream` plumbing in video-streamer.ts.
+ * This gives us full realtime video AND audio (no screenshot polling).
+ *
+ * Environment variables:
+ *   NEKO_URL              — Neko base URL         (default: http://localhost:8090)
+ *   NEKO_USER_PASSWORD    — multiuser password     (default: neko)
+ *   NEKO_ADMIN_PASSWORD   — admin password         (default: admin)
+ *   NEKO_RTMP_PORT        — local RTMP listen port (default: 1935)
+ *   NEKO_RTMP_HOST        — IP Neko should push to (default: 127.0.0.1)
+ *                           Set this to the host's LAN IP if Neko and
+ *                           SchroStream are in separate Docker networks.
  */
 
-import { PassThrough } from 'stream';
+import { spawn, type ChildProcess } from 'child_process';
 import config from '../config.js';
 
 // ---------------------------------------------------------------------------
@@ -20,64 +29,54 @@ import config from '../config.js';
 // ---------------------------------------------------------------------------
 
 export interface NekoLoginResult {
-  /** Authenticated session token (cookie value). */
+  /** Session JWT / opaque token returned by the Neko server. */
   token: string;
-  /** Role of the authenticated user. */
+  /** Role of the authenticated session. */
   role: 'user' | 'admin';
 }
 
 export interface NekoConfig {
-  /** Base URL of the neko instance, e.g. http://localhost:8090 */
   url: string;
-  /** User password (member login). */
   userPassword: string;
-  /** Admin password (admin login — grants additional permissions). */
   adminPassword: string;
+  /** Local port for FFmpeg to listen for Neko's RTMP broadcast. */
+  rtmpPort: number;
+  /**
+   * Hostname/IP that Neko should connect to when broadcasting.
+   * Defaults to 127.0.0.1 (works when both services share host networking).
+   * Override with NEKO_RTMP_HOST if needed.
+   */
+  rtmpHost: string;
+}
+
+export interface NekoBroadcastSession {
+  /** The spawned FFmpeg process consuming the RTMP stream. */
+  ffmpeg: ChildProcess;
+  /** Call this to stop the broadcast and kill FFmpeg cleanly. */
+  stop: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Config
 // ---------------------------------------------------------------------------
 
-/** MJPEG boundary marker. */
-const MJPEG_BOUNDARY = 'nekoboundary';
-
-/**
- * Build the neko config from environment variables.
- *
- * Required env vars:
- *   NEKO_URL             — base URL (default: http://localhost:8090)
- *   NEKO_USER_PASSWORD   — member password (default: neko)
- *   NEKO_ADMIN_PASSWORD  — admin password  (default: admin)
- */
 export function getNekoConfig(): NekoConfig {
   return {
     url: (process.env.NEKO_URL ?? 'http://localhost:8090').replace(/\/$/, ''),
     userPassword: process.env.NEKO_USER_PASSWORD ?? 'neko',
     adminPassword: process.env.NEKO_ADMIN_PASSWORD ?? 'admin',
+    rtmpPort: parseInt(process.env.NEKO_RTMP_PORT ?? '1935', 10),
+    rtmpHost: process.env.NEKO_RTMP_HOST ?? '127.0.0.1',
   };
 }
 
 // ---------------------------------------------------------------------------
-// Auth
+// Auth — probes Neko v2 (secret) and v3 (username+password) payload shapes
 // ---------------------------------------------------------------------------
 
-/**
- * Neko v2/v3 compatibility: Try multiple login payload formats.
- *
- * Neko v2 expects  : POST /api/login  { "secret": "<password>" }
- * Neko v3 expects  : POST /api/login  { "username": "<any>", "password": "<password>" }
- *
- * Tries admin first, then user.  On each attempt it probes both payload
- * shapes so this works regardless of Neko version.
- */
 export async function nekoLogin(cfg: NekoConfig): Promise<NekoLoginResult> {
   console.log(`[Neko] Attempting login at ${cfg.url}/api/login`);
 
-  /**
-   * Fire a single POST /api/login with the given body.
-   * Returns the session token string on success, null otherwise.
-   */
   const attempt = async (
     payload: Record<string, string>,
     label: string,
@@ -98,13 +97,11 @@ export async function nekoLogin(cfg: NekoConfig): Promise<NekoLoginResult> {
       return null;
     }
 
-    // Log full response details for debugging
     const status = res.status;
     const setCookieHeader = res.headers.get('set-cookie') ?? '';
     const contentType = res.headers.get('content-type') ?? '';
     console.log(`[Neko] ${label} → HTTP ${status}  content-type=${contentType}  set-cookie=${setCookieHeader.substring(0, 80)}`);
 
-    // Clone so we can read both text (for logging) and parse JSON
     const rawBody = await res.text();
     console.log(`[Neko] ${label} → body=${rawBody.substring(0, 300)}`);
 
@@ -113,256 +110,245 @@ export async function nekoLogin(cfg: NekoConfig): Promise<NekoLoginResult> {
       return null;
     }
 
-    // ----------------------------------------------------------------
-    // Token extraction — try all known locations:
-    //   1. Set-Cookie: NEKO_SESSION=<token>
-    //   2. JSON body: { "token": "..." }
-    //   3. JSON body: { "id": "..." } (some Neko v3 builds)
-    // ----------------------------------------------------------------
-    const setCookie = res.headers.get('set-cookie') ?? '';
-    const cookieMatch = setCookie.match(/NEKO_SESSION=([^;]+)/);
+    // Token extraction — check cookie first, then JSON body
+    const cookieMatch = setCookieHeader.match(/NEKO_SESSION=([^;]+)/);
     if (cookieMatch) {
-      console.log(`[Neko] ${label} — token found in Set-Cookie cookie`);
+      console.log(`[Neko] ${label} — token found in Set-Cookie`);
       return cookieMatch[1];
     }
 
-    // Fall back to JSON body
     let parsed: any = {};
-    try {
-      parsed = JSON.parse(rawBody);
-    } catch {
-      // rawBody was not JSON — not a fatal error
-    }
+    try { parsed = JSON.parse(rawBody); } catch { /* not JSON */ }
 
     const token = parsed?.token ?? parsed?.id ?? parsed?.session ?? null;
     if (token) {
-      console.log(`[Neko] ${label} — token found in JSON body (key=${Object.keys(parsed).find(k => parsed[k] === token)})`);
+      console.log(`[Neko] ${label} — token found in JSON body`);
       return String(token);
     }
 
-    console.warn(`[Neko] ${label} — login succeeded (HTTP ${status}) but no session token found in response`);
-    console.warn(`[Neko] Full response body: ${rawBody}`);
+    console.warn(`[Neko] ${label} — HTTP ${status} but no token in response — body: ${rawBody}`);
     return null;
   };
 
-  // ----------------------------------------------------------------
-  // Strategy: try every (role × payload_format) combination in order
-  // ----------------------------------------------------------------
   const strategies: Array<{ payload: Record<string, string>; label: string }> = [
-    // Neko v3 multiuser — admin
     { payload: { username: 'admin', password: cfg.adminPassword }, label: 'v3 admin (username+password)' },
-    // Neko v2 — admin
-    { payload: { secret: cfg.adminPassword }, label: 'v2 admin (secret)' },
-    // Neko v3 multiuser — user (empty username is fine)
-    { payload: { username: 'user', password: cfg.userPassword }, label: 'v3 user (username+password)' },
-    // Neko v3 multiuser — user with empty username
-    { payload: { username: '', password: cfg.userPassword }, label: 'v3 user (empty username)' },
-    // Neko v2 — user
-    { payload: { secret: cfg.userPassword }, label: 'v2 user (secret)' },
+    { payload: { secret: cfg.adminPassword },                      label: 'v2 admin (secret)' },
+    { payload: { username: 'user',  password: cfg.userPassword },  label: 'v3 user (username+password)' },
+    { payload: { username: '',      password: cfg.userPassword },  label: 'v3 user (empty username)' },
+    { payload: { secret: cfg.userPassword },                       label: 'v2 user (secret)' },
   ];
 
   for (const { payload, label } of strategies) {
     const token = await attempt(payload, label);
     if (token) {
-      const role = label.includes('admin') ? 'admin' : 'user';
-      console.log(`[Neko] ✅ Authenticated as ${role} via strategy: ${label}`);
+      const role: NekoLoginResult['role'] = label.includes('admin') ? 'admin' : 'user';
+      console.log(`[Neko] ✅ Authenticated as ${role} via: ${label}`);
       return { token, role };
     }
   }
 
   throw new Error(
-    `[Neko] All login strategies exhausted — could not authenticate.\n` +
+    `[Neko] All login strategies exhausted.\n` +
     `  URL: ${cfg.url}\n` +
     `  NEKO_ADMIN_PASSWORD length: ${cfg.adminPassword.length}\n` +
-    `  NEKO_USER_PASSWORD  length: ${cfg.userPassword.length}\n` +
-    `  Hint: check docker logs for the Neko container to confirm it's healthy.`,
+    `  NEKO_USER_PASSWORD  length: ${cfg.userPassword.length}\n`,
   );
 }
 
 // ---------------------------------------------------------------------------
-// Screenshot-polling MJPEG stream
+// Broadcast API helpers
 // ---------------------------------------------------------------------------
 
-export interface NekoStreamOptions {
-  /** Frames per second to target. Default: 15. Note: Neko screenshot endpoint
-   *  is not a realtime feed — higher rates increase CPU/network but may not
-   *  yield distinct frames faster than the Neko VNC refresh rate. */
-  fps?: number;
-  /** Whether to stop when the PassThrough is destroyed. */
-  signal?: AbortSignal;
+/**
+ * Probe which broadcast path Neko's API uses.
+ * Neko v3 uses /api/room/broadcast/start in most builds.
+ */
+async function probeBroadcastPath(cfg: NekoConfig, token: string): Promise<string> {
+  const candidates = [
+    `${cfg.url}/api/room/broadcast/start`,
+    `${cfg.url}/api/broadcast/start`,
+  ];
+
+  for (const path of candidates) {
+    try {
+      // Send a dry-run OPTIONS probe (no body) to check if path exists
+      const res = await fetch(path, {
+        method: 'OPTIONS',
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(3000),
+      });
+      // 200, 204, 405 (Method Not Allowed) all mean the path exists
+      if (res.status !== 404) {
+        console.log(`[Neko] Broadcast path: ${path} (HTTP ${res.status})`);
+        return path;
+      }
+    } catch {
+      // network error — skip
+    }
+  }
+
+  // Default fallback
+  console.warn('[Neko] Could not probe broadcast path — defaulting to /api/room/broadcast/start');
+  return `${cfg.url}/api/room/broadcast/start`;
 }
 
-/**
- * Creates a PassThrough stream that emits MJPEG data by continuously
- * polling the Neko `/api/screenshot` endpoint.
- *
- * The caller should pipe this into an FFmpeg process:
- *
- * ```
- * ffmpeg -f mjpeg -r 15 -i pipe:0 ...
- * ```
- *
- * @param cfg  Neko configuration (URL + creds).
- * @param token Session token from `nekoLogin`.
- * @param opts  Stream options.
- * @returns A PassThrough stream emitting raw MJPEG frames with boundary headers.
- */
-export function createNekoMjpegStream(
+/** POST to Neko's broadcast/start endpoint. */
+async function startNekoBroadcast(
   cfg: NekoConfig,
   token: string,
-  opts: NekoStreamOptions = {},
-): PassThrough {
-  const fps = opts.fps ?? 15;
-  const intervalMs = Math.round(1000 / fps);
-  const stream = new PassThrough();
+  rtmpUrl: string,
+): Promise<void> {
+  const path = await probeBroadcastPath(cfg, token);
+  console.log(`[Neko] Starting broadcast → ${path}  rtmp=${rtmpUrl}`);
 
-  let running = true;
-  let failCount = 0;
-  const MAX_FAILS = 10;
-
-  // Handle abort signal
-  opts.signal?.addEventListener('abort', () => {
-    running = false;
-    stream.end();
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ url: rtmpUrl }),
+    signal: AbortSignal.timeout(8000),
   });
 
-  // Handle stream close
-  stream.on('close', () => {
-    running = false;
-  });
+  const body = await res.text();
+  console.log(`[Neko] Broadcast start → HTTP ${res.status}  body=${body.substring(0, 200)}`);
 
-  stream.on('error', (err) => {
-    console.error('[Neko] MJPEG stream error:', err.message);
-    running = false;
-  });
+  if (!res.ok) {
+    throw new Error(
+      `[Neko] Failed to start broadcast (HTTP ${res.status}): ${body}`,
+    );
+  }
+}
 
-  // Write MJPEG stream header
-  // FFmpeg understands raw MJPEG with Content-Type boundaries
-  stream.write(`--${MJPEG_BOUNDARY}\r\n`);
+/** POST to Neko's broadcast/stop endpoint — best effort. */
+async function stopNekoBroadcast(cfg: NekoConfig, token: string): Promise<void> {
+  const stopPaths = [
+    `${cfg.url}/api/room/broadcast/stop`,
+    `${cfg.url}/api/broadcast/stop`,
+  ];
 
-  const screenshotUrl = `${cfg.url}/api/screenshot`;
-
-  const fetchFrame = async (): Promise<void> => {
-    if (!running || stream.destroyed) return;
-
+  for (const path of stopPaths) {
     try {
-      const res = await fetch(screenshotUrl, {
-        headers: {
-          Cookie: `NEKO_SESSION=${token}`,
-        },
-        signal: AbortSignal.timeout(5000),
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(4000),
       });
-
-      if (!res.ok) {
-        console.warn(`[Neko] Screenshot fetch failed — HTTP ${res.status}`);
-        failCount++;
-        if (failCount >= MAX_FAILS && !stream.destroyed) {
-          stream.destroy(new Error(`Neko screenshot endpoint repeatedly failing (${MAX_FAILS} times)`));
-        }
+      if (res.ok || res.status === 404) {
+        console.log(`[Neko] Broadcast stopped via ${path}`);
         return;
       }
-
-      const arrayBuffer = await res.arrayBuffer();
-      const frame = Buffer.from(arrayBuffer);
-
-      if (!frame.length) return;
-
-      failCount = 0; // Reset on success
-
-      if (!stream.destroyed) {
-        // Write MJPEG frame with boundary
-        stream.write(
-          `Content-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`,
-        );
-        stream.write(frame);
-        stream.write(`\r\n--${MJPEG_BOUNDARY}\r\n`);
-      }
-    } catch (err: any) {
-      if (running && !stream.destroyed) {
-        failCount++;
-        console.warn('[Neko] Frame fetch error:', err?.message ?? err);
-        if (failCount >= MAX_FAILS) {
-          stream.destroy(new Error('Neko stream failed — too many consecutive errors'));
-        }
-      }
+    } catch {
+      // Ignore — we're shutting down anyway
     }
-  };
-
-  // Start polling loop
-  const poll = async (): Promise<void> => {
-    const start = Date.now();
-    await fetchFrame();
-    const elapsed = Date.now() - start;
-    const delay = Math.max(0, intervalMs - elapsed);
-
-    if (running && !stream.destroyed) {
-      setTimeout(poll, delay);
-    }
-  };
-
-  // Kick off — small initial delay to let the stream pipe be established
-  setTimeout(poll, 100);
-
-  return stream;
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Convenience: build the FFmpeg args for a Neko MJPEG stream
+// Main: Start the RTMP broadcast session
 // ---------------------------------------------------------------------------
 
 /**
- * Returns FFmpeg arguments to consume the Neko MJPEG stream from stdin.
+ * Starts a Neko RTMP broadcast session and returns the FFmpeg child process
+ * whose stdout carries NUT-formatted video+audio for Discord.
  *
- * Usage:
- *   const args = buildNekoFfmpegArgs(fps, width, height, bitrate, frameRate);
- *   const ffmpeg = spawn('ffmpeg', args);
- *   nekoMjpegStream.pipe(ffmpeg.stdin);
+ * Steps:
+ *   1. Spawn FFmpeg in `-listen 1` RTMP mode (waits for Neko to connect).
+ *   2. Call Neko's broadcast/start API so it pushes WebRTC → RTMP → our FFmpeg.
+ *   3. Return the FFmpeg process + a stop() function for cleanup.
+ *
+ * @param cfg   Neko config (URL, passwords, RTMP port/host).
+ * @param token Session token from nekoLogin().
  */
-export function buildNekoFfmpegArgs(
-  sourceFps: number,
-  width: number,
-  height: number,
-  bitrate: number,
-  outputFrameRate: number,
-): string[] {
-  const gopSize = outputFrameRate * 2;
+export async function startNekoBroadcastSession(
+  cfg: NekoConfig,
+  token: string,
+): Promise<NekoBroadcastSession> {
+  const height = config.stream.defaultQuality;
+  const width = Math.round(height * (16 / 9));
+  const bitrate = config.stream.maxBitrate;
+  const fps = config.stream.frameRate;
+  const gopSize = fps * 2;
 
-  return [
+  const rtmpUrl = `rtmp://${cfg.rtmpHost}:${cfg.rtmpPort}/live/neko`;
+  const listenUrl = `rtmp://0.0.0.0:${cfg.rtmpPort}/live/neko`;
+
+  console.log(`[Neko] RTMP listener → ${listenUrl}`);
+  console.log(`[Neko] Neko will broadcast to → ${rtmpUrl}`);
+
+  // Build FFmpeg args — listen for RTMP then re-encode for Discord
+  const ffmpegArgs: string[] = [
     '-hide_banner',
-    '-loglevel', 'error',
-    // Input: MJPEG frames from stdin
-    '-f', 'mjpeg',
-    '-r', String(sourceFps),
-    '-i', 'pipe:0',
-    // No audio from Neko screenshot stream — generate silent audio
-    '-f', 'lavfi',
-    '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
-    // Video encoding
-    '-map', '0:v:0',
-    '-map', '1:a:0',
+    '-loglevel', 'warning',   // Show warnings/errors but not info spam
+
+    // RTMP listener input — FFmpeg blocks here until Neko connects
+    '-listen', '1',
+    '-timeout', '30000000',   // 30s in microseconds — time for Neko to connect
+    '-f', 'flv',
+    '-i', listenUrl,
+
+    // Video: re-encode to H.264 for Discord compatibility
     '-c:v', 'libx264',
-    '-preset', 'superfast',
+    '-preset', 'superfast',   // superfast = low CPU, low latency
     '-profile:v', 'high',
     '-level', '4.2',
     '-tune', 'zerolatency',
-    '-bf', '0',           // No B-frames — required for Discord streaming
+    '-bf', '0',               // No B-frames — required for RTP/Discord streaming
     '-pix_fmt', 'yuv420p',
-    '-r', String(outputFrameRate),
+    '-r', String(fps),
     '-g', String(gopSize),
     '-keyint_min', String(gopSize),
     '-b:v', `${bitrate}k`,
     '-maxrate', `${bitrate}k`,
     '-bufsize', `${bitrate * 2}k`,
     '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
-    // Silent audio
+
+    // Audio: Neko's WebRTC audio (Opus) arrives as AAC-in-FLV — re-encode to Opus for Discord
     '-c:a', 'libopus',
-    '-b:a', '64k',
+    '-b:a', '128k',
     '-ar', '48000',
     '-ac', '2',
-    // Output NUT format for discord-video-stream
+
+    // Output NUT for discord-video-stream
     '-vsync', 'cfr',
     '-map_metadata', '-1',
     '-f', 'nut',
     '-',
   ];
+
+  console.log('[Neko] Spawning FFmpeg RTMP listener...');
+  const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+
+  ffmpeg.stderr.on('data', (data: Buffer) => {
+    const msg = data.toString().trim();
+    if (!msg) return;
+    if (msg.includes('error') || msg.includes('Error') || msg.includes('Invalid')) {
+      console.error('[FFmpeg/Neko]', msg);
+    } else if (config.stream.showFFmpegLogs || msg.includes('rtmp') || msg.includes('flv') || msg.includes('connected')) {
+      console.log('[FFmpeg/Neko]', msg);
+    }
+  });
+
+  ffmpeg.on('error', (err) => {
+    console.error('[Neko] FFmpeg spawn error:', err.message);
+  });
+
+  // Small delay to let FFmpeg bind the RTMP port before telling Neko to connect
+  await new Promise(resolve => setTimeout(resolve, 800));
+
+  // Trigger Neko to broadcast to us
+  await startNekoBroadcast(cfg, token, rtmpUrl);
+
+  console.log('[Neko] Waiting for Neko to connect to RTMP listener...');
+
+  const stop = async (): Promise<void> => {
+    console.log('[Neko] Stopping broadcast session...');
+    await stopNekoBroadcast(cfg, token);
+    try {
+      ffmpeg.kill('SIGKILL');
+    } catch { /* already dead */ }
+  };
+
+  return { ffmpeg, stop };
 }

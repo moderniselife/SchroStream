@@ -2704,29 +2704,28 @@ class VideoStreamer {
     channelId: string,
     userId?: string,
   ): Promise<void> {
-    console.log('[Neko] Starting Neko stream...');
+    console.log('[Neko] Starting Neko stream (RTMP broadcast mode)...');
 
-    const { nekoLogin, getNekoConfig, createNekoMjpegStream, buildNekoFfmpegArgs } =
+    const { nekoLogin, getNekoConfig, startNekoBroadcastSession } =
       await import('../neko/client.js');
 
     const nekoCfg = getNekoConfig();
 
-    // 1. Authenticate
+    // 1. Authenticate with Neko
     console.log(`[Neko] Authenticating with ${nekoCfg.url}...`);
     const { token } = await nekoLogin(nekoCfg);
 
-    // Stop any existing stream first
+    // 2. Clean up any existing stream
     await this.stopStream(guildId);
     try {
       this.streamer.stopStream();
       this.streamer.leaveVoice();
     } catch {
-      // Already disconnected
+      // Already disconnected — ignore
     }
-
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // 2. Join voice channel
+    // 3. Join voice channel
     console.log('[Neko] Joining voice channel...');
     const joinTimeout = 15_000;
     const mediaUdp = await Promise.race([
@@ -2745,7 +2744,7 @@ class VideoStreamer {
     }
     console.log('[Neko] Successfully joined voice channel');
 
-    // Build a synthetic MediaItem for the session
+    // 4. Build a synthetic MediaItem for the session tracking
     const mediaItem: MediaItem = {
       ratingKey: `neko-${Date.now()}`,
       key: nekoCfg.url,
@@ -2778,56 +2777,21 @@ class VideoStreamer {
 
     this.sessions.set(guildId, session);
 
-    const fps = config.stream.frameRate;
-    const height = config.stream.defaultQuality;
-    const width = Math.round(height * (16 / 9));
-    const bitrate = config.stream.maxBitrate;
+    // 5. Start RTMP broadcast session:
+    //    - Spawns FFmpeg listening for Neko's RTMP broadcast
+    //    - Tells Neko to push its WebRTC stream (video + audio) to our FFmpeg
+    const broadcastSession = await startNekoBroadcastSession(nekoCfg, token);
+    const { ffmpeg, stop: stopBroadcast } = broadcastSession;
 
-    // 3. Start MJPEG stream from Neko screenshots
-    const abortController = new AbortController();
-    const mjpegStream = createNekoMjpegStream(nekoCfg, token, {
-      fps,
-      signal: abortController.signal,
-    });
-
-    // 4. Spawn FFmpeg to encode MJPEG → H.264 NUT
-    const ffmpegArgs = buildNekoFfmpegArgs(fps, width, height, bitrate, fps);
-    console.log('[Neko] Spawning FFmpeg for Neko MJPEG stream...');
-    const ffmpeg = spawn('ffmpeg', ffmpegArgs);
     session.ffmpegCommand = ffmpeg;
 
-    // Pipe MJPEG frames into FFmpeg stdin
-    mjpegStream.pipe(ffmpeg.stdin, { end: true });
-
-    mjpegStream.on('error', (err) => {
-      console.error('[Neko] MJPEG stream error:', err.message);
-    });
-
-    ffmpeg.stdin.on('error', () => {
-      // Suppress EPIPE — FFmpeg may close stdin before mjpegStream ends
-    });
-
-    ffmpeg.stderr.on('data', (data) => {
-      const msg = data.toString();
-      if (msg.includes('Error') || msg.includes('error') || msg.includes('Fatal')) {
-        console.error('[FFmpeg/Neko]', msg.trim());
-      } else if (config.stream.showFFmpegLogs) {
-        console.log('[FFmpeg/Neko]', msg.trim());
-      }
-    });
-
-    ffmpeg.on('error', (err) => {
-      console.error('[Neko] FFmpeg spawn error:', err.message);
-    });
-
     ffmpeg.on('exit', (code) => {
-      abortController.abort();
       if (session.isStopping) {
         console.log('[Neko] FFmpeg exited during intentional stop (code:', code, ')');
         return;
       }
       if (code !== 0 && code !== null) {
-        console.log('[Neko] FFmpeg exited with code:', code);
+        console.warn('[Neko] FFmpeg exited with code:', code);
       } else {
         console.log('[Neko] Neko stream ended (FFmpeg exited cleanly)');
       }
@@ -2838,19 +2802,24 @@ class VideoStreamer {
 
     session.isPlaying = true;
     session.startedAt = Date.now();
-
     startStatusUpdateTimer(session);
 
-    console.log('[Neko] Starting Go Live stream for Neko...');
-    await playStream(ffmpeg.stdout, this.streamer, {
-      type: 'go-live',
-      format: 'nut',
-    });
-
-    // Cleanup on stream end
-    abortController.abort();
-    if (!session.isStopping) {
-      console.log('[Neko] Neko Go Live stream ended');
+    // 6. Pipe to Discord Go Live
+    console.log('[Neko] Starting Go Live stream for Neko (RTMP → NUT → Discord)...');
+    if (!ffmpeg.stdout) {
+      throw new Error('[Neko] FFmpeg stdout is null — cannot stream to Discord');
+    }
+    try {
+      await playStream(ffmpeg.stdout, this.streamer, {
+        type: 'go-live',
+        format: 'nut',
+      });
+    } finally {
+      // Always stop the Neko broadcast when we're done
+      if (!session.isStopping) {
+        console.log('[Neko] Go Live stream ended — stopping Neko broadcast');
+      }
+      await stopBroadcast().catch(() => { /* best effort */ });
     }
   }
 
