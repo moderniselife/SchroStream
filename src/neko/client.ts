@@ -47,6 +47,8 @@ export interface NekoConfig {
    * Override with NEKO_RTMP_HOST if needed.
    */
   rtmpHost: string;
+  /** Whether NVENC GPU encoding is available — passed from video-streamer. */
+  useGpu: boolean;
 }
 
 export interface NekoBroadcastSession {
@@ -60,13 +62,14 @@ export interface NekoBroadcastSession {
 // Config
 // ---------------------------------------------------------------------------
 
-export function getNekoConfig(): NekoConfig {
+export function getNekoConfig(useGpu = false): NekoConfig {
   return {
     url: (process.env.NEKO_URL ?? 'http://localhost:8090').replace(/\/$/, ''),
     userPassword: process.env.NEKO_USER_PASSWORD ?? 'neko',
     adminPassword: process.env.NEKO_ADMIN_PASSWORD ?? 'admin',
     rtmpPort: parseInt(process.env.NEKO_RTMP_PORT ?? '1935', 10),
     rtmpHost: process.env.NEKO_RTMP_HOST ?? '127.0.0.1',
+    useGpu,
   };
 }
 
@@ -270,62 +273,105 @@ export async function startNekoBroadcastSession(
   const bitrate = config.stream.maxBitrate;
   const fps = config.stream.frameRate;
   const gopSize = fps * 2;
+  const useGpu = cfg.useGpu;
 
   const rtmpUrl = `rtmp://${cfg.rtmpHost}:${cfg.rtmpPort}/live/neko`;
   const listenUrl = `rtmp://0.0.0.0:${cfg.rtmpPort}/live/neko`;
 
   console.log(`[Neko] RTMP listener → ${listenUrl}`);
   console.log(`[Neko] Neko will broadcast to → ${rtmpUrl}`);
+  console.log(`[Neko] Encoder: ${useGpu ? 'NVENC (GPU)' : 'libx264 (CPU)'}`);
 
-  // Build FFmpeg args — listen for RTMP then re-encode for Discord
-  const ffmpegArgs: string[] = [
-    '-hide_banner',
-    '-loglevel', 'warning',   // Show warnings/errors but not info spam
+  //
+  // ── FFmpeg arg strategy ──────────────────────────────────────────────────
+  //
+  // Problem: Neko encodes H.264 internally and pushes RTMP to us. If we
+  // re-encode again on the CPU we get double-encode latency.
+  //
+  // Fix:
+  //   1. Bust RTMP buffering with -fflags nobuffer / -flags low_delay.
+  //   2. Use GPU (NVENC) where available — GPU encode adds <5ms vs 50–200ms
+  //      CPU. p1 preset = fastest/lowest latency.
+  //   3. CPU fallback: ultrafast + zerolatency. Despite the note elsewhere
+  //      about bitrate spikes, for a live virtual desktop where latency
+  //      matters more than encode efficiency, ultrafast is correct.
+  //   4. Halve bufsize (1× rather than 2× bitrate) — smaller encoder buffer
+  //      means frames reach Discord sooner.
+  //
+  const scaleFilter = `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`;
 
-    // RTMP listener input — FFmpeg blocks here until Neko connects
-    '-listen', '1',
-    '-timeout', '30000000',   // 30s in microseconds — time for Neko to connect
-    '-f', 'flv',
-    '-i', listenUrl,
-
-    // Video: re-encode to H.264 for Discord compatibility
-    '-c:v', 'libx264',
-    '-preset', 'superfast',   // superfast = low CPU, low latency
-    '-profile:v', 'high',
-    '-level', '4.2',
-    '-tune', 'zerolatency',
-    '-bf', '0',               // No B-frames — required for RTP/Discord streaming
+  const videoArgs: string[] = useGpu ? [
+    // ── NVENC path ──────────────────────────────────────────────────────
+    '-c:v', 'h264_nvenc',
+    '-preset', 'p1',          // p1 = lowest latency NVENC preset
+    '-tune', 'll',            // ll = low latency tuning
+    '-rc', 'cbr',
+    '-bf', '0',               // No B-frames
     '-pix_fmt', 'yuv420p',
     '-r', String(fps),
     '-g', String(gopSize),
     '-keyint_min', String(gopSize),
     '-b:v', `${bitrate}k`,
     '-maxrate', `${bitrate}k`,
-    '-bufsize', `${bitrate * 2}k`,
-    '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+    '-bufsize', `${bitrate}k`, // 1× bitrate — less buffering = lower latency
+    '-vf', scaleFilter,
+  ] : [
+    // ── CPU path ─────────────────────────────────────────────────────────
+    '-c:v', 'libx264',
+    '-preset', 'ultrafast',   // ultrafast: lowest CPU encode latency
+    '-tune', 'zerolatency',
+    '-bf', '0',               // No B-frames
+    '-pix_fmt', 'yuv420p',
+    '-r', String(fps),
+    '-g', String(gopSize),
+    '-keyint_min', String(gopSize),
+    '-b:v', `${bitrate}k`,
+    '-maxrate', `${bitrate}k`,
+    '-bufsize', `${bitrate}k`, // 1× bitrate — less buffering = lower latency
+    '-vf', scaleFilter,
+  ];
 
-    // Audio: Neko's WebRTC audio (Opus) arrives as AAC-in-FLV — re-encode to Opus for Discord
+  const ffmpegArgs: string[] = [
+    '-hide_banner',
+    '-loglevel', 'warning',
+
+    // ── Kill RTMP input buffering ───────────────────────────────────────
+    '-fflags', 'nobuffer',     // Do not buffer input packets
+    '-flags', 'low_delay',     // Enable low-delay mode throughout
+    '-avioflags', 'direct',    // Direct I/O — bypass avio buffer
+
+    // ── RTMP listener ──────────────────────────────────────────────────
+    '-listen', '1',
+    '-timeout', '30000000',    // 30s for Neko to connect (microseconds)
+    '-f', 'flv',
+    '-i', listenUrl,
+
+    // ── Video ──────────────────────────────────────────────────────────
+    ...videoArgs,
+
+    // ── Audio: AAC-in-FLV (from Neko) → Opus (for Discord) ────────────
     '-c:a', 'libopus',
     '-b:a', '128k',
     '-ar', '48000',
     '-ac', '2',
+    '-frame_duration', '20',   // 20ms Opus frames — standard Discord latency
 
-    // Output NUT for discord-video-stream
+    // ── Output ─────────────────────────────────────────────────────────
     '-vsync', 'cfr',
     '-map_metadata', '-1',
     '-f', 'nut',
     '-',
   ];
 
-  console.log('[Neko] Spawning FFmpeg RTMP listener...');
+  console.log('[Neko] Spawning FFmpeg RTMP listener (low-latency mode)...');
   const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
   ffmpeg.stderr.on('data', (data: Buffer) => {
     const msg = data.toString().trim();
     if (!msg) return;
-    if (msg.includes('error') || msg.includes('Error') || msg.includes('Invalid')) {
+    if (msg.includes('error') || msg.includes('Error') || msg.includes('Invalid') || msg.includes('drop')) {
       console.error('[FFmpeg/Neko]', msg);
-    } else if (config.stream.showFFmpegLogs || msg.includes('rtmp') || msg.includes('flv') || msg.includes('connected')) {
+    } else if (config.stream.showFFmpegLogs || msg.includes('rtmp') || msg.includes('connected') || msg.includes('fps=')) {
       console.log('[FFmpeg/Neko]', msg);
     }
   });
@@ -334,10 +380,10 @@ export async function startNekoBroadcastSession(
     console.error('[Neko] FFmpeg spawn error:', err.message);
   });
 
-  // Small delay to let FFmpeg bind the RTMP port before telling Neko to connect
+  // Give FFmpeg ~800ms to bind the RTMP port before Neko tries to connect
   await new Promise(resolve => setTimeout(resolve, 800));
 
-  // Trigger Neko to broadcast to us
+  // Tell Neko to push its WebRTC stream to our FFmpeg listener
   await startNekoBroadcast(cfg, token, rtmpUrl);
 
   console.log('[Neko] Waiting for Neko to connect to RTMP listener...');

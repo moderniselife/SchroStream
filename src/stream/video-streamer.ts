@@ -2709,7 +2709,8 @@ class VideoStreamer {
     const { nekoLogin, getNekoConfig, startNekoBroadcastSession } =
       await import('../neko/client.js');
 
-    const nekoCfg = getNekoConfig();
+    const useGpu = checkNVENCSupport();
+    const nekoCfg = getNekoConfig(useGpu);
 
     // 1. Authenticate with Neko
     console.log(`[Neko] Authenticating with ${nekoCfg.url}...`);
