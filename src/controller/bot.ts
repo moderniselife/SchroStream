@@ -374,6 +374,9 @@ const commands = [
         .setRequired(false)
         .setAutocomplete(true)
     ),
+  new SlashCommandBuilder()
+    .setName('neko')
+    .setDescription('Stream the Neko virtual browser to the voice channel (auto-logins)'),
 ].map(cmd => cmd.toJSON());
 
 export async function initControllerBot(): Promise<Client | null> {
@@ -607,6 +610,9 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
       break;
     case 'play-enhanced':
       await handlePlayEnhanced(interaction);
+      break;
+    case 'neko':
+      await handleNeko(interaction);
       break;
   }
 }
@@ -909,6 +915,92 @@ async function handlePlayEnhanced(interaction: ChatInputCommandInteraction): Pro
   } catch (error: any) {
     console.error('[Controller] Play enhanced error:', error);
     await interaction.editReply(`❌ Error: ${error.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Neko command
+// ---------------------------------------------------------------------------
+
+/**
+ * /neko — streams the Neko browser instance into the caller's voice channel.
+ *
+ * 1. Resolves the user's current voice channel via the selfbot client.
+ * 2. Calls `startNekoStream()` which auto-logins to Neko, sets up the MJPEG
+ *    screenshot polling pipeline, and starts the Discord Go Live stream.
+ */
+async function handleNeko(interaction: ChatInputCommandInteraction): Promise<void> {
+  const guildId = interaction.guildId;
+
+  if (!guildId) {
+    await interaction.reply({ content: '❌ This command can only be used in a server.', ephemeral: true });
+    return;
+  }
+
+  // Resolve voice channel via selfbot (has full guild member cache)
+  const guild = selfbotClient.guilds.cache.get(guildId);
+  const member = guild?.members.cache.get(interaction.user.id);
+  const voiceChannel = member?.voice?.channel;
+
+  if (!voiceChannel) {
+    await interaction.reply({ content: '❌ You must be in a voice channel to stream Neko.', ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply();
+
+  const nekoUrl = (process.env.NEKO_URL ?? 'http://localhost:8090').replace(/\/$/, '');
+
+  const embed = new EmbedBuilder()
+    .setTitle('🦊 Neko — Connecting...')
+    .setDescription(
+      `Authenticating with Neko at \`${nekoUrl}\`...\n\n` +
+      `*Starting screen capture stream into <#${voiceChannel.id}>*`,
+    )
+    .setColor(0xff6b35)
+    .setFooter({ text: 'Use /stop to end the Neko stream' });
+
+  await interaction.editReply({ embeds: [embed] });
+
+  const videoStreamer = getVideoStreamer();
+  videoStreamer.setEmbedMessage(guildId, (await interaction.fetchReply()).id, interaction.channelId);
+
+  try {
+    await videoStreamer.startNekoStream(guildId, voiceChannel.id, interaction.user.id);
+
+    // Stream started — update embed
+    const liveEmbed = new EmbedBuilder()
+      .setTitle('🦊 Neko — Live!')
+      .setDescription(
+        `Streaming Neko browser from \`${nekoUrl}\`\n\n` +
+        `**Voice channel:** <#${voiceChannel.id}>`,
+      )
+      .setColor(0x00e676)
+      .setFooter({ text: 'Use /stop to end the Neko stream' })
+      .setTimestamp();
+
+    const controlRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('ctrl_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('ctrl_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+    );
+
+    await interaction.editReply({ embeds: [liveEmbed], components: [controlRow] });
+  } catch (err: any) {
+    console.error('[Controller/Neko] Stream error:', err);
+
+    const errEmbed = new EmbedBuilder()
+      .setTitle('❌ Neko Stream Failed')
+      .setDescription(
+        `Could not start the Neko stream.\n\n` +
+        `**Error:** ${err?.message ?? String(err)}\n\n` +
+        `**Tips:**\n` +
+        `• Ensure Neko is running at \`${nekoUrl}\`\n` +
+        `• Check \`NEKO_USER_PASSWORD\` / \`NEKO_ADMIN_PASSWORD\` env vars\n` +
+        `• Verify the Neko container is healthy with \`docker ps\``,
+      )
+      .setColor(0xff0000);
+
+    await interaction.editReply({ embeds: [errEmbed], components: [] });
   }
 }
 

@@ -2688,6 +2688,172 @@ class VideoStreamer {
     }
   }
 
+  /**
+   * Stream the Neko virtual browser instance into a Discord voice channel.
+   *
+   * Steps:
+   *   1. Auto-login to Neko via its REST API (admin preferred, user fallback).
+   *   2. Open an MJPEG screenshot-polling stream from the Neko `/api/screenshot`
+   *      endpoint at the configured FPS.
+   *   3. Pipe that MJPEG stream into an FFmpeg process that encodes to H.264/Opus
+   *      NUT format ready for `@dank074/discord-video-stream`.
+   *   4. Join the voice channel and start the Go Live stream.
+   */
+  async startNekoStream(
+    guildId: string,
+    channelId: string,
+    userId?: string,
+  ): Promise<void> {
+    console.log('[Neko] Starting Neko stream...');
+
+    const { nekoLogin, getNekoConfig, createNekoMjpegStream, buildNekoFfmpegArgs } =
+      await import('../neko/client.js');
+
+    const nekoCfg = getNekoConfig();
+
+    // 1. Authenticate
+    console.log(`[Neko] Authenticating with ${nekoCfg.url}...`);
+    const { token } = await nekoLogin(nekoCfg);
+
+    // Stop any existing stream first
+    await this.stopStream(guildId);
+    try {
+      this.streamer.stopStream();
+      this.streamer.leaveVoice();
+    } catch {
+      // Already disconnected
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // 2. Join voice channel
+    console.log('[Neko] Joining voice channel...');
+    const joinTimeout = 15_000;
+    const mediaUdp = await Promise.race([
+      this.streamer.joinVoice(guildId, channelId),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`joinVoice timed out after ${joinTimeout / 1000}s`)),
+          joinTimeout,
+        ),
+      ),
+    ]);
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (!this.streamer.voiceConnection) {
+      throw new Error('[Neko] Voice connection not established after joinVoice');
+    }
+    console.log('[Neko] Successfully joined voice channel');
+
+    // Build a synthetic MediaItem for the session
+    const mediaItem: MediaItem = {
+      ratingKey: `neko-${Date.now()}`,
+      key: nekoCfg.url,
+      type: 'external',
+      title: '🦊 Neko Browser',
+      duration: 0, // Live stream — no duration
+      url: nekoCfg.url,
+      streamType: 'neko',
+    };
+
+    const session: VideoStreamSession = {
+      guildId,
+      channelId,
+      mediaItem,
+      streamUrl: nekoCfg.url,
+      isPaused: false,
+      isStopping: false,
+      isPlaying: false,
+      startedAt: Date.now(),
+      currentTime: 0,
+      duration: 0,
+      volume: 100,
+      speed: 1,
+      ffmpegCommand: null,
+      pauseFFmpegCommand: null,
+      userId,
+      isExternal: true,
+      mediaUdp,
+    };
+
+    this.sessions.set(guildId, session);
+
+    const fps = config.stream.frameRate;
+    const height = config.stream.defaultQuality;
+    const width = Math.round(height * (16 / 9));
+    const bitrate = config.stream.maxBitrate;
+
+    // 3. Start MJPEG stream from Neko screenshots
+    const abortController = new AbortController();
+    const mjpegStream = createNekoMjpegStream(nekoCfg, token, {
+      fps,
+      signal: abortController.signal,
+    });
+
+    // 4. Spawn FFmpeg to encode MJPEG → H.264 NUT
+    const ffmpegArgs = buildNekoFfmpegArgs(fps, width, height, bitrate, fps);
+    console.log('[Neko] Spawning FFmpeg for Neko MJPEG stream...');
+    const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+    session.ffmpegCommand = ffmpeg;
+
+    // Pipe MJPEG frames into FFmpeg stdin
+    mjpegStream.pipe(ffmpeg.stdin, { end: true });
+
+    mjpegStream.on('error', (err) => {
+      console.error('[Neko] MJPEG stream error:', err.message);
+    });
+
+    ffmpeg.stdin.on('error', () => {
+      // Suppress EPIPE — FFmpeg may close stdin before mjpegStream ends
+    });
+
+    ffmpeg.stderr.on('data', (data) => {
+      const msg = data.toString();
+      if (msg.includes('Error') || msg.includes('error') || msg.includes('Fatal')) {
+        console.error('[FFmpeg/Neko]', msg.trim());
+      } else if (config.stream.showFFmpegLogs) {
+        console.log('[FFmpeg/Neko]', msg.trim());
+      }
+    });
+
+    ffmpeg.on('error', (err) => {
+      console.error('[Neko] FFmpeg spawn error:', err.message);
+    });
+
+    ffmpeg.on('exit', (code) => {
+      abortController.abort();
+      if (session.isStopping) {
+        console.log('[Neko] FFmpeg exited during intentional stop (code:', code, ')');
+        return;
+      }
+      if (code !== 0 && code !== null) {
+        console.log('[Neko] FFmpeg exited with code:', code);
+      } else {
+        console.log('[Neko] Neko stream ended (FFmpeg exited cleanly)');
+      }
+      killSessionFFmpeg(session);
+      this.sessions.delete(guildId);
+      stopStatusUpdateTimer();
+    });
+
+    session.isPlaying = true;
+    session.startedAt = Date.now();
+
+    startStatusUpdateTimer(session);
+
+    console.log('[Neko] Starting Go Live stream for Neko...');
+    await playStream(ffmpeg.stdout, this.streamer, {
+      type: 'go-live',
+      format: 'nut',
+    });
+
+    // Cleanup on stream end
+    abortController.abort();
+    if (!session.isStopping) {
+      console.log('[Neko] Neko Go Live stream ended');
+    }
+  }
+
   async startMusicStream(
     guildId: string,
     channelId: string,
