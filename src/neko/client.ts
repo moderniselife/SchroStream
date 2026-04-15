@@ -301,19 +301,21 @@ export async function startNekoBroadcastSession(
   const scaleFilter = `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`;
 
   const videoArgs: string[] = useGpu ? [
-    // ── NVENC path ──────────────────────────────────────────────────────
+    // ── NVENC path — matches YouTube streaming config exactly ───────────
     '-c:v', 'h264_nvenc',
-    '-preset', 'p1',          // p1 = lowest latency NVENC preset
-    '-tune', 'll',            // ll = low latency tuning
-    '-rc', 'cbr',
-    '-bf', '0',               // No B-frames
+    '-preset', 'p4',          // p4 = medium quality/speed balance (same as YouTube)
+    '-profile:v', 'high',
+    '-level', '4.2',          // Level 4.2 for Discord compatibility
+    '-tune', 'll',            // Low latency tuning
+    '-rc', 'cbr',             // Constant bitrate for stable streaming
+    '-bf', '0',               // No B-frames — required for Discord streaming
     '-pix_fmt', 'yuv420p',
     '-r', String(fps),
     '-g', String(gopSize),
     '-keyint_min', String(gopSize),
     '-b:v', `${bitrate}k`,
     '-maxrate', `${bitrate}k`,
-    '-bufsize', `${bitrate}k`, // 1× bitrate — less buffering = lower latency
+    '-bufsize', `${bitrate * 2}k`,
     '-vf', scaleFilter,
   ] : [
     // ── CPU path ─────────────────────────────────────────────────────────
