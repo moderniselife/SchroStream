@@ -352,14 +352,16 @@ export async function startNekoBroadcastSession(
     '-hide_banner',
     '-loglevel', 'warning',
 
-    // ── Kill RTMP input buffering ───────────────────────────────────────
-    '-fflags', 'nobuffer',     // Do not buffer input packets
-    '-flags', 'low_delay',     // Enable low-delay mode throughout
-    '-avioflags', 'direct',    // Direct I/O — bypass avio buffer
+    // ── Reduce RTMP input latency ───────────────────────────────────────
+    // NOTE: -avioflags direct BREAKS RTMP (needs avio buffer for handshake)
+    // NOTE: -flags low_delay is a codec flag, wrong scope here
+    '-fflags', 'nobuffer',       // Safe: don't queue demuxed packets
+    '-probesize', '32',          // Minimal probe (RTMP format is known)
+    '-analyzeduration', '0',     // Don't spend time analysing — start fast
 
     // ── RTMP listener ──────────────────────────────────────────────────
     '-listen', '1',
-    '-timeout', '30000000',    // 30s for Neko to connect (microseconds)
+    '-timeout', '30000000',      // 30s for Neko to connect (microseconds)
     '-f', 'flv',
     '-i', listenUrl,
 
@@ -371,7 +373,7 @@ export async function startNekoBroadcastSession(
     '-b:a', '128k',
     '-ar', '48000',
     '-ac', '2',
-    '-frame_duration', '20',   // 20ms Opus frames — standard Discord latency
+    '-frame_duration', '20',     // 20ms Opus frames
 
     // ── Output ─────────────────────────────────────────────────────────
     '-vsync', 'cfr',
