@@ -22,6 +22,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
+import { createServer as createNetServer } from 'net';
 import config from '../config.js';
 
 // ---------------------------------------------------------------------------
@@ -247,6 +248,36 @@ async function stopNekoBroadcast(cfg: NekoConfig, token: string): Promise<void> 
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Poll until the given TCP port is bound by another process (e.g. FFmpeg).
+ *
+ * Strategy: try to bind the port ourselves. If we get EADDRINUSE it means
+ * FFmpeg already has it and we're good to go. This is more reliable than a
+ * fixed sleep because NVENC initialisation time varies.
+ */
+async function waitForPortBound(
+  port: number,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const isBound = await new Promise<boolean>(resolve => {
+      const srv = createNetServer();
+      srv.once('error', (err) =>
+        resolve((err as NodeJS.ErrnoException).code === 'EADDRINUSE'),
+      );
+      srv.listen(port, () => srv.close(() => resolve(false)));
+    });
+    if (isBound) return;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  throw new Error(`[Neko] FFmpeg did not bind port ${port} within ${timeoutMs / 1000}s`);
+}
+
+// ---------------------------------------------------------------------------
 // Main: Start the RTMP broadcast session
 // ---------------------------------------------------------------------------
 
@@ -368,19 +399,17 @@ export async function startNekoBroadcastSession(
     '-',
   ];
 
-  // ── Step 1: Stop any existing Neko broadcast BEFORE spawning FFmpeg ──
-  // This prevents the race condition where:
-  //   a) Neko is still broadcasting to the old RTMP address
-  //   b) We spawn FFmpeg and get 422 → kill old broadcast → FFmpeg exits
-  //   c) Neko retries → port 1935 now closed → GStreamer pipeline fails
-  // By stopping first, FFmpeg is guaranteed to be alive when Neko connects.
+  // ── Step 1: Stop any existing broadcast BEFORE spawning FFmpeg ──────────────────
+  // Ensures no competing broadcast exists. FFmpeg exits immediately when its
+  // one RTMP client disconnects, so if we stopped the old broadcast AFTER
+  // spawning FFmpeg, FFmpeg would exit and port 1935 would close before Neko
+  // could reconnect.
   console.log('[Neko] Clearing any existing Neko broadcast...');
   await stopNekoBroadcast(cfg, token);
-  // Give Neko's GStreamer pipeline a moment to fully tear down
-  await new Promise(resolve => setTimeout(resolve, 600));
+  await new Promise(resolve => setTimeout(resolve, 600)); // let GStreamer pipeline tear down
 
   // ── Step 2: Spawn FFmpeg RTMP listener ────────────────────────────────
-  console.log('[Neko] Spawning FFmpeg RTMP listener (low-latency mode)...');
+  console.log('[Neko] Spawning FFmpeg RTMP listener...');
   const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
   ffmpeg.stderr.on('data', (data: Buffer) => {
@@ -388,7 +417,7 @@ export async function startNekoBroadcastSession(
     if (!msg) return;
     if (msg.includes('error') || msg.includes('Error') || msg.includes('Invalid') || msg.includes('drop')) {
       console.error('[FFmpeg/Neko]', msg);
-    } else if (config.stream.showFFmpegLogs || msg.includes('rtmp') || msg.includes('connected') || msg.includes('fps=')) {
+    } else if (config.stream.showFFmpegLogs || msg.includes('connected') || msg.includes('fps=')) {
       console.log('[FFmpeg/Neko]', msg);
     }
   });
@@ -397,23 +426,32 @@ export async function startNekoBroadcastSession(
     console.error('[Neko] FFmpeg spawn error:', err.message);
   });
 
-  // ── Step 3: Wait for FFmpeg to bind port ─────────────────────────────
-  // FFmpeg needs a moment to create the RTMP server socket before Neko
-  // tries to connect. 800ms is conservative but reliable.
-  await new Promise(resolve => setTimeout(resolve, 800));
+  // ── Step 3: Wait for FFmpeg to actually bind the RTMP port ────────────────
+  // Poll instead of a blind sleep. NVENC init can take >800ms, making a
+  // fixed wait unreliable. This detects the exact moment FFmpeg is ready.
+  console.log(`[Neko] Waiting for FFmpeg to bind port ${cfg.rtmpPort}...`);
+  await waitForPortBound(cfg.rtmpPort, 10_000);
+  console.log(`[Neko] ✅ FFmpeg is listening on port ${cfg.rtmpPort}`);
 
-  // ── Step 4: Tell Neko to push to our listener ─────────────────────────
-  // At this point: existing broadcast is stopped, FFmpeg is listening.
-  // 422 should not occur. If it does, it's a genuine error.
+  // ── Step 4: Start Neko broadcast ─────────────────────────────────────────
+  // Port is confirmed open, 422 can't happen (cleared in step 1).
   await startNekoBroadcast(cfg, token, rtmpUrl);
   console.log('[Neko] ✅ Neko broadcast started — waiting for GStreamer to connect...');
+
+  // ── Step 5: Wait for GStreamer to connect and establish the FLV stream ───
+  // After the broadcast API call, Neko's GStreamer pipeline needs ~1–2s to:
+  //   • Initialise ximagesrc + pulsesrc + x264enc + voaacenc + flvmux
+  //   • Complete the RTMP handshake with FFmpeg
+  //   • Send FLV metadata+script tags so FFmpeg can detect video+audio streams
+  // Without this wait, playStream starts reading before the NUT header
+  // contains any streams and throws “No video stream in media”.
+  await new Promise(resolve => setTimeout(resolve, 2500));
+  console.log('[Neko] ✅ Stream established — handing off to Discord');
 
   const stop = async (): Promise<void> => {
     console.log('[Neko] Stopping broadcast session...');
     await stopNekoBroadcast(cfg, token);
-    try {
-      ffmpeg.kill('SIGKILL');
-    } catch { /* already dead */ }
+    try { ffmpeg.kill('SIGKILL'); } catch { /* already dead */ }
   };
 
   return { ffmpeg, stop };
