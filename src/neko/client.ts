@@ -195,7 +195,7 @@ async function probeBroadcastPath(cfg: NekoConfig, token: string): Promise<strin
   return `${cfg.url}/api/room/broadcast/start`;
 }
 
-/** POST to Neko's broadcast/start endpoint. */
+/** POST to Neko's broadcast/start endpoint. Handles 422 (already broadcasting) by stopping first. */
 async function startNekoBroadcast(
   cfg: NekoConfig,
   token: string,
@@ -204,23 +204,38 @@ async function startNekoBroadcast(
   const path = await probeBroadcastPath(cfg, token);
   console.log(`[Neko] Starting broadcast → ${path}  rtmp=${rtmpUrl}`);
 
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ url: rtmpUrl }),
-    signal: AbortSignal.timeout(8000),
-  });
+  const doStart = async (): Promise<Response> =>
+    fetch(path, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ url: rtmpUrl }),
+      signal: AbortSignal.timeout(8000),
+    });
 
+  let res = await doStart();
   const body = await res.text();
   console.log(`[Neko] Broadcast start → HTTP ${res.status}  body=${body.substring(0, 200)}`);
 
+  // 422 = Neko is already broadcasting (e.g. leftover from a previous call).
+  // Stop it and immediately start a fresh one pointing to our new RTMP listener.
+  if (res.status === 422) {
+    console.log('[Neko] Already broadcasting — stopping existing broadcast and retrying...');
+    await stopNekoBroadcast(cfg, token);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    res = await doStart();
+    const retryBody = await res.text();
+    console.log(`[Neko] Broadcast start (retry) → HTTP ${res.status}  body=${retryBody.substring(0, 200)}`);
+    if (!res.ok) {
+      throw new Error(`[Neko] Failed to start broadcast after stop+retry (HTTP ${res.status}): ${retryBody}`);
+    }
+    return;
+  }
+
   if (!res.ok) {
-    throw new Error(
-      `[Neko] Failed to start broadcast (HTTP ${res.status}): ${body}`,
-    );
+    throw new Error(`[Neko] Failed to start broadcast (HTTP ${res.status}): ${body}`);
   }
 }
 
