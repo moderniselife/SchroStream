@@ -586,6 +586,13 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
       console.log(`[WebServer] Starting FFmpeg proxy for guild ${guildIdStr}, seeking to ${seekSeconds}s (current: ${Math.floor(progress.current / 1000)}s + ${STARTUP_OFFSET}s offset)`);
       console.log(`[WebServer] Stream URL: ${session.streamUrl}, isLocalFile: ${isLocalFile}`);
       
+      // Detect Plex stream
+      const isPlexStream = !session.isExternal && (
+        session.streamUrl.includes('plex') || 
+        session.streamUrl.includes('X-Plex-Token') ||
+        session.streamUrl.includes('/transcode/')
+      );
+      
       // Check if file exists for local files
       if (isLocalFile) {
         const { existsSync } = await import('fs');
@@ -596,36 +603,91 @@ app.get('/api/stream/:guildId/hls', async (req: Request, res: Response) => {
         console.log(`[WebServer] Local file confirmed: ${session.streamUrl}`);
       }
       
-      // Build FFmpeg args for direct streams (YouTube/local files)
+      // Build FFmpeg args for direct streams (YouTube/local files/Plex)
       ffmpegArgs = [
         '-hide_banner',
         '-loglevel', 'warning',
       ];
-      
-      // Add reconnect options for external streams only
-      if (!isLocalFile) {
+
+      if (isPlexStream) {
+        // For Plex, we need to initialize the transcode session and resolve the actual HLS URL
+        console.log(`[WebServer] Plex stream detected, initializing transcode session...`);
+        
+        // Build Plex auth headers for FFmpeg
+        const headers = [
+          'Accept: */*',
+          'X-Plex-Client-Identifier: ' + config.plex.clientIdentifier,
+          'X-Plex-Product: Plex Web',
+          'X-Plex-Version: 4.0',
+          'X-Plex-Platform: Chrome',
+          'X-Plex-Device: Linux',
+          'X-Plex-Token: ' + config.plex.token,
+        ].join('\r\n') + '\r\n';
+        
+        // Initialize the Plex transcode session by fetching the m3u8
+        let actualStreamUrl = session.streamUrl;
+        try {
+          const initResponse = await fetch(session.streamUrl, {
+            headers: {
+              'X-Plex-Token': config.plex.token,
+              'X-Plex-Client-Identifier': config.plex.clientIdentifier,
+            }
+          });
+          
+          if (initResponse.ok) {
+            const m3u8Content = await initResponse.text();
+            console.log('[WebServer] Plex session initialized, m3u8:', m3u8Content.substring(0, 200));
+            
+            // Extract the actual stream path from the m3u8
+            const m3u8Lines = m3u8Content.split('\n');
+            const streamPath = m3u8Lines.find(l => l.endsWith('.m3u8') && !l.startsWith('#'));
+            
+            if (streamPath) {
+              actualStreamUrl = `${config.plex.url}/video/:/transcode/universal/${streamPath}?X-Plex-Token=${config.plex.token}`;
+              console.log('[WebServer] Resolved Plex stream URL:', actualStreamUrl.substring(0, 100) + '...');
+            }
+          } else {
+            console.warn('[WebServer] Failed to initialize Plex session:', initResponse.status);
+          }
+        } catch (initErr) {
+          console.warn('[WebServer] Plex session init error:', initErr);
+        }
+        
         ffmpegArgs.push(
+          '-headers', headers,
           '-reconnect', '1',
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '5',
-          '-protocol_whitelist', 'file,http,https,tcp,tls,crypto'
-        );
-      }
-      
-      ffmpegArgs.push(
-        '-ss', seekSeconds.toString(),
-        '-i', session.streamUrl,
-      );
-      
-      // Add audio input if separate (YouTube)
-      if (session.audioUrl) {
-        ffmpegArgs.push(
-          '-reconnect', '1',
-          '-reconnect_streamed', '1',
-          '-reconnect_delay_max', '5',
+          '-protocol_whitelist', 'file,http,https,tcp,tls,crypto,hls',
           '-ss', seekSeconds.toString(),
-          '-i', session.audioUrl
+          '-i', actualStreamUrl,
         );
+      } else {
+        // Add reconnect options for external streams only
+        if (!isLocalFile) {
+          ffmpegArgs.push(
+            '-reconnect', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_delay_max', '5',
+            '-protocol_whitelist', 'file,http,https,tcp,tls,crypto'
+          );
+        }
+        
+        ffmpegArgs.push(
+          '-ss', seekSeconds.toString(),
+          '-i', session.streamUrl,
+        );
+        
+        // Add audio input if separate (YouTube)
+        if (session.audioUrl) {
+          ffmpegArgs.push(
+            '-reconnect', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_delay_max', '5',
+            '-ss', seekSeconds.toString(),
+            '-i', session.audioUrl
+          );
+        }
       }
     }
 

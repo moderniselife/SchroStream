@@ -322,12 +322,15 @@ export class PlexClient {
         autoAdjustQuality: '0',
         directStreamAudio: '0',
         mediaBufferSize: '102400',
-        // Tell Plex to transcode to Discord-compatible H264
+        // Tell Plex to transcode to Discord-compatible H264 at 30fps
         // This lets FFmpeg pass through video without re-encoding
         maxVideoBitrate: String(config.stream.maxBitrate),
         videoQuality: '100',
         videoResolution: `${Math.round(config.stream.defaultQuality * (16/9))}x${config.stream.defaultQuality}`,
         videoCodec: 'h264',
+        // Force 30fps output - Plex content is typically 23.976fps which causes
+        // stutter in Discord's 30fps RTP pipeline
+        videoFrameRate: String(config.stream.frameRate),
         subtitles: 'burn',
         'X-Plex-Session-Identifier': finalSessionId,
         'X-Plex-Token': this.token,

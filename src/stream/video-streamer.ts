@@ -1749,7 +1749,8 @@ class VideoStreamer {
         // Explicit stream selection
         '-map', '0:v:0',
         '-map', '0:a:0',
-        // Video: copy directly from Plex (already H264 at target resolution)
+        // Video: copy directly from Plex (already H264 at target resolution AND 30fps)
+        // Plex handles both codec conversion and frame rate via videoFrameRate param
         '-c:v', 'copy',
         // Strip duplicate NAL units from HLS segment joins
         '-bsf:v', 'dump_extra',
