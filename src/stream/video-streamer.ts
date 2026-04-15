@@ -222,6 +222,7 @@ export interface VideoStreamSession {
   musicThumbnailPath?: string; // Path to thumbnail image for music mode
   musicArtist?: string; // Artist name for music overlay
   subtitlePath?: string; // Path to .srt subtitle file to burn in
+  nekoControl?: import('../neko/control.js').NekoControlSession; // Active Neko WS control session
 }
 
 // Store playback positions for resume functionality (ratingKey -> position in ms)
@@ -2708,6 +2709,7 @@ class VideoStreamer {
 
     const { nekoLogin, getNekoConfig, startNekoBroadcastSession } =
       await import('../neko/client.js');
+    const { connectNekoControl } = await import('../neko/control.js');
 
     const useGpu = checkNVENCSupport();
     const nekoCfg = getNekoConfig(useGpu);
@@ -2778,7 +2780,18 @@ class VideoStreamer {
 
     this.sessions.set(guildId, session);
 
-    // 5. Start RTMP broadcast session:
+    // 5. Connect WebSocket control session (runs in parallel — non-blocking)
+    //    Allows Discord commands to send mouse/keyboard input to Neko
+    connectNekoControl(nekoCfg.url, token)
+      .then(ctrl => {
+        session.nekoControl = ctrl;
+        console.log('[Neko/Control] ✅ Control session attached to stream');
+      })
+      .catch(err => {
+        console.warn('[Neko/Control] Could not connect control WS (stream will still work):', err.message);
+      });
+
+    // 6. Start RTMP broadcast session:
     //    - Spawns FFmpeg listening for Neko's RTMP broadcast
     //    - Tells Neko to push its WebRTC stream (video + audio) to our FFmpeg
     const broadcastSession = await startNekoBroadcastSession(nekoCfg, token);
@@ -2805,7 +2818,7 @@ class VideoStreamer {
     session.startedAt = Date.now();
     startStatusUpdateTimer(session);
 
-    // 6. Pipe to Discord Go Live
+    // 7. Pipe to Discord Go Live
     console.log('[Neko] Starting Go Live stream for Neko (RTMP → NUT → Discord)...');
     if (!ffmpeg.stdout) {
       throw new Error('[Neko] FFmpeg stdout is null — cannot stream to Discord');
@@ -2816,10 +2829,12 @@ class VideoStreamer {
         format: 'nut',
       });
     } finally {
-      // Always stop the Neko broadcast when we're done
+      // Always stop the Neko broadcast and control WS when we're done
       if (!session.isStopping) {
         console.log('[Neko] Go Live stream ended — stopping Neko broadcast');
       }
+      session.nekoControl?.close();
+      session.nekoControl = undefined;
       await stopBroadcast().catch(() => { /* best effort */ });
     }
   }
